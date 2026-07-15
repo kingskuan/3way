@@ -88,6 +88,24 @@ export function getConfig() {
     proxy: process.env.RISEX_PROXY || globalProxy,
   };
 
+  // ── Ondo Perps ────────────────────────────────────────────────────────────
+  const onNet = (process.env.ON_NETWORK || 'mainnet').toLowerCase();
+  const onDefaults = onNet === 'testnet'
+    ? { api: 'https://api.ondoperps-sandbox.xyz', ws: 'wss://api.ondoperps-sandbox.xyz/ws' }
+    : { api: 'https://api.ondoperps.xyz',         ws: 'wss://api.ondoperps.xyz/ws' };
+
+  const on = {
+    mode: (process.env.ON_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
+    network: onNet,
+    apiKeyId: process.env.ONDO_API_KEY_ID || '',
+    apiSecret: process.env.ONDO_API_SECRET || '',
+    apiUrl: (process.env.ONDO_API_URL || onDefaults.api).replace(/\/$/, ''),
+    wsUrl: process.env.ONDO_WS_URL || onDefaults.ws,
+    builderCode: process.env.ONDO_BUILDER_CODE || '',
+    startBalance: Number(process.env.PAPER_BALANCE || 10000),
+    proxy: process.env.ONDO_PROXY || globalProxy,
+  };
+
   // 本地默认绑 127.0.0.1；在 Railway / Docker 里必须绑 0.0.0.0 才能被平台的
   // 反向代理转到（PaaS 环境下自动切换，也可用 HOST=0.0.0.0 显式覆盖）。
   // 生产环境自动强制要求 DASHBOARD_PASSWORD（在 server.js 里执行）。
@@ -109,6 +127,7 @@ export function getConfig() {
     de,
     ex,
     rs,
+    on,
   };
 }
 
