@@ -2,10 +2,6 @@
 
 一个跑在你自己电脑上的加密货币**永续合约网格交易机器人**，同时支持三家去中心化交易所：**Decibel**（Aptos 链）、**Extended**（Starknet 链）、**RISEx**。三个交易所可以同时各跑一个网格策略，统一在一个浏览器仪表盘里监控和操控。
 
-如果你还尚未注册交易所，可以用在金的邀请链接，万分感谢🙏
-Decibel注册链接：https://app.decibel.trade/r/Y4GPC5
-Extended注册链接：https://app.extended.exchange/join/ZAIJIN
-
 > ⚠️ **免责声明**：本程序仅供学习和研究。合约交易带高杠杆风险，可能损失全部本金。实盘前请务必先用模拟模式充分熟悉。使用本程序造成的任何盈亏由使用者自行承担。
 
 ---
@@ -15,6 +11,7 @@ Extended注册链接：https://app.extended.exchange/join/ZAIJIN
 - [一、功能总览](#一功能总览)
 - [二、三分钟快速上手（模拟模式）](#二三分钟快速上手模拟模式)
 - [三、一键启动脚本做了什么](#三一键启动脚本做了什么)
+- [三·五、云端 24/7 部署（Railway）](#三五云端-247-部署railway)
 - [四、手动安装（备选方案）](#四手动安装备选方案)
 - [五、仪表盘使用教程](#五仪表盘使用教程)
 - [六、网格策略原理与参数详解](#六网格策略原理与参数详解)
@@ -96,6 +93,57 @@ Extended注册链接：https://app.extended.exchange/join/ZAIJIN
 `实盘启动.bat` 多两个保护步骤：检查 `.env` 是否存在（实盘必须先配置密钥），以及要求你手动输入 `YES` 确认才会启动。
 
 > 💡 关闭命令行窗口 = 停止程序。已挂在交易所的单不会被自动撤销，下次启动程序会自动接管续跑（见[第十二节](#十二断电--崩溃自动恢复机制)）。
+
+---
+
+## 三·五、云端 24/7 部署（Railway）
+
+想让机器人 24 小时不停跑、关电脑也不停？把整个项目部署到 **Railway** 云平台。项目已经带好 `Dockerfile` 和 `railway.json`，几步就能上线。
+
+> ⚠️ **注意**：云端部署 = 你的私钥要放在 Railway 的环境变量里。这是**你自己的服务器、你自己的钱**，法律上没有问题，但 Railway 平台本身出安全事故的概率不为零。**建议只放小额资金测试**，同时 `DASHBOARD_PASSWORD` 一定要用强口令。
+
+### 步骤
+
+1. **准备 GitHub 仓库**：把本项目 fork 或 push 到你自己的私有 GitHub 仓库。
+2. **注册 Railway**：`railway.com` → 用 GitHub 登录。
+3. **新建项目**：Dashboard → **New Project** → **Deploy from GitHub repo** → 选择这个仓库 → Railway 会自动检测到 `Dockerfile` 开始构建。
+4. **加持久化卷**（重要，防重启丢状态）：项目页 → **New** → **Volume** → 挂载点填 `/data`，Size 1GB 就够。
+5. **配环境变量**：项目 → Variables → 至少设置：
+   ```
+   DASHBOARD_PASSWORD=<你的强口令，20+ 位>
+   DE_MODE=paper                # 先跑模拟，稳了再改 live
+   EX_MODE=paper
+   RS_MODE=paper
+   ```
+   实盘时把对应交易所的密钥填上（见第七节字段列表）。`PORT` / `HOST` / `STATE_DIR` **不要手填**，容器会自动处理。
+6. **触发部署**：点 **Deploy**，等构建完成（3–5 分钟）。
+7. **暴露公网 URL**：Settings → Networking → **Generate Domain**，得到形如 `xxx.up.railway.app` 的地址。
+8. **访问仪表盘**：浏览器打开该域名，弹窗输入 `admin` + 你的口令即可。
+
+### 云端 vs 本地取舍
+
+| 维度 | 本地跑（.bat）| Railway 云端 |
+|---|---|---|
+| 24/7 运行 | 需电脑不关机 | ✓ |
+| 私钥安全 | 只在你本机 | 在 Railway 服务器（信任平台） |
+| 网络稳定 | 家宽波动 | 数据中心级 |
+| 成本 | 免费（电费忽略）| ~$5/月起 |
+| 你自己不在电脑前也能操作 | ✗ | ✓（有公网 URL） |
+
+### Railway 版和本地版的行为差异
+
+- 端口 / 网卡：`PORT` 由 Railway 注入；`HOST` 自动切成 `0.0.0.0`
+- 状态文件：写到 `/data/.state.json`（挂在 Volume 上，重启不丢）
+- 口令保护：**强制启用**，未设 `DASHBOARD_PASSWORD` 直接拒绝启动
+- 代理：数据中心一般直连交易所，`GLOBAL_PROXY` 通常留空即可
+- `.bat` 脚本和自动打开浏览器逻辑在容器里不会跑
+
+### 常见坑
+
+- **忘设 `DASHBOARD_PASSWORD`**：日志会提示，改完 Variables 再 Redeploy
+- **实盘密钥填错**：`.env` 校验会中止启动，日志里能看到具体缺什么
+- **交易所连不上**：Railway 有些地区 IP 段可能被交易所拒。日志报 `ENOTFOUND` 或超时时，考虑加代理（`GLOBAL_PROXY=http://user:pass@proxy:port`）
+- **状态没保留**：确认 Volume 挂在 `/data` 且 `STATE_DIR=/data`（默认已配）
 
 ---
 

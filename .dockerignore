@@ -1,0 +1,14 @@
+.git
+.gitignore
+node_modules
+.env
+.env.*
+.state.json*
+*.log
+启动日志.txt
+startup_log.txt
+*.zip
+*.bat
+README.md
+RAILWAY_DEPLOY.md
+test/
