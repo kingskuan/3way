@@ -298,6 +298,83 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
   .overview-grid { grid-template-columns: 1fr; }
   .total-row { grid-template-columns: 1fr 1fr; }
 }
+
+/* ── Mobile (≤640px) ── 手机横竖屏都能用 ── */
+@media (max-width: 640px) {
+  html { -webkit-text-size-adjust: 100%; }
+  body { font-size: 14px; }
+
+  /* 顶栏可换行，字段更紧凑 */
+  .header {
+    height: auto; min-height: 48px;
+    padding: 8px 12px; gap: 8px;
+    flex-wrap: wrap;
+  }
+  .header-logo { font-size: 15px; }
+  .header-sep { display: none; }
+  .header-right { margin-left: auto; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .header-right #hdr-time { display: none; }
+  .badge, .conn { font-size: 10px; padding: 2px 6px; }
+
+  /* Tabs 横向可滚 + 加大点触面积 */
+  .main-tabs {
+    padding: 0 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .main-tabs::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    padding: 12px 14px;
+    font-size: 13px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* 主内容区留白减小 */
+  .wrap { padding: 12px !important; max-width: 100% !important; }
+
+  /* 所有 grid 强制单列 */
+  .grid-2, .grid-3, .grid-left-right, .overview-grid { grid-template-columns: 1fr !important; gap: 10px; }
+  .total-row { grid-template-columns: 1fr 1fr !important; gap: 8px; }
+
+  /* Panel 内边距减小 */
+  .panel { padding: 12px; border-radius: 8px; }
+  .panel-title { font-size: 10px; margin-bottom: 8px; }
+
+  /* 表单 + 按钮：更大点触面积（44px 最小是 Apple 建议） */
+  input, select {
+    font-size: 16px;  /* iOS Safari 小于 16px 会自动放大页面，很难看 */
+    padding: 10px 12px;
+    min-height: 44px;
+  }
+  label { font-size: 12px; margin: 10px 0 4px; }
+  .btn {
+    padding: 13px 16px;
+    font-size: 14px;
+    min-height: 46px;
+  }
+  .mode-btn, .risk-btn { min-height: 44px; padding: 10px 6px; font-size: 12px; }
+
+  /* Overview 卡片字体 */
+  .ov-card { padding: 12px; }
+  .ov-pnl { font-size: 18px; }
+  .ov-stat { font-size: 13px; }
+
+  /* AI 对话气泡宽一点 */
+  .ai-msg, .ai-action { max-width: 96%; font-size: 14px; }
+
+  /* 表格类允许横向滚 */
+  table, pre { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+
+  /* Row 里的相邻控件在窄屏叠成一列 */
+  .row { flex-direction: column; gap: 8px; }
+  .row.row-inline { flex-direction: row; }  /* 显式声明保留 inline 布局 */
+
+  /* 固定宽度的 wrap 恢复自适应 */
+  .wrap[style*="max-width"] { max-width: 100% !important; }
+}
 </style>
 </head>
 <body>
