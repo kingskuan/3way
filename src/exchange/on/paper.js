@@ -8,11 +8,15 @@
 // GET /v1/markets and poll GET /v1/perps/history for candles + mark price.
 import { EventEmitter } from 'node:events';
 
+// Ondo Perps uses string symbols (e.g. "NVDA-USD.P"), but the GridBot core
+// assumes numeric marketIds. We assign incremental numeric IDs to each market
+// discovered from the API and keep the symbol as displayName. The Ondo REST
+// layer looks up the symbol from displayName when calling the exchange.
 const FALLBACK_MARKETS = [
-  { marketId: 'NVDA-USD.P', displayName: 'NVDA-USD.P', symbol: 'NVDA', lastPrice: 140,  stepSize: 0.01, stepPrice: 0.01, maxLeverage: 20, minOrderSize: 0.01 },
-  { marketId: 'AAPL-USD.P', displayName: 'AAPL-USD.P', symbol: 'AAPL', lastPrice: 220,  stepSize: 0.01, stepPrice: 0.01, maxLeverage: 20, minOrderSize: 0.01 },
-  { marketId: 'XAU-USD.P',  displayName: 'XAU-USD.P',  symbol: 'XAU',  lastPrice: 2400, stepSize: 0.001, stepPrice: 0.1,  maxLeverage: 20, minOrderSize: 0.001 },
-  { marketId: 'QQQ-USD.P',  displayName: 'QQQ-USD.P',  symbol: 'QQQ',  lastPrice: 480,  stepSize: 0.01, stepPrice: 0.01, maxLeverage: 20, minOrderSize: 0.01 },
+  { marketId: 1, displayName: 'NVDA-USD.P', symbol: 'NVDA', lastPrice: 140,  stepSize: 0.01, stepPrice: 0.01, maxLeverage: 20, minOrderSize: 0.01 },
+  { marketId: 2, displayName: 'AAPL-USD.P', symbol: 'AAPL', lastPrice: 220,  stepSize: 0.01, stepPrice: 0.01, maxLeverage: 20, minOrderSize: 0.01 },
+  { marketId: 3, displayName: 'XAU-USD.P',  symbol: 'XAU',  lastPrice: 2400, stepSize: 0.001, stepPrice: 0.1,  maxLeverage: 20, minOrderSize: 0.001 },
+  { marketId: 4, displayName: 'QQQ-USD.P',  symbol: 'QQQ',  lastPrice: 480,  stepSize: 0.01, stepPrice: 0.01, maxLeverage: 20, minOrderSize: 0.01 },
 ];
 
 export class PaperExchange extends EventEmitter {
@@ -96,13 +100,14 @@ export class PaperExchange extends EventEmitter {
         const j = await res.json();
         const arr = j.result || j.markets || j.data || j.contracts || (Array.isArray(j) ? j : []);
         const out = [];
+        let nextId = 1;
         for (const m of arr) {
           const symbol = m.market || m.symbol || m.name || m.contract;
           if (!symbol) continue;
           const price = Number(m.markPrice || m.mark_price || m.lastPrice || m.last_price || m.indexPrice || 0);
           if (!price) continue;
           out.push({
-            marketId: symbol,  // Ondo uses string symbol as id (e.g. "NVDA-USD.P")
+            marketId: nextId++,  // numeric id (bot core requires it); Ondo symbol lives in displayName
             displayName: symbol,
             symbol: symbol.replace(/-USD\.P$/, ''),
             lastPrice: price,
@@ -124,14 +129,16 @@ export class PaperExchange extends EventEmitter {
 
   async getCandles(marketId, intervalSec = 3600, n = 200) {
     if (this.dataSource === 'real') {
-      // Ondo TradingView-compat endpoint: /v1/perps/history?symbol=&resolution=&to=&countback=
+      // Ondo TradingView-compat endpoint takes a symbol, but bot passes numeric id.
+      const symbol = this.markets.get(Number(marketId))?.displayName;
+      if (!symbol) return synthCandles(this.prices.get(Number(marketId)) || 100, n);
       const resolution = intervalSec < 3600 ? String(intervalSec / 60)
                        : intervalSec === 3600 ? '60'
                        : intervalSec === 86400 ? '1D'
                        : '60';
       try {
         const now = Math.floor(Date.now() / 1000);
-        const url = `${this.apiUrl}/v1/perps/history?symbol=${encodeURIComponent(marketId)}&resolution=${resolution}&to=${now}&countback=${n}`;
+        const url = `${this.apiUrl}/v1/perps/history?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&to=${now}&countback=${n}`;
         const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
         if (res.ok) {
           const j = await res.json();
@@ -197,6 +204,9 @@ export class PaperExchange extends EventEmitter {
 
   async _pollReal() {
     // Poll mark prices for all subscribed markets via bulk markets endpoint.
+    // Ondo returns symbols (e.g. "NVDA-USD.P"); we map symbol -> numeric marketId.
+    const symbolToId = new Map();
+    for (const [id, m] of this.markets) symbolToId.set(m.displayName, id);
     for (const path of ['/v1/markets', '/v1/perps/markets']) {
       try {
         const res = await fetch(`${this.apiUrl}${path}`, { signal: AbortSignal.timeout(6000) });
@@ -205,9 +215,10 @@ export class PaperExchange extends EventEmitter {
         const arr = j.result || j.markets || j.data || (Array.isArray(j) ? j : []);
         let any = false;
         for (const m of arr) {
-          const id = m.market || m.symbol || m.name;
+          const symbol = m.market || m.symbol || m.name;
           const price = Number(m.markPrice || m.mark_price || m.lastPrice || m.last_price || 0);
-          if (id && price && this.realTarget.has(id)) { this.realTarget.set(id, price); any = true; }
+          const id = symbolToId.get(symbol);
+          if (id != null && price && this.realTarget.has(id)) { this.realTarget.set(id, price); any = true; }
         }
         if (any) return;
       } catch { /* transient */ }

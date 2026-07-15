@@ -28,11 +28,13 @@
   --de-color: #f59e0b;
   --ex-color: #3b82f6;
   --rs-color: #22c55e;
-  --on-color: #ec4899;   /* Ondo: 品红，跟其他三个色系错开 */
+  --on-color: #ec4899;   /* Ondo: 品红 */
+  --pl-color: #a855f7;   /* Perpl: 紫（跟主 accent 的 --pur 错开，更淡） */
   --de-bg: #f59e0b18;
   --ex-bg: #3b82f618;
   --rs-bg: #22c55e18;
   --on-bg: #ec489918;
+  --pl-bg: #a855f718;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -74,6 +76,7 @@ body {
 .tab-btn .dot-ex { color: var(--ex-color); }
 .tab-btn .dot-rs { color: var(--rs-color); }
 .tab-btn .dot-on { color: var(--on-color); }
+.tab-btn .dot-pl { color: var(--pl-color); }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
@@ -96,6 +99,7 @@ body {
 .panel.ex { border-top: 2px solid var(--ex-color); }
 .panel.rs { border-top: 2px solid var(--rs-color); }
 .panel.on { border-top: 2px solid var(--on-color); }
+.panel.pl { border-top: 2px solid var(--pl-color); }
 
 /* ── Overview cards ── */
 .overview-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 16px; }
@@ -111,6 +115,7 @@ body {
 .ov-card.ex::before { background: var(--ex-color); }
 .ov-card.rs::before { background: var(--rs-color); }
 .ov-card.on::before { background: var(--on-color); }
+.ov-card.pl::before { background: var(--pl-color); }
 .ov-exname {
   font-size: 12px; font-weight: 700; letter-spacing: .4px; margin-bottom: 10px;
   display: flex; align-items: center; gap: 8px;
@@ -392,6 +397,7 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
   <span class="hdot idle" id="hdr-ex-dot" title=""></span><span id="hdr-ex" class="badge badge-paper">EX: PAPER</span>
   <span class="hdot idle" id="hdr-rs-dot" title=""></span><span id="hdr-rs" class="badge badge-paper">RS: PAPER</span>
   <span class="hdot idle" id="hdr-on-dot" title=""></span><span id="hdr-on" class="badge badge-paper">ON: PAPER</span>
+  <span class="hdot idle" id="hdr-pl-dot" title=""></span><span id="hdr-pl" class="badge badge-paper">PL: PAPER</span>
   <div class="header-right">
     <span id="hdr-proxy" class="conn" title="全局代理状态"><span class="cdot"></span><span id="hdr-proxy-txt">代理检测中…</span></span>
     <span id="hdr-conn" class="conn warn" title="后端连接状态"><span class="cdot"></span><span id="hdr-conn-txt">连接中…</span></span>
@@ -406,6 +412,7 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
   <button class="tab-btn" onclick="switchTab('ex')"><span class="dot-ex">●</span> Extended</button>
   <button class="tab-btn" onclick="switchTab('rs')"><span class="dot-rs">●</span> RISEx</button>
   <button class="tab-btn" onclick="switchTab('on')"><span class="dot-on">●</span> Ondo</button>
+  <button class="tab-btn" onclick="switchTab('pl')"><span class="dot-pl">●</span> Perpl</button>
   <button class="tab-btn" onclick="switchTab('ai')">🤖 AI助手</button>
   <button class="tab-btn" onclick="switchTab('settings')">⚙ IP配置</button>
 </div>
@@ -548,6 +555,33 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
       <div id="ov-on-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
       <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="reconnectEx('on', this)">🔌 重连交易所（不动挂单/持仓）</button>
       <button class="btn btn-ghost" style="margin-top:8px;font-size:12px" onclick="switchTab('on')">进入 Ondo 控制台 →</button>
+    </div>
+
+    <!-- Perpl -->
+    <div class="ov-card pl">
+      <div class="ov-exname" style="color:var(--pl-color)">
+        <span class="run-dot" id="ov-pl-dot"></span>
+        Perpl · Monad L1
+        <span id="ov-pl-badge" class="badge badge-paper" style="margin-left:auto">PAPER</span>
+      </div>
+      <div id="ov-pl-health" class="exhealth eh-idle">—</div>
+      <div class="ov-pnl" id="ov-pl-pnl">—</div>
+      <div class="ov-sub" id="ov-pl-ret">收益率 —</div>
+      <div style="margin-top:10px">
+        <div class="ov-stat"><span class="lbl">余额</span><span class="val" id="ov-pl-bal">—</span></div>
+        <div class="ov-stat"><span class="lbl">权益</span><span class="val" id="ov-pl-eq">—</span></div>
+        <div class="ov-stat"><span class="lbl">已实现</span><span class="val" id="ov-pl-rpnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">未实现</span><span class="val" id="ov-pl-upnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">交易量</span><span class="val" id="ov-pl-vol">—</span></div>
+        <div class="ov-stat"><span class="lbl">完成网格</span><span class="val" id="ov-pl-rungs">—</span></div>
+        <div class="ov-stat"><span class="lbl">最新价</span><span class="val" id="ov-pl-price">—</span></div>
+        <div class="ov-stat"><span class="lbl">当前市场</span><span class="val" id="ov-pl-mkt">—</span></div>
+      </div>
+      <div id="ov-pl-gridcfg" class="gridcfg" style="display:none"></div>
+      <div id="ov-pl-ai" class="ai-box muted" style="display:none;margin-top:8px;font-size:12px"></div>
+      <div id="ov-pl-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
+      <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="reconnectEx('pl', this)">🔌 重连交易所（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" style="margin-top:8px;font-size:12px" onclick="switchTab('pl')">进入 Perpl 控制台 →</button>
     </div>
   </div>
 
@@ -942,39 +976,257 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
-<!-- TAB: Ondo Perps（首版：只读展示，实盘控制走 API） -->
+<!-- TAB: Ondo Perps —— 完整控制台（跟 DE/EX/RS 一致的字段布局） -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <div id="tab-on" class="tab-panel">
-<div class="wrap" style="max-width:860px">
-  <div class="panel on" style="margin-top:4px">
-    <div class="panel-title" style="color:var(--on-color)">Ondo Perps · 股票 / 黄金 / 原油 Perps</div>
-    <p class="muted" style="line-height:1.7;margin-bottom:14px">
-      交易所已接入，仪表盘控制面板尚在开发中。当前可通过 <b>总览页</b> 看 Ondo 的实时价格
-      和状态，或直接调 REST API 手动控制：
-    </p>
-    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:12px;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.8;color:var(--txt);overflow-x:auto">
-GET  /api/on/markets<br>
-GET  /api/on/trend?marketId=NVDA-USD.P&intervalSec=3600<br>
-GET  /api/on/state<br>
-POST /api/on/start   (JSON: marketId, mode, lower, upper, gridCount, sizeBase, leverage)<br>
-POST /api/on/stop    (JSON: closePosition:true|false)<br>
-POST /api/on/adjust  (JSON: lower, upper)<br>
-POST /api/on/cancel-orders<br>
-POST /api/on/close-position<br>
-POST /api/on/reset<br>
-POST /api/on/reconnect
+<div class="wrap">
+<div class="grid-left-right">
+  <div>
+    <div class="panel on" style="margin-bottom:14px">
+      <div class="panel-title" style="color:var(--on-color)">Ondo Perps · 市场与趋势</div>
+      <label>交易对</label>
+      <select id="on-market"></select>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>K线周期</label>
+          <select id="on-interval">
+            <option value="900">15m</option>
+            <option value="3600" selected>1h</option>
+            <option value="14400">4h</option>
+            <option value="86400">1d</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-ghost" style="margin:0;padding:7px" id="on-refresh-trend">刷新</button>
+        </div>
+      </div>
+      <div style="margin-top:10px" id="on-rec-box" class="rec-box rec-range">
+        <div class="muted">趋势分析</div>
+        <div class="rec-tag" id="on-rec-tag">分析中…</div>
+        <div class="rec-detail" id="on-rec-detail">—</div>
+        <button class="btn btn-ghost" style="margin-top:8px;padding:6px;font-size:12px" id="on-apply-rec">采用推荐策略 + 自动区间</button>
+      </div>
+      <div class="muted" style="margin-top:10px;font-size:11px;line-height:1.6">
+        💡 Ondo Perps 支持 NVDA / TSLA / AAPL / QQQ / AMD 等股票 & ETF · XAU（黄金）/ WTI（原油）· BTC / ETH。
+        股票单位是「股」；每格数量默认 1 股即可（NVDA 一股约 $300，1 股保证金几十美金）。
+        ⚠️ 实盘 <code>ON_MODE=live</code> 尚未联调完成，会报错「LIVE 未启用」，先用 paper 熟悉。
+      </div>
     </div>
-    <p class="muted" style="line-height:1.7;margin-top:14px">
-      ⚠️ 实盘模式（<code>ON_MODE=live</code>）仍在开发中，需要 Ondo API Key 联调完成后才能启用。
-      目前 paper 模式已可用（用真实 Ondo 行情做模拟撮合），启动实盘会报错「Ondo LIVE 未启用」。
-    </p>
-    <p class="muted" style="line-height:1.7;margin-top:10px">
-      支持的市场（来自 Ondo Perps 官方）：
-      <b>NVDA / AAPL / TSLA / QQQ / AMD</b>（股票 & ETF）·
-      <b>XAU（黄金）/ WTI（原油）</b> ·
-      <b>BTC / ETH</b>（少量加密）
-    </p>
+
+    <div class="panel on">
+      <div class="panel-title" style="color:var(--on-color)">Ondo Perps · 策略配置</div>
+      <label>网格类型</label>
+      <div class="modes" id="on-modes">
+        <div class="mode-btn sel" data-mode="neutral">中性<small>双向震荡</small></div>
+        <div class="mode-btn" data-mode="long">做多<small>低买高止</small></div>
+        <div class="mode-btn" data-mode="short">做空<small>高空低止</small></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+        <span class="muted">风格</span>
+        <div class="risk-toggle" id="on-risk-toggle">
+          <span class="risk-btn sel" data-risk="steady">稳健</span>
+          <span class="risk-btn" data-risk="aggressive">激进</span>
+        </div>
+        <span class="muted" id="on-risk-hint">成交少·更安全</span>
+      </div>
+      <button class="btn btn-smart" id="on-smart-fill">🎯 智能填充参数</button>
+      <div class="muted" id="on-smart-note" style="margin:5px 0 2px"></div>
+      <div class="row">
+        <div><label>下边界</label><input id="on-lower" type="number" step="any"></div>
+        <div><label>上边界</label><input id="on-upper" type="number" step="any"></div>
+      </div>
+      <div class="row">
+        <div><label>网格数量</label><input id="on-grid-count" type="number" value="20" min="2"></div>
+        <div><label>每格数量(股)</label><input id="on-size-base" type="number" step="any" value="1"></div>
+      </div>
+      <div class="row">
+        <div><label>杠杆 (x)</label><input id="on-leverage" type="number" value="3" min="1"></div>
+        <div>
+          <label>区间外止损策略</label>
+          <select id="on-auto-stop">
+            <option value="close" selected>冲破区间平仓</option>
+            <option value="recover">只减仓回收阶梯</option>
+          </select>
+        </div>
+      </div>
+      <div class="risk-preview" id="on-risk-preview"></div>
+      <button class="btn btn-start" id="on-start-btn">启动 Ondo 网格</button>
+      <button class="btn btn-stop" id="on-stop-btn" disabled>停止 + 撤单 + 平仓</button>
+      <button class="btn btn-ghost" id="on-adjust-btn" disabled style="margin-top:8px">调整区间（不停止网格）</button>
+      <button class="btn btn-ghost" id="on-cancel-orders-btn" style="margin-top:8px;border-color:var(--yel);color:var(--yel)">撤销所有挂单（保留持仓）</button>
+    </div>
   </div>
+
+  <div>
+    <div class="panel" id="on-orphan-prompt" style="display:none;margin-bottom:14px;border:1px solid var(--yel)">
+      <div class="panel-title" style="color:var(--yel)">⚠ 检测到未托管持仓 · 请选择处理方式</div>
+      <div id="on-orphan-info" class="muted" style="margin-bottom:10px;line-height:1.5"></div>
+      <button class="btn btn-ghost" id="on-orphan-recover" style="border-color:var(--yel);color:var(--yel)">① 只减仓回收阶梯</button>
+      <label style="display:block;font-size:11px;color:var(--mut2);margin-top:6px"><input type="checkbox" id="on-orphan-above-entry" style="width:auto;margin-right:6px;vertical-align:middle">回收仅在成本价以上减仓（不亏才减；否则任何反弹都分批减）</label>
+      <button class="btn btn-ghost" id="on-orphan-regrid" style="margin-top:8px">② 按现价重开网格</button>
+      <button class="btn btn-stop" id="on-orphan-close" style="margin-top:8px">③ 市价平仓</button>
+    </div>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">Ondo Perps · 账户状态</div>
+      <div class="grid-2" style="gap:10px;margin-bottom:10px">
+        <div><div class="kv"><span class="lbl">运行状态</span><span class="val" id="on-st-run">未运行</span></div>
+          <div class="kv"><span class="lbl">最新价</span><span class="val" id="on-st-price">—</span></div>
+          <div class="kv"><span class="lbl">账户余额</span><span class="val" id="on-st-bal">—</span></div>
+          <div class="kv"><span class="lbl">权益</span><span class="val" id="on-st-eq">—</span></div></div>
+        <div><div class="kv"><span class="lbl">持仓</span><span class="val" id="on-st-pos">—</span></div>
+          <div class="kv"><span class="lbl">持仓均价</span><span class="val" id="on-st-entry">—</span></div>
+          <div class="kv"><span class="lbl">已实现盈亏</span><span class="val" id="on-st-rpnl">—</span></div>
+          <div class="kv"><span class="lbl">未实现盈亏</span><span class="val" id="on-st-upnl">—</span></div></div>
+      </div>
+      <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="on-st-total">—</span></div>
+      <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="on-st-orders">—</span></div>
+      <button class="btn btn-ghost" id="on-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
+      <button class="btn btn-ghost" id="on-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+    </div>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">价格 / 网格</div>
+      <div id="on-range-warn"></div>
+      <div class="chartbox"><canvas id="on-chart"></canvas></div>
+    </div>
+    <div class="grid-2" style="gap:14px">
+      <div class="panel">
+        <div class="panel-title">成交记录</div>
+        <table><thead><tr><th>时间</th><th>方向</th><th>价格</th><th>数量</th></tr></thead><tbody id="on-fills"></tbody></table>
+      </div>
+      <div class="panel">
+        <div class="panel-title">运行日志</div>
+        <div class="log" id="on-alerts"><div class="log-item muted">暂无日志</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Perpl (perpl.xyz on Monad L1) —— 完整控制台 -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div id="tab-pl" class="tab-panel">
+<div class="wrap">
+<div class="grid-left-right">
+  <div>
+    <div class="panel pl" style="margin-bottom:14px">
+      <div class="panel-title" style="color:var(--pl-color)">Perpl · 市场与趋势</div>
+      <label>交易对</label>
+      <select id="pl-market"></select>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>K线周期</label>
+          <select id="pl-interval">
+            <option value="900">15m</option>
+            <option value="3600" selected>1h</option>
+            <option value="14400">4h</option>
+            <option value="86400">1d</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-ghost" style="margin:0;padding:7px" id="pl-refresh-trend">刷新</button>
+        </div>
+      </div>
+      <div style="margin-top:10px" id="pl-rec-box" class="rec-box rec-range">
+        <div class="muted">趋势分析</div>
+        <div class="rec-tag" id="pl-rec-tag">分析中…</div>
+        <div class="rec-detail" id="pl-rec-detail">—</div>
+        <button class="btn btn-ghost" style="margin-top:8px;padding:6px;font-size:12px" id="pl-apply-rec">采用推荐策略 + 自动区间</button>
+      </div>
+      <div class="muted" style="margin-top:10px;font-size:11px;line-height:1.6">
+        💡 Perpl 是 Monad L1 上的 perp DEX，市场少但深度足（BTC / ETH / SOL / MON 等）。
+        ⚠️ 实盘 <code>PL_MODE=live</code> 尚未联调（走 WebSocket + Ed25519 签名），先用 paper。
+      </div>
+    </div>
+
+    <div class="panel pl">
+      <div class="panel-title" style="color:var(--pl-color)">Perpl · 策略配置</div>
+      <label>网格类型</label>
+      <div class="modes" id="pl-modes">
+        <div class="mode-btn sel" data-mode="neutral">中性<small>双向震荡</small></div>
+        <div class="mode-btn" data-mode="long">做多<small>低买高止</small></div>
+        <div class="mode-btn" data-mode="short">做空<small>高空低止</small></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+        <span class="muted">风格</span>
+        <div class="risk-toggle" id="pl-risk-toggle">
+          <span class="risk-btn sel" data-risk="steady">稳健</span>
+          <span class="risk-btn" data-risk="aggressive">激进</span>
+        </div>
+        <span class="muted" id="pl-risk-hint">成交少·更安全</span>
+      </div>
+      <button class="btn btn-smart" id="pl-smart-fill">🎯 智能填充参数</button>
+      <div class="muted" id="pl-smart-note" style="margin:5px 0 2px"></div>
+      <div class="row">
+        <div><label>下边界</label><input id="pl-lower" type="number" step="any"></div>
+        <div><label>上边界</label><input id="pl-upper" type="number" step="any"></div>
+      </div>
+      <div class="row">
+        <div><label>网格数量</label><input id="pl-grid-count" type="number" value="20" min="2"></div>
+        <div><label>每格数量(币)</label><input id="pl-size-base" type="number" step="any" value="0.001"></div>
+      </div>
+      <div class="row">
+        <div><label>杠杆 (x)</label><input id="pl-leverage" type="number" value="3" min="1"></div>
+        <div>
+          <label>区间外止损策略</label>
+          <select id="pl-auto-stop">
+            <option value="close" selected>冲破区间平仓</option>
+            <option value="recover">只减仓回收阶梯</option>
+          </select>
+        </div>
+      </div>
+      <div class="risk-preview" id="pl-risk-preview"></div>
+      <button class="btn btn-start" id="pl-start-btn">启动 Perpl 网格</button>
+      <button class="btn btn-stop" id="pl-stop-btn" disabled>停止 + 撤单 + 平仓</button>
+      <button class="btn btn-ghost" id="pl-adjust-btn" disabled style="margin-top:8px">调整区间（不停止网格）</button>
+      <button class="btn btn-ghost" id="pl-cancel-orders-btn" style="margin-top:8px;border-color:var(--yel);color:var(--yel)">撤销所有挂单（保留持仓）</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel" id="pl-orphan-prompt" style="display:none;margin-bottom:14px;border:1px solid var(--yel)">
+      <div class="panel-title" style="color:var(--yel)">⚠ 检测到未托管持仓 · 请选择处理方式</div>
+      <div id="pl-orphan-info" class="muted" style="margin-bottom:10px;line-height:1.5"></div>
+      <button class="btn btn-ghost" id="pl-orphan-recover" style="border-color:var(--yel);color:var(--yel)">① 只减仓回收阶梯</button>
+      <label style="display:block;font-size:11px;color:var(--mut2);margin-top:6px"><input type="checkbox" id="pl-orphan-above-entry" style="width:auto;margin-right:6px;vertical-align:middle">回收仅在成本价以上减仓（不亏才减；否则任何反弹都分批减）</label>
+      <button class="btn btn-ghost" id="pl-orphan-regrid" style="margin-top:8px">② 按现价重开网格</button>
+      <button class="btn btn-stop" id="pl-orphan-close" style="margin-top:8px">③ 市价平仓</button>
+    </div>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">Perpl · 账户状态</div>
+      <div class="grid-2" style="gap:10px;margin-bottom:10px">
+        <div><div class="kv"><span class="lbl">运行状态</span><span class="val" id="pl-st-run">未运行</span></div>
+          <div class="kv"><span class="lbl">最新价</span><span class="val" id="pl-st-price">—</span></div>
+          <div class="kv"><span class="lbl">账户余额</span><span class="val" id="pl-st-bal">—</span></div>
+          <div class="kv"><span class="lbl">权益</span><span class="val" id="pl-st-eq">—</span></div></div>
+        <div><div class="kv"><span class="lbl">持仓</span><span class="val" id="pl-st-pos">—</span></div>
+          <div class="kv"><span class="lbl">持仓均价</span><span class="val" id="pl-st-entry">—</span></div>
+          <div class="kv"><span class="lbl">已实现盈亏</span><span class="val" id="pl-st-rpnl">—</span></div>
+          <div class="kv"><span class="lbl">未实现盈亏</span><span class="val" id="pl-st-upnl">—</span></div></div>
+      </div>
+      <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="pl-st-total">—</span></div>
+      <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="pl-st-orders">—</span></div>
+      <button class="btn btn-ghost" id="pl-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
+      <button class="btn btn-ghost" id="pl-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+    </div>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">价格 / 网格</div>
+      <div id="pl-range-warn"></div>
+      <div class="chartbox"><canvas id="pl-chart"></canvas></div>
+    </div>
+    <div class="grid-2" style="gap:14px">
+      <div class="panel">
+        <div class="panel-title">成交记录</div>
+        <table><thead><tr><th>时间</th><th>方向</th><th>价格</th><th>数量</th></tr></thead><tbody id="pl-fills"></tbody></table>
+      </div>
+      <div class="panel">
+        <div class="panel-title">运行日志</div>
+        <div class="log" id="pl-alerts"><div class="log-item muted">暂无日志</div></div>
+      </div>
+    </div>
+  </div>
+</div>
 </div>
 </div>
 
@@ -1031,6 +1283,7 @@ POST /api/on/reconnect
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('ex', this)">分析 Extended</button>
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('rs', this)">分析 RISEx</button>
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('on', this)">分析 Ondo</button>
+      <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('pl', this)">分析 Perpl</button>
     </div>
     <div id="ai-analyze-box" class="ai-box muted" style="margin-top:10px">综合 4小时/1小时/15分钟 三个周期的指标判断市况，给出区间/格数/间距建议。分析的是该所当前配置的市场。</div>
   </div>
@@ -1133,6 +1386,20 @@ POST /api/on/reconnect
       <div class="ip-status" id="ip-on-status"></div>
     </div>
 
+    <!-- Perpl 代理 -->
+    <div class="ip-section">
+      <div class="ip-section-title" style="color:var(--pl-color)">⬡ Perpl 独立代理（PERPL_PROXY）</div>
+      <p class="muted" style="margin-bottom:8px">仅用于 Perpl（perpl.xyz）交易所。</p>
+      <div class="ip-row">
+        <div>
+          <label>代理地址</label>
+          <input id="ip-pl" type="text" placeholder="例：http://127.0.0.1:7890">
+        </div>
+        <button class="ip-apply-btn" onclick="applyProxy('pl')">写入 .env</button>
+      </div>
+      <div class="ip-status" id="ip-pl-status"></div>
+    </div>
+
     <!-- 测试连接 -->
     <div class="ip-section" style="border-color:var(--border2)">
       <div class="ip-section-title">🔍 代理连接测试</div>
@@ -1172,7 +1439,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   $('tab-' + name).classList.add('active');
-  document.querySelectorAll('.tab-btn')[['overview','de','ex','rs','on','ai','settings'].indexOf(name)].classList.add('active');
+  document.querySelectorAll('.tab-btn')[['overview','de','ex','rs','on','pl','ai','settings'].indexOf(name)].classList.add('active');
   if (name === 'ai') aiRefreshStatus();
 }
 
@@ -1514,6 +1781,8 @@ function makeExchangeCtrl(prefix, chartId) {
 const deCtrl = makeExchangeCtrl('de', 'de-chart');
 const exCtrl = makeExchangeCtrl('ex', 'ex-chart');
 const rsCtrl = makeExchangeCtrl('rs', 'rs-chart');
+const onCtrl = makeExchangeCtrl('on', 'on-chart');
+const plCtrl = makeExchangeCtrl('pl', 'pl-chart');
 
 // ── 总览 SSE + 程序运行状态（后端连接心跳）─────────────────────────────────────
 // 服务器每秒推送一次总览数据。只要心跳正常即视为"正常运行"；心跳停止
@@ -1544,7 +1813,7 @@ function updateConnStatus() {
   el.className = 'conn ' + cls;
   txt.textContent = label;
   el.title = '后端连接状态' + (lastBeat ? `（最后更新 ${Math.round(age / 1000)} 秒前）` : '');
-  if (lastBeat && age >= 10000) ['de','ex','rs','on'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
+  if (lastBeat && age >= 10000) ['de','ex','rs','on','pl'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
 }
 setInterval(updateConnStatus, 1000);
 updateConnStatus();
@@ -1587,7 +1856,7 @@ const MODE_LABEL = { neutral: '中性', long: '做多', short: '做空' };
 const TREND_LABEL = { up: '上升', down: '下降', range: '震荡' };
 
 async function scanTrends() {
-  for (const p of ['de', 'ex', 'rs', 'on']) {
+  for (const p of ['de', 'ex', 'rs', 'on', 'pl']) {
     const box = $(`ov-${p}-trend`);
     if (!box) continue;
     const d = lastOverview[p];
@@ -1675,7 +1944,7 @@ function renderOverview(data) {
   let totEquity = 0, totBalance = 0, totPnl = 0, totRealized = 0, totUnrealized = 0, totVolume = 0, totRungs = 0;
   let running = 0;
 
-  ['de','ex','rs','on'].forEach(p => {
+  ['de','ex','rs','on','pl'].forEach(p => {
     const d = data[p];
     if (!d) return;
     if (d.balance != null) totBalance += d.balance;
@@ -1740,9 +2009,9 @@ function renderOverview(data) {
   $('tot-rungs').textContent = totRungs;
   $('tot-running').innerHTML = running === 0
     ? '<span class="muted">全部停止</span>'
-    : `<span class="up">${running}/4 运行中</span>`;
-  const modes = ['de','ex','rs','on'].map(p => data[p]?.mode?.toUpperCase() || 'PAPER').join(' / ');
-  $('tot-modes').textContent = `DE / EX / RS / ON : ${modes}`;
+    : `<span class="up">${running}/5 运行中</span>`;
+  const modes = ['de','ex','rs','on','pl'].map(p => data[p]?.mode?.toUpperCase() || 'PAPER').join(' / ');
+  $('tot-modes').textContent = `DE / EX / RS / ON / PL : ${modes}`;
 }
 
 // ── IP 配置功能 ──────────────────────────────────────────────────────────────
@@ -1759,6 +2028,7 @@ async function applyProxy(target) {
     ex: 'EXTENDED_PROXY',
     rs: 'RISEX_PROXY',
     on: 'ONDO_PROXY',
+    pl: 'PERPL_PROXY',
   };
 
   try {
@@ -1802,6 +2072,7 @@ async function loadProxyConfig() {
     if (j.ex) $('ip-ex').value = j.ex;
     if (j.rs) $('ip-rs').value = j.rs;
     if (j.on) $('ip-on').value = j.on;
+    if (j.pl) $('ip-pl').value = j.pl;
   } catch {}
 }
 loadProxyConfig();
@@ -1847,7 +2118,7 @@ function aiVendorChange() {
   for (const m of v.models) { const o = document.createElement('option'); o.value = m; dl.appendChild(o); }
   $('ai-cfg-status').textContent = `已按 ${v.name} 预填接口地址和推荐模型（模型可下拉换或手动输入），填好 API Key 后点「保存配置」。`;
 }
-const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo' };
+const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl' };
 const AI_ACTION_LABEL = {
   adjust_range:'调整网格区间', stop_grid:'停止网格', cancel_orders:'撤销全部挂单（保留持仓）',
   close_position:'市价平仓', reconnect:'重连交易所', start_recovery:'启动只减仓回收阶梯', start_grid:'启动网格',
@@ -1963,7 +2234,7 @@ async function aiRefreshStatus() {
       }
       if (document.activeElement !== $('ov-ai-mkt-min')) $('ov-ai-mkt-min').placeholder = s.marketMin;
       if (document.activeElement !== $('ov-ai-sent-min')) $('ov-ai-sent-min').placeholder = s.sentinelMin;
-      for (const p of ['de', 'ex', 'rs', 'on']) {
+      for (const p of ['de', 'ex', 'rs', 'on', 'pl']) {
         const el = $(`ov-${p}-ai`);
         const per = s.sentinel && s.sentinel.per ? s.sentinel.per[p] : null;
         if (el && per) {

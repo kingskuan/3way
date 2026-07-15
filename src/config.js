@@ -88,6 +88,24 @@ export function getConfig() {
     proxy: process.env.RISEX_PROXY || globalProxy,
   };
 
+  // ── Perpl (perpl.xyz on Monad L1) ─────────────────────────────────────────
+  const plNet = (process.env.PL_NETWORK || 'mainnet').toLowerCase();
+  const plDefaults = plNet === 'testnet'
+    ? { api: 'https://testnet.perpl.xyz/api', ws: 'wss://testnet.perpl.xyz' }
+    : { api: 'https://app.perpl.xyz/api',     ws: 'wss://app.perpl.xyz' };
+
+  const pl = {
+    mode: (process.env.PL_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
+    network: plNet,
+    apiKey: process.env.PERPL_API_KEY || '',
+    privateKey: process.env.PERPL_PRIVATE_KEY || '',
+    apiUrl: (process.env.PERPL_API_URL || plDefaults.api).replace(/\/$/, ''),
+    wsUrl: process.env.PERPL_WS_URL || plDefaults.ws,
+    chainId: process.env.PERPL_CHAIN_ID || (plNet === 'testnet' ? 'monad-testnet-1' : 'monad-mainnet-1'),
+    startBalance: Number(process.env.PAPER_BALANCE || 10000),
+    proxy: process.env.PERPL_PROXY || globalProxy,
+  };
+
   // ── Ondo Perps ────────────────────────────────────────────────────────────
   const onNet = (process.env.ON_NETWORK || 'mainnet').toLowerCase();
   const onDefaults = onNet === 'testnet'
@@ -128,6 +146,7 @@ export function getConfig() {
     ex,
     rs,
     on,
+    pl,
   };
 }
 
