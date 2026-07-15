@@ -448,7 +448,14 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
     </div>
   </div>
 
-  <!-- 三交易所独立概览 -->
+  <!-- 一键动作条 -->
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 4px">
+    <button class="btn btn-ghost" style="margin:0;padding:8px 14px;font-size:12px;width:auto" onclick="bulkReconnectAll(this)">🔌 一键重连所有交易所</button>
+    <button class="btn btn-ghost" style="margin:0;padding:8px 14px;font-size:12px;width:auto;border-color:var(--red);color:var(--red)" onclick="bulkResetDemo(this)">🔄 Demo 重置（停网格+撤单+平仓+清零）</button>
+    <span id="bulk-status" class="muted" style="font-size:12px;align-self:center"></span>
+  </div>
+
+  <!-- 五交易所独立概览 -->
   <div class="overview-grid">
     <!-- Decibel -->
     <div class="ov-card de">
@@ -1270,7 +1277,13 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
 
   <!-- 每所独立勾选 + 资金上限 -->
   <div class="panel" style="margin-top:14px">
-    <div class="panel-title">托管哪些交易所</div>
+    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>托管哪些交易所</span>
+      <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px">
+        <button class="btn btn-ghost" style="width:auto;margin:0;padding:4px 10px;font-size:11px" onclick="apToggleAll(true)">☑ 全选</button>
+        <button class="btn btn-ghost" style="width:auto;margin:0 0 0 6px;padding:4px 10px;font-size:11px" onclick="apToggleAll(false)">☐ 全清</button>
+      </span>
+    </div>
     <div id="ap-per-ex" class="grid-2" style="gap:12px"></div>
   </div>
 
@@ -2629,8 +2642,57 @@ async function apSave() {
 
 $('ap-save-btn').addEventListener('click', apSave);
 
+function apToggleAll(enabled) {
+  document.querySelectorAll('.ap-ex-enable').forEach((cb) => { cb.checked = enabled; });
+}
+
 apRefresh();
 setInterval(apRefresh, 15000);   // 每 15s 刷一次状态
+
+// ── 总览页一键动作 ──────────────────────────────────────────────────────────
+async function bulkReconnectAll(btn) {
+  const st = $('bulk-status');
+  btn.disabled = true; const orig = btn.textContent;
+  btn.textContent = '⏳ 重连中…'; st.textContent = '';
+  const keys = ['de','ex','rs','on','pl'];
+  const results = await Promise.all(keys.map(async (k) => {
+    try {
+      const r = await fetch(`/api/${k}/reconnect`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+      const j = await r.json();
+      return { k, ok: !j.error, msg: j.error || (j.resumed ? '已续跑' : '已连接') };
+    } catch (e) { return { k, ok:false, msg: e.message }; }
+  }));
+  const okCount = results.filter(r => r.ok).length;
+  btn.disabled = false; btn.textContent = orig;
+  st.innerHTML = `${okCount}/5 成功：` + results.map(r => `<span class="${r.ok?'up':'down'}">${r.k.toUpperCase()}</span>`).join(' · ');
+  setTimeout(() => { st.textContent = ''; }, 8000);
+}
+
+async function bulkResetDemo(btn) {
+  if (!confirm('确定重置所有 5 家 Demo？会：\n① 停止所有 running 网格\n② 撤销所有挂单\n③ 市价平掉持仓\n④ 统计清零（余额回到初始）\n\n实盘也会被平仓，慎按！')) return;
+  const st = $('bulk-status');
+  btn.disabled = true; const orig = btn.textContent;
+  btn.textContent = '⏳ 重置中…'; st.textContent = '';
+  const keys = ['de','ex','rs','on','pl'];
+  const results = await Promise.all(keys.map(async (k) => {
+    try {
+      // 先停网格 + 平仓
+      await fetch(`/api/${k}/stop`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ closePosition:true }) });
+      // 兜底撤所有挂单
+      await fetch(`/api/${k}/cancel-orders`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+      // 再兜底平仓
+      await fetch(`/api/${k}/close-position`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+      // 重置统计
+      const r = await fetch(`/api/${k}/reset`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+      const j = await r.json();
+      return { k, ok: !j.error, msg: j.error || 'ok' };
+    } catch (e) { return { k, ok:false, msg: e.message }; }
+  }));
+  const okCount = results.filter(r => r.ok).length;
+  btn.disabled = false; btn.textContent = orig;
+  st.innerHTML = `${okCount}/5 已重置：` + results.map(r => `<span class="${r.ok?'up':'down'}">${r.k.toUpperCase()}</span>`).join(' · ');
+  setTimeout(() => { st.textContent = ''; }, 10000);
+}
 </script>
 </body>
 </html>
