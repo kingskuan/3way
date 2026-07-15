@@ -385,6 +385,358 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
   /* 固定宽度的 wrap 恢复自适应 */
   .wrap[style*="max-width"] { max-width: 100% !important; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ▓▓▓ v2 视觉层 · 现代仪表盘 · Glass + Gradient + Flip 数字
+   ▓▓▓ （旧样式保留在上面作为回退；这一层用 later-wins 覆盖）
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* — 全新色 tokens — */
+:root {
+  --v2-bg-1: #030712;
+  --v2-bg-2: #0b1120;
+  --v2-txt: #e2e8f0;
+  --v2-txt-2: #cbd5e1;
+  --v2-mut: #64748b;
+  --v2-mut-2: #94a3b8;
+  --v2-card-bg: rgba(15, 23, 42, 0.55);
+  --v2-card-hi: rgba(30, 41, 59, 0.75);
+  --v2-line: rgba(148, 163, 184, 0.14);
+  --v2-line-hi: rgba(148, 163, 184, 0.28);
+  --v2-accent: #6366f1;
+  --v2-accent-2: #a855f7;
+  --v2-accent-3: #ec4899;
+  --v2-green: #22c55e;
+  --v2-green-2: #4ade80;
+  --v2-red: #ef4444;
+  --v2-red-2: #f87171;
+  --v2-yellow: #fcd34d;
+}
+
+/* — 全屏渐变背景（辉光效果，只画一次不随内容滚动）— */
+body {
+  background:
+    radial-gradient(1200px 600px at -15% -10%, rgba(30, 41, 59, 0.4) 0%, transparent 60%),
+    radial-gradient(800px 500px at 120% 20%, rgba(99, 102, 241, 0.20) 0%, transparent 60%),
+    radial-gradient(700px 400px at 50% 120%, rgba(168, 85, 247, 0.15) 0%, transparent 60%),
+    linear-gradient(180deg, var(--v2-bg-1) 0%, var(--v2-bg-2) 100%) !important;
+  background-attachment: fixed;
+  color: var(--v2-txt) !important;
+  font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Inter var", "PingFang SC", "Microsoft YaHei", sans-serif !important;
+}
+
+/* — 顶栏改玻璃 sticky — */
+.header {
+  background: rgba(15, 23, 42, 0.65) !important;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: 1px solid var(--v2-line) !important;
+  padding: 0 24px !important;
+}
+.header-logo { letter-spacing: -0.02em !important; }
+.header-logo span {
+  background: linear-gradient(90deg, #a5b4fc, #f0abfc) !important;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+}
+.header-sep { background: var(--v2-line) !important; }
+.badge {
+  border-radius: 6px !important;
+  letter-spacing: 0.04em;
+  font-weight: 700 !important;
+  padding: 2px 7px !important;
+}
+.hdot {
+  box-shadow: 0 0 0 2px rgba(15,23,42,0.6);
+}
+.hdot.ok {
+  background: var(--v2-green) !important;
+  box-shadow: 0 0 8px var(--v2-green), 0 0 0 2px rgba(15,23,42,0.6) !important;
+}
+.hdot.warn { background: var(--v2-yellow) !important; }
+.hdot.error { background: var(--v2-red) !important; box-shadow: 0 0 8px var(--v2-red), 0 0 0 2px rgba(15,23,42,0.6) !important; }
+
+/* — Tab 改圆片 chip — */
+.main-tabs {
+  background: transparent !important;
+  border-bottom: none !important;
+  padding: 14px 24px !important;
+  gap: 8px !important;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-wrap: nowrap;
+  position: sticky;
+  top: 52px;
+  z-index: 90;
+  backdrop-filter: blur(24px) saturate(180%);
+  background: rgba(3, 7, 18, 0.7) !important;
+  border-bottom: 1px solid var(--v2-line) !important;
+}
+.main-tabs::-webkit-scrollbar { display: none; }
+.tab-btn {
+  padding: 8px 16px !important;
+  border-radius: 100px !important;
+  background: rgba(30, 41, 59, 0.5) !important;
+  border: 1px solid var(--v2-line) !important;
+  color: var(--v2-txt-2) !important;
+  margin: 0 !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  transition: all 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tab-btn:hover:not(.active) {
+  background: var(--v2-card-hi) !important;
+  border-color: var(--v2-line-hi) !important;
+  color: var(--v2-txt) !important;
+}
+.tab-btn.active {
+  background: linear-gradient(135deg, var(--v2-accent), var(--v2-accent-2)) !important;
+  color: white !important;
+  border-color: transparent !important;
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35);
+  font-weight: 600 !important;
+}
+.tab-btn.active .dot-de,
+.tab-btn.active .dot-ex,
+.tab-btn.active .dot-rs,
+.tab-btn.active .dot-on,
+.tab-btn.active .dot-pl { color: white !important; text-shadow: 0 0 4px rgba(255,255,255,0.5); }
+
+/* — Panel 玻璃化 — */
+.panel {
+  background: var(--v2-card-bg) !important;
+  border: 1px solid var(--v2-line) !important;
+  border-radius: 16px !important;
+  padding: 18px !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: border-color 0.2s;
+}
+.panel:hover { border-color: var(--v2-line-hi) !important; }
+.panel-title {
+  color: var(--v2-mut-2) !important;
+  font-size: 10.5px !important;
+  letter-spacing: 0.14em !important;
+  margin-bottom: 14px !important;
+  font-weight: 600 !important;
+}
+/* 保留各所色的顶部边（更细） */
+.panel.de, .panel.ex, .panel.rs, .panel.on, .panel.pl {
+  border-top-width: 1px !important;
+  position: relative;
+}
+.panel.de::before, .panel.ex::before, .panel.rs::before, .panel.on::before, .panel.pl::before {
+  content: '';
+  position: absolute;
+  top: -1px; left: 16px; right: 16px; height: 2px;
+  border-radius: 2px;
+}
+.panel.de::before { background: linear-gradient(90deg, transparent, var(--de-color), transparent); }
+.panel.ex::before { background: linear-gradient(90deg, transparent, var(--ex-color), transparent); }
+.panel.rs::before { background: linear-gradient(90deg, transparent, var(--rs-color), transparent); }
+.panel.on::before { background: linear-gradient(90deg, transparent, var(--on-color), transparent); }
+.panel.pl::before { background: linear-gradient(90deg, transparent, var(--pl-color), transparent); }
+
+/* — Overview 汇总卡改造：第一张为 hero，其余为辅助 — */
+.total-row {
+  gap: 12px !important;
+}
+.total-card {
+  background: var(--v2-card-bg) !important;
+  border: 1px solid var(--v2-line) !important;
+  border-radius: 16px !important;
+  padding: 16px 18px !important;
+  backdrop-filter: blur(16px);
+  transition: border-color 0.2s;
+}
+.total-card:hover { border-color: var(--v2-line-hi) !important; }
+.total-card .lbl {
+  color: var(--v2-mut-2) !important;
+  font-size: 10.5px !important;
+  letter-spacing: 0.14em !important;
+  font-weight: 600 !important;
+}
+.total-card .val {
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.02em !important;
+  margin-top: 4px !important;
+  font-variant-numeric: tabular-nums !important;
+  color: var(--v2-txt) !important;
+}
+.total-card .sub {
+  color: var(--v2-mut) !important;
+  font-variant-numeric: tabular-nums !important;
+  font-size: 11.5px !important;
+}
+/* 第一张卡（总权益）弄成 Hero */
+.total-card:first-child {
+  background:
+    linear-gradient(135deg, rgba(99, 102, 241, 0.18) 0%, rgba(168, 85, 247, 0.08) 100%),
+    var(--v2-card-bg) !important;
+  border-color: rgba(99, 102, 241, 0.3) !important;
+}
+.total-card:first-child .val {
+  font-size: 32px !important;
+  background: linear-gradient(180deg, #f8fafc, #cbd5e1) !important;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+}
+
+/* — Overview 卡改造 — */
+.ov-card {
+  background: var(--v2-card-bg) !important;
+  border: 1px solid var(--v2-line) !important;
+  border-radius: 16px !important;
+  padding: 16px !important;
+  backdrop-filter: blur(16px);
+  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.ov-card:hover {
+  border-color: var(--v2-line-hi) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 20px 40px -20px rgba(99, 102, 241, 0.25);
+}
+.ov-card::before {
+  top: -1px !important;
+  left: 16px !important; right: 16px !important;
+  height: 3px !important;
+  border-radius: 3px !important;
+}
+.ov-exname {
+  font-size: 13px !important;
+  letter-spacing: 0.02em;
+  font-weight: 700 !important;
+}
+.ov-pnl {
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.02em !important;
+  font-variant-numeric: tabular-nums !important;
+}
+.ov-stat {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08) !important;
+  padding: 6px 0 !important;
+  font-size: 12.5px !important;
+}
+.ov-stat:last-child { border-bottom: none !important; }
+.ov-stat .lbl { color: var(--v2-mut) !important; }
+.ov-stat .val { font-variant-numeric: tabular-nums !important; color: var(--v2-txt-2) !important; }
+
+/* — 通用输入 & 按钮 — */
+input, select {
+  background: rgba(15, 23, 42, 0.5) !important;
+  border: 1px solid var(--v2-line) !important;
+  color: var(--v2-txt) !important;
+  border-radius: 10px !important;
+  transition: border-color 0.15s, background 0.15s !important;
+}
+input:hover, select:hover { background: rgba(15, 23, 42, 0.7) !important; }
+input:focus, select:focus {
+  border-color: var(--v2-accent) !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15) !important;
+  background: rgba(15, 23, 42, 0.8) !important;
+}
+.btn {
+  border-radius: 10px !important;
+  letter-spacing: 0.01em;
+  transition: all 0.15s;
+}
+.btn-start {
+  background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+  box-shadow: 0 4px 16px rgba(34, 197, 94, 0.25);
+}
+.btn-stop {
+  background: linear-gradient(135deg, #ef4444, #dc2626) !important;
+  box-shadow: 0 4px 16px rgba(239, 68, 68, 0.25);
+}
+.btn-smart {
+  background: linear-gradient(135deg, var(--v2-accent), var(--v2-accent-2)) !important;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3);
+}
+.btn-ghost {
+  background: rgba(30, 41, 59, 0.5) !important;
+  border: 1px solid var(--v2-line) !important;
+  color: var(--v2-txt-2) !important;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--v2-card-hi) !important;
+  border-color: var(--v2-line-hi) !important;
+  color: var(--v2-txt) !important;
+}
+.btn:not(:disabled):hover { transform: translateY(-1px); }
+.btn:not(:disabled):active { transform: translateY(0); }
+
+/* — Mode 按钮 — */
+.mode-btn {
+  background: rgba(15, 23, 42, 0.5) !important;
+  border: 1px solid var(--v2-line) !important;
+  border-radius: 10px !important;
+  color: var(--v2-mut-2) !important;
+}
+.mode-btn.sel {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(168, 85, 247, 0.15)) !important;
+  border-color: var(--v2-accent) !important;
+  color: #c7d2fe !important;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.2);
+}
+
+/* — 状态 pill (conn / trend-box) — */
+.conn {
+  border-radius: 100px !important;
+  background: rgba(15, 23, 42, 0.6) !important;
+  border: 1px solid var(--v2-line) !important;
+  backdrop-filter: blur(8px);
+}
+.trend-box { border-radius: 10px !important; backdrop-filter: blur(8px); }
+
+/* — 数字翻页动画（日历跳动）— */
+/* 用 3D rotateX 制造上下翻页感；触发方式：JS 换 textContent 后立即加 .flip 类 */
+.num-anim {
+  display: inline-block;
+  transform-origin: 50% 50%;
+  perspective: 400px;
+}
+.num-anim.flip {
+  animation: numFlip 0.55s cubic-bezier(0.68, 0, 0.32, 1);
+}
+@keyframes numFlip {
+  0%   { transform: rotateX(0);      opacity: 1; }
+  40%  { transform: rotateX(-90deg); opacity: 0.3; }
+  40.001% { transform: rotateX(90deg); opacity: 0.3; }
+  100% { transform: rotateX(0);      opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .num-anim.flip { animation: none; }
+}
+
+/* — Autopilot 页整体优化 — */
+#tab-autopilot .panel { padding: 20px !important; }
+#ap-master {
+  accent-color: var(--v2-accent);
+}
+#ap-log .log-item {
+  padding: 8px 10px !important;
+  border-left: 2px solid var(--v2-line);
+  margin-bottom: 6px;
+  border-radius: 0 8px 8px 0;
+  background: rgba(15, 23, 42, 0.3);
+}
+#ap-log .log-item:has(b) { border-left-color: var(--v2-accent); }
+
+/* — 手机适配 v2 覆盖 — */
+@media (max-width: 640px) {
+  .header { padding: 8px 12px !important; }
+  .main-tabs { padding: 10px 12px !important; top: auto; position: relative; }
+  .tab-btn { padding: 8px 12px !important; font-size: 12px !important; }
+  .total-card .val { font-size: 20px !important; }
+  .total-card:first-child .val { font-size: 26px !important; }
+  .ov-pnl { font-size: 20px !important; }
+}
 </style>
 </head>
 <body>
@@ -2648,6 +3000,63 @@ function apToggleAll(enabled) {
 
 apRefresh();
 setInterval(apRefresh, 15000);   // 每 15s 刷一次状态
+
+// ══════════════════════════════════════════════════════════════════════════
+// ▓▓▓ v2 数字翻页动画（日历跳动）——所有 .num-anim 元素变化时触发一次翻转
+// ══════════════════════════════════════════════════════════════════════════
+
+// 关键数字节点选择器：hero 汇总 / 各所卡片 / autopilot 状态数字都算
+const NUM_SELECTORS = [
+  '#tot-equity', '#tot-pnl', '#tot-balance', '#tot-realized',
+  '#tot-unrealized', '#tot-volume', '#tot-rungs',
+  '#ov-de-pnl', '#ov-ex-pnl', '#ov-rs-pnl', '#ov-on-pnl', '#ov-pl-pnl',
+  '#ov-de-bal', '#ov-ex-bal', '#ov-rs-bal', '#ov-on-bal', '#ov-pl-bal',
+  '#ov-de-eq',  '#ov-ex-eq',  '#ov-rs-eq',  '#ov-on-eq',  '#ov-pl-eq',
+  '#ov-de-price','#ov-ex-price','#ov-rs-price','#ov-on-price','#ov-pl-price',
+  '#de-st-price','#ex-st-price','#rs-st-price','#on-st-price','#pl-st-price',
+  '#de-st-bal','#ex-st-bal','#rs-st-bal','#on-st-bal','#pl-st-bal',
+  '#de-st-eq','#ex-st-eq','#rs-st-eq','#on-st-eq','#pl-st-eq',
+];
+
+function initNumAnimation() {
+  NUM_SELECTORS.forEach((sel) => {
+    document.querySelectorAll(sel).forEach((el) => el.classList.add('num-anim'));
+  });
+  // MutationObserver：一旦文本变化，闪一下 .flip 类触发 CSS 关键帧动画
+  const targets = document.querySelectorAll('.num-anim');
+  const lastText = new WeakMap();
+  targets.forEach((el) => lastText.set(el, el.textContent));
+
+  const obs = new MutationObserver((records) => {
+    // 用 Set 去重同一元素在一批 mutations 里的多次触发
+    const changed = new Set();
+    for (const r of records) {
+      const el = r.target.nodeType === 3 ? r.target.parentNode : r.target;
+      const num = el.closest && el.closest('.num-anim');
+      if (num) changed.add(num);
+    }
+    changed.forEach((num) => {
+      const cur = num.textContent;
+      if (cur !== lastText.get(num)) {
+        lastText.set(num, cur);
+        num.classList.remove('flip');
+        // 强制 reflow 让 CSS 动画重新触发
+        void num.offsetWidth;
+        num.classList.add('flip');
+      }
+    });
+  });
+  targets.forEach((el) => obs.observe(el, {
+    characterData: true, childList: true, subtree: true,
+  }));
+}
+
+// 延迟到 DOM ready 后再挂，确保所有 id 都已存在
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initNumAnimation);
+} else {
+  initNumAnimation();
+}
 
 // ── 总览页一键动作 ──────────────────────────────────────────────────────────
 async function bulkReconnectAll(btn) {
