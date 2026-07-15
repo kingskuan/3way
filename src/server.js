@@ -18,6 +18,7 @@ import { analyzeTrend } from './trend.js';
 import { setupProxies, checkProxy } from './proxy.js';
 import { loadSnapshot, saveSnapshot } from './persist.js';
 import { createAiService } from './ai/service.js';
+import { createAutopilot } from './ai/autopilot.js';
 
 // ── 启动配置 ─────────────────────────────────────────────────────────────────
 const cfg = getConfig();
@@ -127,6 +128,13 @@ const aiService = createAiService({
   exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange },
 });
 aiService.start();
+
+// ── AI Autopilot（无脑一键：AI 自动选币 + 起网格 + 熔断护栏 + Telegram 复盘）
+const autopilot = createAutopilot({
+  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot },
+  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange },
+});
+autopilot.start();
 
 // SSE 客户端集合（按交易所分组）
 const deClients = new Set();
@@ -395,6 +403,22 @@ const server = http.createServer(async (request, res) => {
         return send(res, 200, await aiService.analyze(String(b.ex || 'de')));
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
     }
+    // ── Autopilot API ─────────────────────────────────────────────────────
+    if (p === '/api/autopilot/status') {
+      return send(res, 200, autopilot.status());
+    }
+    if (p === '/api/autopilot/config' && request.method === 'POST') {
+      try { return send(res, 200, autopilot.updateConfig(await readBody(request))); }
+      catch (e) { return send(res, 400, { error: e?.message || String(e) }); }
+    }
+    if (p === '/api/autopilot/resume' && request.method === 'POST') {
+      try {
+        const b = await readBody(request);
+        if (!b?.key) return send(res, 400, { error: 'missing "key"' });
+        return send(res, 200, autopilot.resumeExchange(String(b.key)));
+      } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+    }
+
     if (p === '/api/ai/chat' && request.method === 'POST') {
       try {
         const b = await readBody(request);
