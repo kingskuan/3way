@@ -413,6 +413,7 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
   <button class="tab-btn" onclick="switchTab('rs')"><span class="dot-rs">●</span> RISEx</button>
   <button class="tab-btn" onclick="switchTab('on')"><span class="dot-on">●</span> Ondo</button>
   <button class="tab-btn" onclick="switchTab('pl')"><span class="dot-pl">●</span> Perpl</button>
+  <button class="tab-btn" onclick="switchTab('autopilot')">🚀 Autopilot</button>
   <button class="tab-btn" onclick="switchTab('ai')">🤖 AI助手</button>
   <button class="tab-btn" onclick="switchTab('settings')">⚙ IP配置</button>
 </div>
@@ -1231,6 +1232,63 @@ th { color: var(--mut2); font-weight: 600; font-size: 10px; text-transform: uppe
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: 🚀 Autopilot — AI 无脑一键托管 -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div id="tab-autopilot" class="tab-panel">
+<div class="wrap" style="max-width:1100px">
+  <!-- 主开关卡 -->
+  <div class="panel" style="margin-top:4px;border-top:2px solid var(--pur)">
+    <div class="panel-title" style="color:var(--pur)">🚀 Autopilot · AI 无脑一键托管</div>
+    <p class="muted" style="line-height:1.6;margin-bottom:14px">
+      打开主开关后，AI 会每 <b><span id="ap-interval-label">15</span></b> 分钟自动为你勾选的交易所选交易对、
+      开网格、监控行情，触发熔断（日亏 / 连亏）会自动停网格并推 Telegram。<b>只有勾选的交易所会被托管，未勾选的手动模式不受影响。</b>
+    </p>
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;color:var(--txt);margin:0">
+        <input type="checkbox" id="ap-master" style="width:auto;transform:scale(1.4);margin-right:4px">
+        主开关（全站 Autopilot）
+      </label>
+      <span id="ap-next-tick" class="muted" style="font-size:12px"></span>
+    </div>
+    <div class="row" style="gap:12px">
+      <div>
+        <label>风格</label>
+        <select id="ap-risk">
+          <option value="conservative">保守（默认）· 区间宽 10% · 日亏 -2% 熔断</option>
+          <option value="balanced">平衡 · 区间 8% · 日亏 -3% 熔断</option>
+          <option value="aggressive">激进 · 区间 6% · 日亏 -5% 熔断</option>
+        </select>
+      </div>
+      <div>
+        <label>决策频率（分钟）</label>
+        <input id="ap-interval" type="number" min="5" max="120" value="15">
+      </div>
+    </div>
+    <button class="btn btn-smart" id="ap-save-btn" style="margin-top:14px">💾 保存配置</button>
+    <div id="ap-save-msg" class="muted" style="margin-top:8px;font-size:12px"></div>
+  </div>
+
+  <!-- 每所独立勾选 + 资金上限 -->
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-title">托管哪些交易所</div>
+    <div id="ap-per-ex" class="grid-2" style="gap:12px"></div>
+  </div>
+
+  <!-- 每所状态 -->
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-title">当前状态（每所）</div>
+    <div id="ap-state" class="grid-2" style="gap:12px"></div>
+  </div>
+
+  <!-- 决策日志 -->
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-title">最近决策日志（最多 30 条）</div>
+    <div id="ap-log" class="log" style="max-height:400px;overflow-y:auto"><div class="log-item muted">暂无日志</div></div>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
 <!-- TAB: IP配置 -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <!-- ═══════════════════════════════════════════════════════════ -->
@@ -1439,7 +1497,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   $('tab-' + name).classList.add('active');
-  document.querySelectorAll('.tab-btn')[['overview','de','ex','rs','on','pl','ai','settings'].indexOf(name)].classList.add('active');
+  document.querySelectorAll('.tab-btn')[['overview','de','ex','rs','on','pl','autopilot','ai','settings'].indexOf(name)].classList.add('active');
   if (name === 'ai') aiRefreshStatus();
 }
 
@@ -2431,6 +2489,148 @@ async function aiSaveIntervals(btn) {
 // AI 状态全局轮询（总览页板块 + AI 助手页共用）
 aiRefreshStatus();
 setInterval(aiRefreshStatus, 30000);
+
+// ── 🚀 Autopilot UI ─────────────────────────────────────────────────────────
+const AP_EX = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl' };
+const AP_ACTION_ICON = {
+  none:'—', start:'🟢', started:'🟢', stop:'🛑', adjusted:'🔄',
+  skip:'⏭', skipped:'⏭', error:'❌', emergency_stop:'🚨',
+};
+const AP_ACTION_LABEL = {
+  none:'—', start:'启动', started:'启动', stop:'停止', adjusted:'调整',
+  skip:'跳过', skipped:'跳过', error:'出错', emergency_stop:'紧急熔断',
+};
+
+function apFmtTime(t) { return new Date(t).toLocaleString('zh-CN', { hour12:false }); }
+function apFmtCountdown(ms) {
+  if (ms <= 0) return '即将决策';
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return m > 0 ? `下次决策 ${m}分${s}秒后` : `下次决策 ${s}秒后`;
+}
+
+async function apRefresh() {
+  try {
+    const r = await fetch('/api/autopilot/status');
+    const j = await r.json();
+    apRender(j);
+  } catch { /* ignore */ }
+}
+
+function apRender(s) {
+  const c = s.cfg || {};
+  // 顶部字段（用户没在编辑时才回填）
+  if (document.activeElement !== $('ap-master')) $('ap-master').checked = !!c.masterEnabled;
+  if (document.activeElement !== $('ap-risk'))   $('ap-risk').value = c.riskStyle || 'conservative';
+  if (document.activeElement !== $('ap-interval')) $('ap-interval').value = c.decisionIntervalMin || 15;
+  $('ap-interval-label').textContent = c.decisionIntervalMin || 15;
+  $('ap-next-tick').textContent = c.masterEnabled ? apFmtCountdown(s.nextTickIn) : '主开关未开启';
+
+  // 每所勾选
+  const box = $('ap-per-ex');
+  const kept = new Map();
+  box.querySelectorAll('.ap-ex-row').forEach((el) => { kept.set(el.dataset.k, el); });
+  box.innerHTML = '';
+  for (const k of Object.keys(AP_EX)) {
+    const pe = c.perExchange?.[k] || { enabled:false, maxCapitalUsdc:1000 };
+    const row = document.createElement('div');
+    row.className = 'ap-ex-row';
+    row.dataset.k = k;
+    row.style.cssText = 'background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:12px';
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:600;margin:0">
+          <input type="checkbox" class="ap-ex-enable" data-k="${k}" style="width:auto" ${pe.enabled?'checked':''}>
+          ${AP_EX[k]}
+        </label>
+      </div>
+      <div style="margin-top:8px">
+        <label style="font-size:11px">资金上限 (USDC)</label>
+        <input type="number" class="ap-ex-cap" data-k="${k}" min="0" step="10" value="${pe.maxCapitalUsdc || 1000}">
+      </div>
+    `;
+    box.appendChild(row);
+  }
+
+  // 每所状态
+  const stateBox = $('ap-state');
+  stateBox.innerHTML = '';
+  for (const k of Object.keys(AP_EX)) {
+    const st = s.state?.[k] || {};
+    const paused = st.pausedUntil && st.pausedUntil > Date.now();
+    const enabled = c.perExchange?.[k]?.enabled;
+    const icon = paused ? '🚨' : (enabled ? '🟢' : '⚪');
+    const box = document.createElement('div');
+    box.style.cssText = 'background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:12px;font-size:12px';
+    box.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <b style="font-size:14px">${icon} ${AP_EX[k]}</b>
+        ${paused ? `<button class="btn btn-ghost" style="width:auto;margin:0;padding:4px 10px;font-size:11px;border-color:var(--yel);color:var(--yel)" onclick="apResume('${k}')">解除熔断</button>` : ''}
+      </div>
+      <div class="muted">${enabled ? '已托管' : '未托管（手动模式）'}</div>
+      ${paused ? `<div style="color:var(--red);margin-top:4px">⚠ ${st.pausedReason}</div>` : ''}
+      <div style="margin-top:6px">上次动作：<b>${AP_ACTION_ICON[st.lastAction] || ''} ${AP_ACTION_LABEL[st.lastAction] || st.lastAction || '—'}</b></div>
+      <div class="muted" style="font-size:11px;line-height:1.4;margin-top:2px">${st.lastActionReason || '—'}</div>
+      ${st.lastDecisionAt ? `<div class="muted" style="font-size:10px;margin-top:4px">决策时间：${apFmtTime(st.lastDecisionAt)}</div>` : ''}
+    `;
+    stateBox.appendChild(box);
+  }
+
+  // 决策日志
+  const log = $('ap-log');
+  const items = s.decisions || [];
+  if (!items.length) {
+    log.innerHTML = '<div class="log-item muted">暂无日志</div>';
+  } else {
+    log.innerHTML = items.map((d) =>
+      `<div class="log-item"><span class="muted">${apFmtTime(d.t)}</span> · ${AP_ACTION_ICON[d.action]||''} <b>${d.exchange}</b>：${d.message}</div>`
+    ).join('');
+  }
+}
+
+async function apResume(key) {
+  if (!confirm(`确定解除 ${AP_EX[key]} 的熔断？（AI 会在下一轮决策时可能重新起网格）`)) return;
+  try {
+    const r = await fetch('/api/autopilot/resume', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key }) });
+    const j = await r.json();
+    apRender(j);
+  } catch (e) { alert('解除失败：' + e.message); }
+}
+
+async function apSave() {
+  const btn = $('ap-save-btn'); const msg = $('ap-save-msg');
+  btn.disabled = true; msg.textContent = '⏳ 保存中…';
+  try {
+    const perExchange = {};
+    document.querySelectorAll('.ap-ex-row').forEach((row) => {
+      const k = row.dataset.k;
+      perExchange[k] = {
+        enabled: row.querySelector('.ap-ex-enable').checked,
+        maxCapitalUsdc: Number(row.querySelector('.ap-ex-cap').value) || 0,
+      };
+    });
+    const body = {
+      masterEnabled: $('ap-master').checked,
+      riskStyle: $('ap-risk').value,
+      decisionIntervalMin: Number($('ap-interval').value) || 15,
+      perExchange,
+    };
+    const r = await fetch('/api/autopilot/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (j.error) { msg.textContent = '❌ ' + j.error; }
+    else {
+      msg.textContent = '✅ 已保存';
+      apRender(j);
+    }
+  } catch (e) { msg.textContent = '❌ ' + e.message; }
+  btn.disabled = false;
+  setTimeout(() => { msg.textContent = ''; }, 3000);
+}
+
+$('ap-save-btn').addEventListener('click', apSave);
+
+apRefresh();
+setInterval(apRefresh, 15000);   // 每 15s 刷一次状态
 </script>
 </body>
 </html>
