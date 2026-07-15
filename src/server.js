@@ -11,6 +11,7 @@ import { getConfig, ROOT } from './config.js';
 import { createExchange as createDeExchange } from './exchange/de/index.js';
 import { createExchange as createExExchange } from './exchange/ex/index.js';
 import { createExchange as createRsExchange } from './exchange/rs/index.js';
+import { createExchange as createOnExchange } from './exchange/on/index.js';
 import { GridBot } from './bot.js';
 import { analyzeTrend } from './trend.js';
 import { setupProxies, checkProxy } from './proxy.js';
@@ -46,6 +47,10 @@ if ((cfg.host === '0.0.0.0' || cfg.isCloud) && !cfg.dashboardPassword) {
   if (cfg.rs.mode === 'live') {
     if (!cfg.rs.account) missing.push(['RISEx   ', 'ACCOUNT_ADDRESS', 'RISEx 应用的账户 / API 设置']);
     if (!cfg.rs.signerKey) missing.push(['RISEx   ', 'SIGNER_PRIVATE_KEY', 'RISEx 应用的账户 / API 设置']);
+  }
+  if (cfg.on.mode === 'live') {
+    if (!cfg.on.apiKeyId) missing.push(['Ondo    ', 'ONDO_API_KEY_ID', 'app.ondoperps.xyz → Profile → API Keys → Add New']);
+    if (!cfg.on.apiSecret) missing.push(['Ondo    ', 'ONDO_API_SECRET', '同上（只显示一次，务必当场保存）']);
   }
   if (missing.length) {
     console.error('\n[启动失败] 有交易所被设为 live 实盘模式，但 .env 里还缺以下凭据：\n');
@@ -87,10 +92,12 @@ if (proxyResult.used) {
 const deExchange = createDeExchange(cfg.de);
 const exExchange = createExExchange(cfg.ex);
 const rsExchange = createRsExchange(cfg.rs);
+const onExchange = createOnExchange(cfg.on);
 
 const deBot = new GridBot(deExchange, { onChange: (s) => saveSnapshot('de', s) });
 const exBot = new GridBot(exExchange, { onChange: (s) => saveSnapshot('ex', s) });
 const rsBot = new GridBot(rsExchange, { onChange: (s) => saveSnapshot('rs', s) });
+const onBot = new GridBot(onExchange, { onChange: (s) => saveSnapshot('on', s) });
 
 // Restore cumulative stats / config from the previous run (display continuity).
 // Trading does NOT auto-resume; stray-order cleanup happens after each exchange
@@ -98,17 +105,18 @@ const rsBot = new GridBot(rsExchange, { onChange: (s) => saveSnapshot('rs', s) }
 deBot.restore(loadSnapshot('de'));
 exBot.restore(loadSnapshot('ex'));
 rsBot.restore(loadSnapshot('rs'));
+onBot.restore(loadSnapshot('on'));
 
 // Belt-and-suspenders: ensure every exchange always has an 'error' listener so a
 // stray emit can never crash the process (the GridBot also attaches one).
-for (const ex of [deExchange, exExchange, rsExchange]) {
+for (const ex of [deExchange, exExchange, rsExchange, onExchange]) {
   ex.on('error', (e) => { try { console.error('[交易所错误] ' + (e?.message || e)); } catch {} });
 }
 
 // ── AI 服务（哨兵/日报/分析/对话/出区间建议）────────────────────────────────
 const aiService = createAiService({
-  bots: { de: deBot, ex: exBot, rs: rsBot },
-  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange },
+  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot },
+  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange },
 });
 aiService.start();
 
@@ -116,6 +124,7 @@ aiService.start();
 const deClients = new Set();
 const exClients = new Set();
 const rsClients = new Set();
+const onClients = new Set();
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
 const MIME = {
@@ -269,6 +278,7 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
 const deHandler = makeExchangeHandler('/api/de', deBot, deExchange, cfg.de, deClients, 'Decibel');
 const exHandler = makeExchangeHandler('/api/ex', exBot, exExchange, cfg.ex, exClients, 'Extended');
 const rsHandler = makeExchangeHandler('/api/rs', rsBot, rsExchange, cfg.rs, rsClients, 'RISEx');
+const onHandler = makeExchangeHandler('/api/on', onBot, onExchange, cfg.on, onClients, 'Ondo');
 
 // ── HTTP Basic Auth 中间件（有 DASHBOARD_PASSWORD 才启用） ──────────────────
 // 时间常量比较，避免旁路时间攻击。
@@ -319,6 +329,7 @@ const server = http.createServer(async (request, res) => {
         de: pick(deBot.getState(), cfg.de.mode),
         ex: pick(exBot.getState(), cfg.ex.mode),
         rs: pick(rsBot.getState(), cfg.rs.mode),
+        on: pick(onBot.getState(), cfg.on.mode),
       });
     }
 
@@ -335,6 +346,7 @@ const server = http.createServer(async (request, res) => {
         de: pick(deBot.getState(), cfg.de.mode),
         ex: pick(exBot.getState(), cfg.ex.mode),
         rs: pick(rsBot.getState(), cfg.rs.mode),
+        on: pick(onBot.getState(), cfg.on.mode),
       };
       res.write(`data: ${JSON.stringify(initial, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))}\n\n`);
       const overviewClients = server._overviewClients;
@@ -391,13 +403,14 @@ const server = http.createServer(async (request, res) => {
         de: process.env.DECIBEL_PROXY || '',
         ex: process.env.EXTENDED_PROXY || '',
         rs: process.env.RISEX_PROXY || '',
+        on: process.env.ONDO_PROXY || '',
       });
     }
 
     if (p === '/api/env' && request.method === 'POST') {
       try {
         const { key, value } = await readBody(request);
-        const PROXY_KEYS = ['GLOBAL_PROXY','DECIBEL_PROXY','EXTENDED_PROXY','RISEX_PROXY'];
+        const PROXY_KEYS = ['GLOBAL_PROXY','DECIBEL_PROXY','EXTENDED_PROXY','RISEX_PROXY','ONDO_PROXY'];
         const AI_KEYS = ['AI_PROVIDER','AI_API_KEY','AI_BASE_URL','AI_MODEL','AI_MODEL_SMALL','AI_SENTINEL_MINUTES','AI_MARKET_MINUTES','AI_REPORT_HOUR','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID','NOTIFY_WEBHOOK'];
         if (!PROXY_KEYS.includes(key) && !AI_KEYS.includes(key)) return send(res, 400, { error: '不允许修改该字段: ' + key });
         // SECURITY: the value is written verbatim into .env. Reject anything that
@@ -453,6 +466,9 @@ const server = http.createServer(async (request, res) => {
     if (p.startsWith('/api/rs/')) {
       return await rsHandler(request, res, p.slice('/api/rs'.length), url);
     }
+    if (p.startsWith('/api/on/')) {
+      return await onHandler(request, res, p.slice('/api/on'.length), url);
+    }
 
     // ── 静态文件 ──────────────────────────────────────────────────────────
     let file = p === '/' ? '/index.html' : p;
@@ -487,14 +503,20 @@ setInterval(() => {
     const data = `data: ${stringify(rsBot.getState())}\n\n`;
     for (const r of rsClients) { try { r.write(data); } catch { rsClients.delete(r); } }
   }
+  if (onClients.size > 0) {
+    const data = `data: ${stringify(onBot.getState())}\n\n`;
+    for (const r of onClients) { try { r.write(data); } catch { onClients.delete(r); } }
+  }
   if (server._overviewClients.size > 0) {
     const deState = deBot.getState();
     const exState = exBot.getState();
     const rsState = rsBot.getState();
+    const onState = onBot.getState();
     const overview = {
       de: pick(deState, cfg.de.mode),
       ex: pick(exState, cfg.ex.mode),
       rs: pick(rsState, cfg.rs.mode),
+      on: pick(onState, cfg.on.mode),
     };
     const data = `data: ${stringify(overview)}\n\n`;
     for (const r of server._overviewClients) { try { r.write(data); } catch { server._overviewClients.delete(r); } }
@@ -559,6 +581,7 @@ await Promise.all([
   initExchange(deExchange, 'Decibel', cfg.de),
   initExchange(exExchange, 'Extended', cfg.ex),
   initExchange(rsExchange, 'RISEx', cfg.rs),
+  initExchange(onExchange, 'Ondo', cfg.on),
 ]);
 
 // ── 崩溃恢复 / 续跑 ────────────────────────────────────────────────────────────
@@ -586,6 +609,7 @@ await Promise.all([
   resumeIfWasRunning(deBot, deExchange, 'de'),
   resumeIfWasRunning(exBot, exExchange, 'ex'),
   resumeIfWasRunning(rsBot, rsExchange, 'rs'),
+  resumeIfWasRunning(onBot, onExchange, 'on'),
 ]);
 
 // After init, surface any LEFTOVER position so the dashboard can prompt the user
@@ -610,6 +634,7 @@ await Promise.all([
   detectOrphanPosition(deBot, deExchange),
   detectOrphanPosition(exBot, exExchange),
   detectOrphanPosition(rsBot, rsExchange),
+  detectOrphanPosition(onBot, onExchange),
 ]);
 
 server.listen(cfg.port, cfg.host, () => {
@@ -624,10 +649,11 @@ server.listen(cfg.port, cfg.host, () => {
   console.log(`  Decibel  [${cfg.de.mode.toUpperCase()}]  ${cfg.de.network}`);
   console.log(`  Extended [${cfg.ex.mode.toUpperCase()}]  ${cfg.ex.network}`);
   console.log(`  RISEx    [${cfg.rs.mode.toUpperCase()}]  ${cfg.rs.network}`);
+  console.log(`  Ondo     [${cfg.on.mode.toUpperCase()}]  ${cfg.on.network}`);
   console.log(`${'─'.repeat(52)}`);
-  if (cfg.de.mode === 'paper' || cfg.ex.mode === 'paper' || cfg.rs.mode === 'paper') {
+  if ([cfg.de, cfg.ex, cfg.rs, cfg.on].some((c) => c.mode === 'paper')) {
     console.log('  ⚠ 部分交易所为模拟模式，不涉及真实资金。');
-    console.log('    在 .env 中设置 DE_MODE/EX_MODE/RS_MODE=live 切换实盘。');
+    console.log('    在 .env 中设置 DE_MODE/EX_MODE/RS_MODE/ON_MODE=live 切换实盘。');
   }
   console.log('');
 });
