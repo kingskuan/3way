@@ -15,8 +15,8 @@ ENV NODE_ENV=production
 ENV DOCKER_CONTAINER=1
 ENV STATE_DIR=/data
 
-# 状态持久化目录（挂载 Railway Volume 到 /data）
-VOLUME ["/data"]
+# 状态持久化目录：在 Railway 上通过 Project → Volume 挂 /data
+# （Railway 不支持 Dockerfile 的 VOLUME 指令，得走它们自己的 Volume 面板）
 
 EXPOSE 8080
 
