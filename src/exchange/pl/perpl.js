@@ -567,19 +567,23 @@ export class PerplExchange extends EventEmitter {
 }
 
 // 从 Perpl WS 消息里提取账户余额
-// mt=19 WalletSnapshot: { addr, as: [ Account{ b: "210.47", lb: ... } ] }
+// mt=19 WalletSnapshot: { addr, as: [ Account{ b: "210470000", lb: ... } ] }
 // mt=20 WalletUpdate / mt=21 AccountUpdate: 单个 Account 或增量
+//
+// Amount 字段是 **微美分**（1 USDC = 1_000_000）——文档里 Micros = int64
+// "Value in 10^-6 fractions"。除以 1e6 得到真实 USD。
+const PERPL_AMOUNT_SCALE = 1_000_000;
 function _extractPerplBalance(self, msg) {
   const accounts = Array.isArray(msg.as) ? msg.as : (msg.a ? [msg.a] : []);
   const candidates = accounts.length ? accounts : (msg.b !== undefined ? [msg] : []);
   for (const acc of candidates) {
-    const bal = Number(acc?.b);
-    if (Number.isFinite(bal) && bal >= 0) {
-      const prev = Number(self.balance) || 0;
-      self.balance = bal;
-      if (Math.abs(prev - bal) > 0.001) {
-        console.log(`[Perpl] balance 更新：${prev} → ${bal}`);
-      }
+    const raw = Number(acc?.b);
+    if (!Number.isFinite(raw) || raw < 0) continue;
+    const bal = raw / PERPL_AMOUNT_SCALE;
+    const prev = Number(self.balance) || 0;
+    self.balance = bal;
+    if (Math.abs(prev - bal) > 0.001) {
+      console.log(`[Perpl] balance 更新：$${prev.toFixed(2)} → $${bal.toFixed(2)}（raw=${raw}）`);
     }
   }
 }
