@@ -104,12 +104,15 @@ export class OndoExchange extends EventEmitter {
         `  或本地时钟是否偏离 UTC 超过 30 秒（Ondo 硬性要求）`
       );
     }
+    // 诊断日志：打印 /v1/account 完整结构（redact 掉高价值字段）
+    _debugDumpAccount('Ondo', acc);
     // Ondo /v1/account 返回结构未在文档明确，尽量多字段 fallback
     this.balance = Number(
       acc?.balance ?? acc?.usdcBalance ?? acc?.availableBalance ??
       acc?.equity ?? acc?.totalCollateral ?? acc?.availableMargin ??
       acc?.freeCollateral ?? acc?.marginBalance ?? 0
     );
+    console.log(`[Ondo] 初始 balance=${this.balance}（若为 0 但账户里有钱，检查上面 /v1/account 日志找真实字段名）`);
 
     this.dataSource = 'real';
     this._startPolling();
@@ -410,4 +413,34 @@ export class OndoExchange extends EventEmitter {
       } catch { /* skip */ }
     }
   }
+}
+
+// 打印账户响应的结构（key 名 + 类型 + 数值），敏感 key 值 redact
+// 让用户/开发者能一眼看到真实字段名，方便对上余额字段
+function _debugDumpAccount(exName, obj) {
+  if (!obj || typeof obj !== 'object') {
+    console.log(`[${exName}] /v1/account 响应不是对象: ${typeof obj}`);
+    return;
+  }
+  console.log(`[${exName}] /v1/account 响应字段结构（诊断）：`);
+  const walk = (o, prefix = '  ') => {
+    for (const [k, v] of Object.entries(o)) {
+      if (v === null || v === undefined) {
+        console.log(`${prefix}${k}: (${v})`);
+      } else if (Array.isArray(v)) {
+        console.log(`${prefix}${k}: [Array len=${v.length}]${v.length && typeof v[0] === 'object' ? ' first=' + JSON.stringify(v[0]).slice(0, 100) : ''}`);
+      } else if (typeof v === 'object') {
+        console.log(`${prefix}${k}: {`);
+        walk(v, prefix + '  ');
+        console.log(`${prefix}}`);
+      } else {
+        const s = String(v);
+        const shown = /address|signature|apiKey|secret|token/i.test(k)
+          ? (s.length > 20 ? s.slice(0, 6) + '...' + s.slice(-4) : '<redacted>')
+          : s;
+        console.log(`${prefix}${k}: ${shown}  (${typeof v})`);
+      }
+    }
+  };
+  walk(obj);
 }

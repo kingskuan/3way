@@ -170,14 +170,30 @@ export class PerplExchange extends EventEmitter {
     try {
       await this._req('GET', '/v1/trading/account-history?limit=1');
     } catch (e) {
+      // 诊断日志：打认证时用的所有非敏感参数
+      console.log(`[Perpl] 认证诊断信息：`);
+      console.log(`  chainId = ${this.chainId}  ← 若报错，试着改成 monad-testnet-1 或 perpl-mainnet 之类`);
+      console.log(`  apiUrl = ${this.apiUrl}`);
+      console.log(`  apiKey 前 8 字符 = ${(this.apiKey || '').slice(0, 8)}...`);
+      console.log(`  privateKey 长度 = ${(this._privateKeyRaw || '').length} 字符`);
+      // 打一个测试签名的 header（不含 signature 值），让用户/开发者对照
+      try {
+        const hdr = this._signHeaders('GET', '/v1/trading/account-history', '');
+        console.log(`  测试签名 header：X-API-Timestamp=${hdr['X-API-Timestamp']} X-API-Nonce=${hdr['X-API-Nonce']}`);
+      } catch (se) {
+        console.log(`  签名过程报错：${se.message}`);
+      }
       throw new Error(
         `Perpl LIVE 认证失败：${e.message}\n` +
         `  检查 PERPL_API_KEY / PERPL_PRIVATE_KEY / PERPL_CHAIN_ID（当前 ${this.chainId}）\n` +
-        `  或本地时钟是否偏离 UTC 过大`
+        `  或本地时钟是否偏离 UTC 过大\n` +
+        `  （容器 log 里已打诊断信息）`
       );
     }
 
     this.dataSource = 'real';
+
+    console.log(`[Perpl] LIVE 认证成功。chainId=${this.chainId} apiUrl=${this.apiUrl}`);
 
     // 4. 连 trading WS
     this._connectTradingWs();
