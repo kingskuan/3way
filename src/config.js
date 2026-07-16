@@ -95,14 +95,17 @@ export function getConfig() {
     ? { api: 'https://testnet.perpl.xyz/api', ws: 'wss://testnet.perpl.xyz' }
     : { api: 'https://app.perpl.xyz/api',     ws: 'wss://app.perpl.xyz' };
 
+  // 官方文档：chain_id 是**数字**（Monad mainnet=143 / testnet=10143）；
+  // 私钥官方 env 名是 PERPL_API_KEY_SECRET（hex 64 字符可选 0x 前缀），
+  // 兼容我旧版的 PERPL_PRIVATE_KEY。
   const pl = {
     mode: (process.env.PL_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
     network: plNet,
     apiKey: process.env.PERPL_API_KEY || '',
-    privateKey: process.env.PERPL_PRIVATE_KEY || '',
+    privateKey: process.env.PERPL_API_KEY_SECRET || process.env.PERPL_PRIVATE_KEY || '',
     apiUrl: (process.env.PERPL_API_URL || plDefaults.api).replace(/\/$/, ''),
     wsUrl: process.env.PERPL_WS_URL || plDefaults.ws,
-    chainId: process.env.PERPL_CHAIN_ID || (plNet === 'testnet' ? 'monad-testnet-1' : 'monad-mainnet-1'),
+    chainId: Number(process.env.PERPL_CHAIN_ID) || (plNet === 'testnet' ? 10143 : 143),
     startBalance: Number(process.env.PAPER_BALANCE || 10000),
     proxy: process.env.PERPL_PROXY || globalProxy,
   };

@@ -27,7 +27,7 @@ export class PerplExchange extends EventEmitter {
     this._privateKeyRaw = opts.privateKey;
     this.apiUrl = (opts.apiUrl || 'https://app.perpl.xyz/api').replace(/\/$/, '');
     this.wsUrl = opts.wsUrl || this.apiUrl.replace(/^http/, 'ws').replace(/\/api$/, '');
-    this.chainId = opts.chainId || 'monad-mainnet-1';
+    this.chainId = Number(opts.chainId) || 143;   // 官方：143 mainnet, 10143 testnet
     this.dataSource = 'connecting';
     this.network = this.apiUrl.includes('testnet') ? 'testnet' : 'mainnet';
 
@@ -56,19 +56,20 @@ export class PerplExchange extends EventEmitter {
 
   // ── 签名工具 ────────────────────────────────────────────────────────────
   _parsePrivateKey(pk) {
-    // 支持三种编码：hex(64) / base64(43-44) / base64url(43-44)
+    // 官方文档：hex 64 字符（可选 0x 前缀）；兼容 base64/base64url 43-44 字符
+    const stripped = pk.replace(/^0x/i, '').trim();
     let raw;
-    if (/^[0-9a-fA-F]{64}$/.test(pk)) {
-      raw = Buffer.from(pk, 'hex');
+    if (/^[0-9a-fA-F]{64}$/.test(stripped)) {
+      raw = Buffer.from(stripped, 'hex');
     } else {
       // base64 or base64url
-      let s = pk.replace(/-/g, '+').replace(/_/g, '/');
+      let s = stripped.replace(/-/g, '+').replace(/_/g, '/');
       const padLen = (4 - (s.length % 4)) % 4;
       s = s + '='.repeat(padLen);
       raw = Buffer.from(s, 'base64');
     }
     if (raw.length !== 32) {
-      throw new Error(`Perpl PRIVATE_KEY 长度 ${raw.length} 字节，Ed25519 私钥应为 32 字节`);
+      throw new Error(`Perpl PRIVATE_KEY 长度 ${raw.length} 字节，Ed25519 私钥应为 32 字节。官方推荐 hex 64 字符（可选 0x 前缀）`);
     }
     // 拼 PKCS#8 DER：Ed25519 前缀 + 32 字节私钥
     const pkcs8 = Buffer.concat([

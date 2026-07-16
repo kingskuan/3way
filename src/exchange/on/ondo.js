@@ -104,15 +104,11 @@ export class OndoExchange extends EventEmitter {
         `  或本地时钟是否偏离 UTC 超过 30 秒（Ondo 硬性要求）`
       );
     }
-    // 诊断日志：打印 /v1/account 完整结构（redact 掉高价值字段）
+    // 诊断日志：/v1/account 只返账户 metadata（accountID / 钱包地址 / 状态开关等），
+    // 没有 balance 字段。真正的余额在 margin-account 端点。
     _debugDumpAccount('Ondo', acc);
-    // Ondo /v1/account 返回结构未在文档明确，尽量多字段 fallback
-    this.balance = Number(
-      acc?.balance ?? acc?.usdcBalance ?? acc?.availableBalance ??
-      acc?.equity ?? acc?.totalCollateral ?? acc?.availableMargin ??
-      acc?.freeCollateral ?? acc?.marginBalance ?? 0
-    );
-    console.log(`[Ondo] 初始 balance=${this.balance}（若为 0 但账户里有钱，检查上面 /v1/account 日志找真实字段名）`);
+    this.balance = await this._fetchBalance();
+    console.log(`[Ondo] 初始 balance=${this.balance}`);
 
     this.dataSource = 'real';
     this._startPolling();
@@ -306,6 +302,42 @@ export class OndoExchange extends EventEmitter {
     return await this._req('POST', '/v1/perps/orders', body);
   }
 
+  /**
+   * Ondo 余额：/v1/account 没有 balance 字段，尝试专用余额端点。
+   * 第一次调用时候用 log 打字段结构，方便对上正确的字段名。
+   */
+  async _fetchBalance() {
+    for (const path of [
+      '/v1/margin-account/get-balance',
+      '/v1/margin-account/balance',
+      '/v1/margin/balance',
+      '/v1/perps/balance',
+      '/v1/balance',
+      '/v1/account/balance',
+    ]) {
+      try {
+        const r = await this._req('GET', path);
+        if (r != null) {
+          if (!this._balanceEndpointFound) {
+            console.log(`[Ondo] 找到余额端点：${path}`);
+            _debugDumpAccount('Ondo balance', r);
+            this._balanceEndpointFound = path;
+          }
+          // 尝试常见字段名
+          const bal = Number(
+            r?.balance ?? r?.usdcBalance ?? r?.usdBalance ??
+            r?.availableBalance ?? r?.available ?? r?.free ??
+            r?.equity ?? r?.totalCollateral ?? r?.availableMargin ??
+            r?.freeCollateral ?? r?.marginBalance ?? r?.total ??
+            (Array.isArray(r) ? r.find((x) => x?.asset === 'USD' || x?.currency === 'USD')?.balance : null)
+          );
+          if (Number.isFinite(bal)) return bal;
+        }
+      } catch { /* 404 or 401，试下一个 */ }
+    }
+    return 0;
+  }
+
   async reconcileOpenOrders() {
     // 拉一次全部 open orders 并同步本地 tracking
     try {
@@ -353,15 +385,10 @@ export class OndoExchange extends EventEmitter {
       if (any) break;
     }
 
-    // 2) 账户 balance
+    // 2) 账户 balance（走 margin-account 端点，/v1/account 只有 metadata）
     try {
-      const acc = await this._req('GET', '/v1/account');
-      const bal = Number(
-        acc?.balance ?? acc?.usdcBalance ?? acc?.availableBalance ??
-        acc?.equity ?? acc?.totalCollateral ?? acc?.availableMargin ??
-        acc?.freeCollateral ?? acc?.marginBalance
-      );
-      if (Number.isFinite(bal)) this.balance = bal;
+      const bal = await this._fetchBalance();
+      if (Number.isFinite(bal) && bal >= 0) this.balance = bal;
     } catch { /* transient */ }
 
     // 3) Positions
