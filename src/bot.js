@@ -862,6 +862,29 @@ export class GridBot {
       this._alert(`挂单对账：交易所实际 ${real.length} 单；清理失效 ${pruned}，撤除重复 ${trimmed}${adopted ? `，接管 ${adopted}` : ''}。`);
       this._changed();
     }
+
+    // Self-heal 补铺：普通网格模式下，如果 exchange 那端 0 单、本地也 0 单、
+    // 有正常的 grid + 价格在区间内、不在 recovery / out-of-range / 补单退避 中，
+    // 说明 start() 挂单挂丢了（例如 Perpl WS 响应字段名对不上、进程重启时
+    // resume 拿到的 snapshot.active 是空的等）→ 重新 seedOrders 一次。
+    // 打的日志: adapter 侧的 diagnostic + bot 侧 alert，方便 debug。
+    if (!recovery && !this.outOfRange && this.running
+        && this.grid && real.length === 0 && this.active.size === 0
+        && (!this._refillPausedUntil || now >= this._refillPausedUntil)
+        && Number.isFinite(this.lastPrice) && this.lastPrice > 0
+        && (now - (this._lastReseedAt || 0) > 60_000)) {
+      this._lastReseedAt = now;
+      try {
+        const { seedOrders } = await import('./grid.js');
+        const seeds = seedOrders({ levels: this.grid.levels, price: this.lastPrice, mode: this.config.mode, spacing: this.grid.spacing });
+        this._alert(`⚠️ 网格状态异常：running=true 但交易所 0 单、本地 0 单，尝试重新铺 ${seeds.length} 单…`);
+        for (const s of seeds) await this._place({ ...s, opening: true });
+        this._alert(`重铺完成：现有 ${this.active.size} / ${seeds.length} 单挂上。`);
+        this._changed();
+      } catch (e) {
+        this._alert(`重铺失败：${e?.message || e}`);
+      }
+    }
   }
 
   _startReconcileTimer() {

@@ -2503,9 +2503,11 @@ function makeExchangeCtrl(prefix, chartId) {
           if (lvl < y.min || lvl > y.max) return;
           const py = y.getPixelForValue(lvl);
           const side = s.openByLevel?.[i];
-          ctx.strokeStyle = side === 'buy' ? '#22c55e88' : side === 'sell' ? '#ef444488' : '#253350';
-          ctx.lineWidth = side ? 1.2 : 0.6;
-          ctx.setLineDash(side ? [] : [3,3]);
+          // 有挂单：绿=buy / 红=sell 实线；无挂单：可见浅灰虚线（旧 #253350
+          // 跟背景色一样看不见，用户以为图挂了）
+          ctx.strokeStyle = side === 'buy' ? '#22c55eaa' : side === 'sell' ? '#ef4444aa' : '#94a3b866';
+          ctx.lineWidth = side ? 1.4 : 0.8;
+          ctx.setLineDash(side ? [] : [4,4]);
           ctx.beginPath(); ctx.moveTo(left, py); ctx.lineTo(right, py); ctx.stroke();
         });
         if (s.lastPrice >= y.min && s.lastPrice <= y.max) {

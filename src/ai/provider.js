@@ -40,65 +40,81 @@ export function getAiConfig() {
  *   o.json     true=要求返回 JSON（openai 用 response_format，其余靠提示词约束）
  * @returns {Promise<string>} 模型回复文本
  */
-export async function aiChat({ system = '', messages, small = false, json = false, maxTokens = 1500, temperature = 0.3, timeoutMs = 60000 }) {
+export async function aiChat({ system = '', messages, small = false, json = false, maxTokens = 1500, temperature = 0.3, timeoutMs = 120000 }) {
   const cfg = getAiConfig();
   if (!cfg.apiKey) throw new Error('未配置 AI_API_KEY，请在「AI」页填写接入信息。');
   const model = small ? cfg.modelSmall : cfg.model;
-  const signal = AbortSignal.timeout(timeoutMs);
+  // 加 helpful timeout error（用户端截图看到过「The operation was aborted due to timeout」
+  // 没有上下文，改成中文 + 定位服务商），换 Promise.race 而不是 AbortSignal.timeout
+  // 因为后者的 error message 是浏览器/undici 默认的英文，不好排查。
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const abortTimer = setTimeout(() => controller.abort(new Error(
+    `AI 请求超时（${Math.round(timeoutMs/1000)}s）：可能是 ${cfg.provider} 服务商 (${cfg.baseUrl}) 慢/挂了，或模型 ${model} 排队。可换服务商或稍后重试。`
+  )), timeoutMs);
+  const clearTimer = () => clearTimeout(abortTimer);
 
-  if (cfg.provider === 'anthropic') {
-    const res = await fetch(cfg.baseUrl + '/v1/messages', {
+  try {
+    if (cfg.provider === 'anthropic') {
+      const res = await fetch(cfg.baseUrl + '/v1/messages', {
+        method: 'POST', signal,
+        headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model, max_tokens: maxTokens, temperature,
+          system: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : ''),
+          messages: messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+        }),
+      });
+      const j = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`Anthropic 接口错误 HTTP ${res.status}: ${j?.error?.message || ''}`);
+      const text = (j?.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+      if (!text) throw new Error('Anthropic 返回为空');
+      return text;
+    }
+
+    if (cfg.provider === 'gemini') {
+      const contents = messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+      const res = await fetch(`${cfg.baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
+        method: 'POST', signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(system ? { system_instruction: { parts: [{ text: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] } } : {}),
+          contents,
+          generationConfig: { maxOutputTokens: maxTokens, temperature, ...(json ? { responseMimeType: 'application/json' } : {}) },
+        }),
+      });
+      const j = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`Gemini 接口错误 HTTP ${res.status}: ${j?.error?.message || ''}`);
+      const text = (j?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+      if (!text) throw new Error('Gemini 返回为空');
+      return text;
+    }
+
+    // openai 兼容协议（默认）
+    const res = await fetch(cfg.baseUrl + '/chat/completions', {
       method: 'POST', signal,
-      headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      headers: { Authorization: 'Bearer ' + cfg.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model, max_tokens: maxTokens, temperature,
-        system: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : ''),
-        messages: messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+        messages: [
+          ...(system ? [{ role: 'system', content: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] : []),
+          ...messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+        ],
+        ...(json ? { response_format: { type: 'json_object' } } : {}),
       }),
     });
     const j = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`Anthropic 接口错误 HTTP ${res.status}: ${j?.error?.message || ''}`);
-    const text = (j?.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
-    if (!text) throw new Error('Anthropic 返回为空');
+    if (!res.ok) throw new Error(`AI 接口错误 HTTP ${res.status}: ${j?.error?.message || JSON.stringify(j || {}).slice(0, 200)}`);
+    const text = j?.choices?.[0]?.message?.content;
+    if (!text) throw new Error(`AI 返回为空（服务商 ${cfg.provider} · ${cfg.baseUrl} · model ${model}）：${JSON.stringify(j || {}).slice(0, 200)}`);
     return text;
+  } catch (e) {
+    // AbortError → 用我们上面 controller.abort(new Error(...)) 塞进去的中文原因
+    if (e?.name === 'AbortError' && signal.reason instanceof Error) throw signal.reason;
+    throw e;
+  } finally {
+    clearTimer();
   }
-
-  if (cfg.provider === 'gemini') {
-    const contents = messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-    const res = await fetch(`${cfg.baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
-      method: 'POST', signal,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...(system ? { system_instruction: { parts: [{ text: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] } } : {}),
-        contents,
-        generationConfig: { maxOutputTokens: maxTokens, temperature, ...(json ? { responseMimeType: 'application/json' } : {}) },
-      }),
-    });
-    const j = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`Gemini 接口错误 HTTP ${res.status}: ${j?.error?.message || ''}`);
-    const text = (j?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-    if (!text) throw new Error('Gemini 返回为空');
-    return text;
-  }
-
-  // openai 兼容协议（默认）
-  const res = await fetch(cfg.baseUrl + '/chat/completions', {
-    method: 'POST', signal,
-    headers: { Authorization: 'Bearer ' + cfg.apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model, max_tokens: maxTokens, temperature,
-      messages: [
-        ...(system ? [{ role: 'system', content: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] : []),
-        ...messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
-      ],
-      ...(json ? { response_format: { type: 'json_object' } } : {}),
-    }),
-  });
-  const j = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(`AI 接口错误 HTTP ${res.status}: ${j?.error?.message || JSON.stringify(j || {}).slice(0, 200)}`);
-  const text = j?.choices?.[0]?.message?.content;
-  if (!text) throw new Error('AI 返回为空');
-  return text;
 }
 
 /** 从模型回复里稳健地抠出第一个 JSON 对象（容忍 ```json 包裹、前后废话）。 */
