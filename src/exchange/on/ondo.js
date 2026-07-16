@@ -121,40 +121,58 @@ export class OndoExchange extends EventEmitter {
   }
 
   async _fetchMarkets() {
-    // Ondo 公开端点：markets 数组包在 `result`（真实返回结构）
-    // 端点候选：/v1/perps/contracts 最丰富（有 bid/ask/vol），/v1/markets 是简版
-    for (const path of ['/v1/perps/contracts', '/v1/markets', '/v1/perps/markets']) {
-      const j = await this._pubGet(path);
-      if (!j) continue;
-      // _pubGet 是公开端点，不走 _req 的自动解包；这里保留手写解包
-      const arr = j.result || j.markets || j.data || j.contracts || (Array.isArray(j) ? j : []);
-      const out = [];
-      let nextId = 1;
-      this.symbolToId.clear();
-      for (const m of arr) {
-        // 跳过已停用或关闭的市场
-        if (m.disabled === true || m.isClosed === true) continue;
-        const symbol = m.market || m.symbol || m.name;
-        if (!symbol) continue;
-        // lastPrice 在 Ondo 返回里是字符串；bid/ask/indexPrice 做备选
-        const price = Number(m.markPrice || m.lastPrice || m.mark_price || m.indexPrice || m.bid || 0);
-        if (!price) continue;
-        out.push({
-          marketId: nextId,
-          displayName: symbol,
-          symbol: symbol.replace(/-USD\.P$/, ''),
-          lastPrice: price,
-          stepSize: Number(m.baseIncrement || m.base_increment || 0.01),
-          stepPrice: Number(m.quoteIncrement || m.quote_increment || 0.01),
-          maxLeverage: Number(m.maxLeverage || m.max_leverage || 20),
-          minOrderSize: Number(m.minOrderSize || m.min_order_size || m.baseIncrement || 0.01),
-        });
-        this.symbolToId.set(symbol, nextId);
-        nextId++;
-      }
-      if (out.length) return out;
+    // Ondo 有两个公开端点：
+    //   /v1/perps/contracts  — 每 market 一个 obj，含 bid/ask/lastPrice/vol，
+    //                           但**没有** baseIncrement/quoteIncrement（tick 信息）
+    //   /v1/markets          — 包在 result.perps.tradingPairs[]，含 baseIncrement /
+    //                           quoteIncrement / maxLeverage / marginInfo
+    // 之前只拉 contracts → stepPrice 兜底 0.01 → 网格档位不 snap 到真实 0.1
+    // tick → Ondo API 返 "invalid - doesn't snap to min price increment 0.1"。
+    // 现在两个端点合并：contracts 拿价格 + tradingPairs 拿 tick/leverage。
+    const contractsJ = await this._pubGet('/v1/perps/contracts');
+    const contracts = contractsJ?.result || contractsJ?.contracts || (Array.isArray(contractsJ) ? contractsJ : []);
+    const marketsJ = await this._pubGet('/v1/markets');
+    const tradingPairs = marketsJ?.result?.perps?.tradingPairs || [];
+    const tickBySymbol = new Map();   // ETH-USD.P → { baseIncrement, quoteIncrement, maxLeverage }
+    for (const tp of tradingPairs) {
+      const sym = tp.market || tp.symbol;
+      if (!sym) continue;
+      const maxLev = Number(tp.marginInfo?.[0]?.maxLeverage || tp.maxLeverage || tp.defaultLeverage || 20);
+      tickBySymbol.set(sym, {
+        baseIncrement: Number(tp.baseIncrement) || 0.001,
+        quoteIncrement: Number(tp.quoteIncrement) || 0.1,
+        maxLeverage: maxLev,
+      });
     }
-    return [];
+
+    const out = [];
+    let nextId = 1;
+    this.symbolToId.clear();
+    // 主源：contracts（有实时价格）；如果没 contracts 就退化用 tradingPairs
+    const source = contracts.length ? contracts : tradingPairs;
+    for (const m of source) {
+      if (m.disabled === true || m.isClosed === true) continue;
+      const symbol = m.market || m.symbol || m.name;
+      if (!symbol) continue;
+      const price = Number(m.markPrice || m.lastPrice || m.mark_price || m.indexPrice || m.bid || 0);
+      if (!price) continue;
+      const tick = tickBySymbol.get(symbol) || {};
+      out.push({
+        marketId: nextId,
+        displayName: symbol,
+        symbol: symbol.replace(/-USD\.P$/, ''),
+        lastPrice: price,
+        // baseIncrement / quoteIncrement 优先从 tradingPairs 拿，fallback 到 m 自身、
+        // 最后兜底一个合理默认（BTC 0.001 / 0.1 之类，让 snap 至少不撞死）
+        stepSize: Number(m.baseIncrement || tick.baseIncrement || 0.001),
+        stepPrice: Number(m.quoteIncrement || tick.quoteIncrement || 0.1),
+        maxLeverage: Number(m.maxLeverage || tick.maxLeverage || 20),
+        minOrderSize: Number(m.minOrderSize || m.min_order_size || m.baseIncrement || tick.baseIncrement || 0.001),
+      });
+      this.symbolToId.set(symbol, nextId);
+      nextId++;
+    }
+    return out;
   }
 
   _setMarkets(list) { this.markets.clear(); for (const m of list) this.markets.set(m.marketId, m); }
