@@ -354,6 +354,15 @@ export class PerplExchange extends EventEmitter {
       const orderId = String(msg.orderId || msg.id);
       this.orders.delete(orderId);
     }
+    // 兜底诊断：如果这条消息看起来是订单响应（有 orderId/status）但没匹配上任何
+    // pending clientOrderId → 说明 Perpl 用了别的字段名回来（reqId/correlationId
+    // 之类）。打印一次让下次 debug 直接看到，别再瞎猜。
+    if ((msg.orderId || msg.id || msg.order) && !cid) {
+      if (!this._unknownReplyLogged) {
+        this._unknownReplyLogged = true;
+        try { console.log('[Perpl] 未匹配的疑似订单响应（字段名探测）：' + JSON.stringify(msg).slice(0, 400)); } catch {}
+      }
+    }
   }
 
   _sendWsRequest(payload, timeoutMs = 6000) {
