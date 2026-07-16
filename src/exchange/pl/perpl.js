@@ -52,17 +52,17 @@ export class PerplExchange extends EventEmitter {
     this._wsReady = false;
     this._wsAuthed = false;
     this._pendingReplies = new Map();  // rq -> {resolve, reject, timer}
-    this._reqSeq = Math.floor(Date.now() / 1000) * 1000;  // 单调递增：官方要求 rq 严格递增
+    // rq 用小整数（uint32 兼容 Monad 链上 idempotency 键）；从 1 开始递增
+    this._reqSeq = 0;
     this._pollTimer = null;
     this._reconnectDelay = 1000;
     // Perpl 官方协议要素：
     //   accountId — 从 mt=21 (Account) 消息里提取，下单时 acc 字段必填
-    //   headBlock — 从 mt=100 (Heartbeat) 消息里提取，下单时 lb=headBlock+ttl
-    //   orderTtlBlocks — /v1/pub/context 里给的默认 order 有效期（块数）
-    //   marketAccMap — 有些账号是分市场的，一个账号对应一个 marketId
+    //   headBlock — 从 mt=100 (Heartbeat) 或 mt=26 (at.b) 消息里提取
+    //   orderTtlBlocks — Monad 出块 ~1s，20 块给 20s 有效期够用了
     this.accountId = null;
     this._headBlock = 0;
-    this._orderTtlBlocks = 200;    // 保守默认，init 时从 context 读实际值
+    this._orderTtlBlocks = 20;
     // WS 世代号：每次显式 reconnect()/stop() 或 _connectTradingWs() 都自增。
     // 老 socket 的 close handler 只有在世代号仍匹配时才会拉起下一次重连——
     // 避免 reconnect() 期间「老 close handler + 新 init」两条重连并发。
@@ -310,10 +310,30 @@ export class PerplExchange extends EventEmitter {
   }
 
   _handleTradingMessage(msg) {
-    // mt=100 Heartbeat：更新 head block（下单要用 lb = head + ttl）
+    // mt=100 Heartbeat / mt=26 stream update：更新 head block
+    // （下单要用 lb = head + ttl）
+    // 观测：mt=26 消息里 at.b 是当前块，比 mt=100 更常见
     if (msg.mt === 100) {
       if (Number.isFinite(Number(msg.h))) this._headBlock = Number(msg.h);
       return;
+    }
+    if (msg.mt === 26 && msg.at && Number.isFinite(Number(msg.at.b))) {
+      this._headBlock = Number(msg.at.b);
+      return;
+    }
+    // mt=3 是 status/error 响应：Perpl 遇到订单校验失败会推这个（观测样例：
+    // {"mt":3,"sid":100,"sn":<rq>,"status":{"code":400,"error":"..."}}）
+    // sn 字段就是我们发出去的 rq，据此匹配 pending
+    if (msg.mt === 3 && msg.sn != null) {
+      const rq = Number(msg.sn);
+      if (this._pendingReplies.has(rq)) {
+        const pending = this._pendingReplies.get(rq);
+        this._pendingReplies.delete(rq);
+        clearTimeout(pending.timer);
+        const errMsg = msg.status?.error || msg.error || `Perpl 拒单 code=${msg.status?.code}`;
+        pending.reject(new Error(errMsg));
+        return;
+      }
     }
     // mt=19 WalletSnapshot：视为 auth 成功 + 抽取 balance
     if (msg.mt === 19) {
