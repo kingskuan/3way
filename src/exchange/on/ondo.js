@@ -447,12 +447,16 @@ export class OndoExchange extends EventEmitter {
         seen.add(id);
         // 数量字段候选：size / sizeBase / baseAsset / netQuantity / positionSize / quantity
         const rawSize = Number(p.size ?? p.sizeBase ?? p.baseAsset ?? p.netQuantity ?? p.positionSize ?? p.quantity ?? 0);
-        const isShort = p.side === 'short' || p.side === 'SELL' || p.side === 'sell' || rawSize < 0;
+        // direction 字段（Ondo 实际用这个，不是 side）+ 兼容其他 side 字段
+        const isShort = p.direction === 'short' || p.direction === 'SHORT'
+          || p.side === 'short' || p.side === 'SELL' || p.side === 'sell' || rawSize < 0;
         const size = isShort ? -Math.abs(rawSize) : Math.abs(rawSize);
         this.positions.set(id, {
           sizeBase: size,
-          entryPrice: Number(p.entryPrice ?? p.avgEntryPrice ?? p.averagePrice ?? p.avgPrice ?? 0),
+          // Ondo 用的是 averageEntryPrice（长驼峰），之前只有 avgEntryPrice 拿不到
+          entryPrice: Number(p.averageEntryPrice ?? p.entryPrice ?? p.avgEntryPrice ?? p.averagePrice ?? p.avgPrice ?? 0),
           unrealizedPnl: Number(p.unrealizedPnl ?? p.upnl ?? p.unrealisedPnl ?? p.pnl ?? 0),
+          leverage: Number(p.leverage ?? p.lev ?? 0) || null,
         });
       }
       for (const id of [...this.positions.keys()]) if (!seen.has(id)) this.positions.delete(id);
