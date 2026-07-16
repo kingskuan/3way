@@ -1,9 +1,11 @@
-// 三交易所整合服务器
+// 五所整合服务器
 // 路由规则：
-//   /api/de/*  → Decibel 交易所
-//   /api/ex/*  → Extended 交易所
-//   /api/rs/*  → RISEx 交易所
-//   /api/overview → 三交易所总览（余额+盈亏）
+//   /api/de/*  → Decibel
+//   /api/ex/*  → Extended
+//   /api/rs/*  → RISEx
+//   /api/on/*  → Ondo Perps
+//   /api/pl/*  → perpl.xyz
+//   /api/overview → 五所总览（余额+盈亏）
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -375,7 +377,7 @@ const server = http.createServer(async (request, res) => {
       return;
     }
 
-    // ── AI 助手 API ───────────────────────────────────────────────────────
+    // ── AI API ────────────────────────────────────────────────────────────
     if (p === '/api/ai/status') {
       return send(res, 200, aiService.status());
     }
@@ -688,7 +690,7 @@ await Promise.all([
 
 server.listen(cfg.port, cfg.host, () => {
   console.log(`\n${'═'.repeat(52)}`);
-  console.log(`  三交易所整合网格机器人 已启动`);
+  console.log(`  QnV · 五所整合网格机器人 已启动`);
   console.log(`  仪表盘: http://${cfg.host === '0.0.0.0' ? 'localhost' : cfg.host}:${cfg.port}`);
   if (cfg.host === '0.0.0.0') {
     console.log('  ⚠ 监听所有网卡(0.0.0.0)，局域网/公网可访问。');

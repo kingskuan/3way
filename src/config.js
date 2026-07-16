@@ -1,4 +1,4 @@
-// 三交易所整合配置加载器
+// 五所整合配置加载器（Decibel / Extended / RISEx / Ondo / Perpl）
 // 支持全局代理（GLOBAL_PROXY）+ 各交易所独立代理覆盖
 import fs from 'node:fs';
 import path from 'node:path';

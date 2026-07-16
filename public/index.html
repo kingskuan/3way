@@ -223,7 +223,7 @@ input:focus, select:focus { outline: none; border-color: var(--pur); }
 .exhealth.eh-error { color:#fca5a5; }
 .exhealth.eh-idle { color:var(--mut); }
 
-/* ── AI 助手 ── */
+/* ── AI ── */
 .ai-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; }
 .ai-grid label { display:block; font-size:11px; color:var(--mut); margin-bottom:4px; }
 .ai-grid input, .ai-grid select { width:100%; }
@@ -1092,7 +1092,7 @@ input:focus, select:focus {
 <div id="tab-overview" class="tab-panel active">
 <div class="wrap">
 
-  <!-- 三交易所汇总卡 -->
+  <!-- 五所汇总卡 -->
   <div class="total-row" style="margin-top:4px">
     <div class="total-card">
       <div class="lbl">总权益</div>
@@ -1986,7 +1986,7 @@ input:focus, select:focus {
 <!-- TAB: IP配置 -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <!-- ═══════════════════════════════════════════════════════════ -->
-<!-- TAB: AI 助手 -->
+<!-- TAB: AI -->
 <div id="tab-ai" class="tab-panel">
 <div class="wrap" style="max-width:860px">
   <div class="panel" style="margin-top:4px">
@@ -2841,7 +2841,7 @@ async function loadProxyConfig() {
 }
 loadProxyConfig();
 
-// ══ AI 助手 ═══════════════════════════════════════════════════════════════
+// ══ AI ═══════════════════════════════════════════════════════════════════
 const AI_ENV_MAP = {
   'ai-baseurl':'AI_BASE_URL', 'ai-key':'AI_API_KEY',
   'ai-model':'AI_MODEL', 'ai-model-small':'AI_MODEL_SMALL',
@@ -3192,7 +3192,7 @@ async function aiSaveIntervals(btn) {
   if (btn) btn.disabled = false;
 }
 
-// AI 状态全局轮询（总览页板块 + AI 助手页共用）
+// AI 状态全局轮询（总览页板块 + AI 页共用）
 aiRefreshStatus();
 setInterval(aiRefreshStatus, 30000);
 
@@ -3354,6 +3354,10 @@ const NUM_SELECTORS = [
   '#ov-de-bal', '#ov-ex-bal', '#ov-rs-bal', '#ov-on-bal', '#ov-pl-bal',
   '#ov-de-eq',  '#ov-ex-eq',  '#ov-rs-eq',  '#ov-on-eq',  '#ov-pl-eq',
   '#ov-de-price','#ov-ex-price','#ov-rs-price','#ov-on-price','#ov-pl-price',
+  '#ov-de-rpnl','#ov-ex-rpnl','#ov-rs-rpnl','#ov-on-rpnl','#ov-pl-rpnl',
+  '#ov-de-upnl','#ov-ex-upnl','#ov-rs-upnl','#ov-on-upnl','#ov-pl-upnl',
+  '#ov-de-vol','#ov-ex-vol','#ov-rs-vol','#ov-on-vol','#ov-pl-vol',
+  '#ov-de-rungs','#ov-ex-rungs','#ov-rs-rungs','#ov-on-rungs','#ov-pl-rungs',
   '#de-st-price','#ex-st-price','#rs-st-price','#on-st-price','#pl-st-price',
   '#de-st-bal','#ex-st-bal','#rs-st-bal','#on-st-bal','#pl-st-bal',
   '#de-st-eq','#ex-st-eq','#rs-st-eq','#on-st-eq','#pl-st-eq',
