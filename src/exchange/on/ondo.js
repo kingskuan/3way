@@ -172,7 +172,10 @@ export class OndoExchange extends EventEmitter {
     try {
       const now = Math.floor(Date.now() / 1000);
       const url = `/v1/perps/history?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&to=${now}&countback=${n}`;
-      const j = await this._pubGet(url, 8000);
+      const raw = await this._pubGet(url, 8000);
+      // Ondo 公开端点也用 { success:true, result:{t,o,h,l,c,v} } 包装。_pubGet
+      // 不 unwrap，需要在这里手动剥。之前一直返回空 → Autopilot「拉不到 K 线」
+      const j = (raw && raw.success === true && raw.result) ? raw.result : raw;
       if (!j?.t?.length) return [];
       const out = [];
       for (let i = 0; i < j.t.length; i++) {

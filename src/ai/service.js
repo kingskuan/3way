@@ -112,20 +112,27 @@ class AiService {
     try {
       const snap = this._snapshot();
       const text = await aiChat({
-        small: true, json: true, maxTokens: 900, temperature: 0.1,
+        small: true, json: true, maxTokens: 1800, temperature: 0.1,
         system: [
           '你是五所网格交易机器人的风控值守 AI。根据状态快照，对每个交易所分别给出巡检结论，并给一句整体结论。',
           '重点关注：health.status 为 error/warn 及其 reason；trackedOrders 与 exchangeOpenOrders 明显不一致（挂单同步漂移）；',
           '保证金/权益吃紧（未实现亏损占权益比例大、returnPct 恶化）；outOfRange=true（价格冲出网格区间）；',
           '告警里的关键词（保证金不足、频繁取消、未确认成交、接口异常、暂停补单）；数据长时间未更新。',
-          '注意：paper 是模拟盘，问题降级处理；未运行的交易所 level 用 ok、summary 写"未运行"即可。回复 JSON：',
-          '{"overall":{"level":"ok|warn|critical","summary":"整体一句话(中文)"},',
-          '"per":{"de":{"level":"ok|warn|critical","summary":"该所结论(中文,50字内)","advice":"操作建议(中文,无则空)"},"ex":{...},"rs":{...},"on":{...},"pl":{...}}}',
+          '注意：paper 是模拟盘，问题降级处理；未运行的交易所 level 用 ok、summary 写"未运行"即可。',
+          '严格控制字数：整体 summary ≤30 字，每所 summary ≤25 字，advice ≤25 字（无则空串）。JSON 必须完整闭合。',
+          '回复 JSON：{"overall":{"level":"ok|warn|critical","summary":"..."},',
+          '"per":{"de":{"level":"ok|warn|critical","summary":"...","advice":"..."},"ex":{...},"rs":{...},"on":{...},"pl":{...}}}',
         ].join('\n'),
         messages: [{ role: 'user', content: '状态快照：\n' + JSON.stringify(snap) }],
       });
-      const j = extractJson(text) || {};
-      const overall = j.overall || { level: j.level || 'warn', summary: j.summary || 'AI 返回无法解析：' + text.slice(0, 120) };
+      const j = extractJson(text);
+      // 解析失败（模型截断/格式跑偏）不是"风险事件"，别推 Telegram 假警报。
+      // 落到 sentinelError 让 UI 能看到；本轮 sentinel 保留上次结果不覆盖。
+      if (!j || !j.overall) {
+        this.sentinelError = 'AI 返回无法解析（可能超 maxTokens 被截断）：' + (text || '').slice(0, 200);
+        return this.sentinel;
+      }
+      const overall = j.overall;
       this.sentinel = {
         t: Date.now(),
         level: overall.level || 'ok', summary: overall.summary || '',

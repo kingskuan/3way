@@ -404,30 +404,53 @@ class Autopilot {
       }
     }
     const capitalUsdc = Math.min(this.cfg.perExchange[key].maxCapitalUsdc || 1000, cur.balance || 1000);
+    const leverage = Math.min(s.maxLeverage, pick.maxLeverage || s.maxLeverage);
     // 每格数量：capitalUsdc * fraction / price → 转 base asset 单位
     const rawSizeBase = (capitalUsdc * s.sizeFractionOfBalance) / price;
-    const sizeBase = Math.max(pick.minOrderSize || 0, _stepAlign(rawSizeBase, pick.stepSize || pick.minOrderSize || 1e-6));
+    const stepUnit = pick.stepSize || pick.minOrderSize || 1e-6;
+    let sizeBase = Math.max(pick.minOrderSize || 0, _stepAlign(rawSizeBase, stepUnit));
+    let gridCount = s.gridCount;
     if (sizeBase <= 0 || !Number.isFinite(sizeBase)) {
       this._log(key, 'skip', `${pick.name} 单量计算异常，跳过`);
       return;
     }
-    const leverage = Math.min(s.maxLeverage, pick.maxLeverage || s.maxLeverage);
+    // 保证金自适应：算算真需要多少 margin，超了就先减 gridCount，还超就 skip。
+    // 之前 Perpl BTC minOrderSize 太大，$210 起 20 格 → 名义 $38k → 3x 下需 $13k，
+    // bot.start 里 pre-check 直接抛错。Autopilot 提前处理更干净。
+    const mid = (lower + upper) / 2;
+    let notional = gridCount * sizeBase * mid;
+    let required = notional / leverage;
+    // 保留 20% buffer（保证金峰值往往 > 名义/杠杆算出的静态值）
+    const budget = capitalUsdc * 0.8;
+    if (required > budget) {
+      // 尝试压缩 gridCount
+      const affordable = Math.floor(budget * leverage / (sizeBase * mid));
+      if (affordable >= 6) {
+        gridCount = affordable;
+        notional = gridCount * sizeBase * mid;
+        required = notional / leverage;
+        this._log(key, 'adjusted', `${pick.name} 保证金压力：格数 ${s.gridCount}→${gridCount}（约需 $${required.toFixed(0)} / 可用 $${capitalUsdc.toFixed(0)}）`);
+      } else {
+        this._log(key, 'skip', `${pick.name} 起单需 $${required.toFixed(0)}（min ${pick.minOrderSize} × ${mid.toFixed(0)}），可用 $${capitalUsdc.toFixed(0)} 不够跑网格。请增资到 $${(required / 0.8).toFixed(0)}+ 或换所`);
+        return;
+      }
+    }
 
     // 5. 启动网格
     const params = {
       marketId: pick.marketId, mode,
-      lower, upper, gridCount: s.gridCount, sizeBase, leverage,
+      lower, upper, gridCount, sizeBase, leverage,
       outOfRangeAction: s.outOfRangeAction,
     };
     try {
       const res = await bot.start(params);
       st.lastAction = 'started';
-      st.lastActionReason = `选 ${pick.name}（${mode}，${aiReasoning || '规则排序 top1'}），区间 ${lower}~${upper}，${s.gridCount} 格 x ${sizeBase}`;
+      st.lastActionReason = `选 ${pick.name}（${mode}，${aiReasoning || '规则排序 top1'}），区间 ${lower}~${upper}，${gridCount} 格 x ${sizeBase}`;
       st.lastDecisionAt = now;
       st.lastAppliedEquity = cur.equity;
       st.startedByAutopilot = true;
       this._log(key, 'start', st.lastActionReason);
-      notify(`【网格 Autopilot·${EXNAMES[key]}】已启动：${pick.name}\n模式：${_modeLabel(mode)} · 区间 ${lower} ~ ${upper}\n${s.gridCount} 格 × ${sizeBase} · ${leverage}x 杠杆\nAI：${aiReasoning || '规则排序'}`).catch(() => {});
+      notify(`【网格 Autopilot·${EXNAMES[key]}】已启动：${pick.name}\n模式：${_modeLabel(mode)} · 区间 ${lower} ~ ${upper}\n${gridCount} 格 × ${sizeBase} · ${leverage}x 杠杆\nAI：${aiReasoning || '规则排序'}`).catch(() => {});
       this._save();
     } catch (e) {
       st.lastAction = 'error';
