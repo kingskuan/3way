@@ -75,7 +75,8 @@ export function getConfig() {
   const rsDefaults =
     rsNet === 'testnet'
       ? { api: 'https://api.testnet.rise.trade', ws: 'wss://ws.testnet.rise.trade' }
-      : { api: 'https://api.risex.trade', ws: 'wss://ws.risex.trade' };
+      // 官方 mainnet 已从 risex.trade 迁到 rise.trade（旧域名 CONNECT tunnel 502）
+      : { api: 'https://api.rise.trade', ws: 'wss://ws.rise.trade' };
 
   const rs = {
     mode: (process.env.RS_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
