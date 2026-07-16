@@ -62,9 +62,9 @@ export class PerplExchange extends EventEmitter {
     //   orderTtlBlocks — Monad 出块 ~1s，20 块给 20s 有效期够用了
     this.accountId = null;
     this._headBlock = 0;
-    // Monad ~1s/块。60 块给 60 秒 TTL——比之前 20 宽裕但比 200（too high）小得多。
-    // 若这个值还是「too high」下次 log 里 mt=3 error 会告诉我。
-    this._orderTtlBlocks = 60;
+    // 60 和 20 都被 Perpl 判「too high」。文档说 lb ≤ head + market.order_ttl_blocks。
+    // Monad ~1s/块，Perpl per-market TTL 观测下来大概率 <= 10。用 5 保守试。
+    this._orderTtlBlocks = 5;
     // WS 世代号：每次显式 reconnect()/stop() 或 _connectTradingWs() 都自增。
     // 老 socket 的 close handler 只有在世代号仍匹配时才会拉起下一次重连——
     // 避免 reconnect() 期间「老 close handler + 新 init」两条重连并发。
@@ -372,56 +372,55 @@ export class PerplExchange extends EventEmitter {
       return;
     }
     // mt=23 OrdersSnapshot / mt=24 OrdersUpdate: 订单响应
-    // 官方：rq 回响我们发送时用的 request ID
+    // 观测实际字段（Round 15 诊断出来）：
+    //   msg.d = [ { rq, mkt, acc, oid, st, t, p, os, fp, fs, lv, ... } ]
+    //   d 是订单列表；每单里 rq 回响、oid = order id、st = 状态、
+    //   os = 剩余量（?）、fp/fs = 填成的价/量
     if (msg.mt === 23 || msg.mt === 24) {
-      // 一次性打前 3 条完整 payload 看真实字段结构（防止再猜错）
+      // mt=23/24 也带 at.b（当前块）——head block 除 mt=26 之外的第二来源
+      if (msg.at && Number.isFinite(Number(msg.at.b))) this._headBlock = Number(msg.at.b);
       if (!this._orderMsgLogged) this._orderMsgLogged = 0;
       if (this._orderMsgLogged < 3) {
         this._orderMsgLogged++;
         try { console.log(`[Perpl] mt=${msg.mt} 消息（诊断 ${this._orderMsgLogged}/3）：` + JSON.stringify(msg).slice(0, 600)); } catch {}
       }
-      // OrdersUpdate/Snapshot 里可能有多条 order 更新，也可能是我们请求的响应
-      const orders = Array.isArray(msg.os) ? msg.os : (Array.isArray(msg.orders) ? msg.orders : (msg.o ? [msg.o] : []));
+      const orders = Array.isArray(msg.d) ? msg.d
+        : Array.isArray(msg.os) ? msg.os
+        : Array.isArray(msg.orders) ? msg.orders
+        : (msg.o ? [msg.o] : []);
       for (const o of orders) {
-        const rq = o.rq != null ? Number(o.rq) : (msg.rq != null ? Number(msg.rq) : null);
+        const rq = o.rq != null ? Number(o.rq) : null;
+        const oid = String(o.oid ?? o.id ?? '');
         if (rq != null && this._pendingReplies.has(rq)) {
           const pending = this._pendingReplies.get(rq);
           this._pendingReplies.delete(rq);
           clearTimeout(pending.timer);
           if (o.err || o.error || o.rj) {
             pending.reject(new Error(o.err || o.error || String(o.rj)));
+          } else if (oid) {
+            pending.resolve({ orderId: oid });
           } else {
-            pending.resolve({ orderId: String(o.id ?? o.oid ?? '') });
+            pending.reject(new Error(`Perpl 返回无 oid（st=${o.st}）`));
           }
         }
-        // fills:  o.fs 是 fills 列表, o.ex 是 executed size, o.st 是 status
-        if (o.fs && Array.isArray(o.fs) && o.fs.length) {
-          const orderId = String(o.id ?? o.oid ?? '');
-          const tracked = this.orders.get(orderId);
-          if (tracked) {
-            const marketId = Number(tracked.marketId);
-            const priceScale = this._priceScales.get(marketId) || 1;
-            const sizeScale = this._sizeScales.get(marketId) || 1;
-            for (const f of o.fs) {
-              const px = f.p != null ? Number(f.p) / priceScale : tracked.price;
-              const sz = f.s != null ? Number(f.s) / sizeScale : tracked.sizeBase;
-              this.emit('fill', {
-                orderId, marketId, side: tracked.side, price: px, sizeBase: sz,
-                levelIndex: tracked.levelIndex, clientOrderId: tracked.clientOrderId,
-              });
-            }
-            // 完全成交 / 撤销 / 过期 → 移除跟踪
-            if (o.st === 2 || o.st === 3 || o.st === 4 || o.remaining === 0) this.orders.delete(orderId);
+        // 已成交 / 已撤销 / 已过期状态 → 清本地跟踪
+        //   st=1 pending, 2 filled/done, 3 cancelled, 4 expired（观测猜的）
+        if (oid && this.orders.has(oid)) {
+          const tracked = this.orders.get(oid);
+          const marketId = Number(tracked.marketId);
+          const priceScale = this._priceScales.get(marketId) || 1;
+          const sizeScale = this._sizeScales.get(marketId) || 1;
+          // fp/fs 是 fill price / fill size（scaled）；只在有变化时 emit
+          if (Number(o.fs) > 0) {
+            this.emit('fill', {
+              orderId: oid, marketId, side: tracked.side,
+              price: Number(o.fp) / priceScale || tracked.price,
+              sizeBase: Number(o.fs) / sizeScale,
+              levelIndex: tracked.levelIndex, clientOrderId: tracked.clientOrderId,
+            });
           }
+          if (o.st === 2 || o.st === 3 || o.st === 4) this.orders.delete(oid);
         }
-      }
-      // top-level rq 匹配（有些实现响应把 rq 放外面而不是 orders[0].rq）
-      if (msg.rq != null && this._pendingReplies.has(Number(msg.rq))) {
-        const pending = this._pendingReplies.get(Number(msg.rq));
-        this._pendingReplies.delete(Number(msg.rq));
-        clearTimeout(pending.timer);
-        if (msg.err || msg.error) pending.reject(new Error(msg.err || msg.error));
-        else pending.resolve({ orderId: String(orders[0]?.id ?? orders[0]?.oid ?? '') });
       }
       return;
     }
