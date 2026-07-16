@@ -884,19 +884,18 @@ export class GridBot {
         && (now - (this._lastReseedAt || 0) > 60_000)) {
       this._lastReseedAt = now;
       try {
-        // 重铺前先 re-snap 每档到市场当前 stepPrice——resume() 来的老 bot
-        // 里 grid.levels 可能是升级前生成的（没 snap），会被 Ondo 之类的
-        // API 拒（"invalid - doesn't snap to min price increment"）
-        let tick = this.config?.stepPrice || 0;
-        if (!(tick > 0)) {
-          try {
-            const mkt = (await this.ex.getMarkets()).find((m) => m.marketId === this.config.marketId);
-            if (mkt?.stepPrice > 0) {
-              tick = mkt.stepPrice;
-              this.config.stepPrice = tick;   // 记回 config，后续复用
-            }
-          } catch { /* best effort */ }
-        }
+        // 重铺前先 re-snap 每档到市场**当前** stepPrice。之前 resume 出来的
+        // 老 bot 里 config.stepPrice 可能是升级前保存的旧值（比如 0.01），跟
+        // 市场真实 tick 0.1 不一致。永远优先信市场，config 记回来复用。
+        let tick = 0;
+        try {
+          const mkt = (await this.ex.getMarkets()).find((m) => m.marketId === this.config.marketId);
+          if (mkt?.stepPrice > 0) {
+            tick = mkt.stepPrice;
+            this.config.stepPrice = tick;
+          }
+        } catch { /* best effort */ }
+        if (!(tick > 0)) tick = this.config?.stepPrice || 0;
         if (tick > 0) {
           // 用 tick 的小数位数做 toFixed，消除 `Math.round(lv/tick)*tick` 的浮点
           // 残尾（1978.83 → 1978.8300000000002 → API 判 not snap）
