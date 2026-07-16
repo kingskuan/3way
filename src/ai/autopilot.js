@@ -77,6 +77,16 @@ class Autopilot {
     for (const k of KEYS) this.cfg.perExchange[k] ||= { enabled: false, maxCapitalUsdc: 1000 };
     this.state = saved.state || {};        // per-exchange runtime state
     for (const k of KEYS) this.state[k] = { ..._freshExState(), ...(this.state[k] || {}) };
+    // 迁移补丁：Round 1 加了 startedByAutopilot，旧存档没这字段，如果重启前 bot 就在跑
+    // 且这一所在 Autopilot 里托管着，认领它——避免"用户手动启动"误判 + 假熔断连锁。
+    for (const k of KEYS) {
+      const bot = this.bots[k];
+      const running = !!(bot?.getState?.()?.running);
+      if (running && this.cfg.perExchange[k]?.enabled && !this.state[k].startedByAutopilot) {
+        this.state[k].startedByAutopilot = true;
+        this.state[k].adoptedOnBoot = true;   // 打个标记方便日后排查
+      }
+    }
     this.decisions = saved.decisions || [];    // rolling log (~50)
     this._lastTickAt = 0;
     this._busy = false;
@@ -102,6 +112,7 @@ class Autopilot {
   updateConfig(patch) {
     // 白名单式合并，防止用户从前端塞奇怪字段
     const c = this.cfg;
+    const wasEnabled = c.masterEnabled;
     if (typeof patch.masterEnabled === 'boolean') c.masterEnabled = patch.masterEnabled;
     if (['conservative', 'balanced', 'aggressive'].includes(patch.riskStyle)) c.riskStyle = patch.riskStyle;
     if (Number.isFinite(patch.decisionIntervalMin)) c.decisionIntervalMin = Math.max(5, Math.min(120, Number(patch.decisionIntervalMin)));
@@ -113,6 +124,20 @@ class Autopilot {
         if (Number.isFinite(p.maxCapitalUsdc)) c.perExchange[k].maxCapitalUsdc = Math.max(0, Number(p.maxCapitalUsdc));
       }
     }
+    // 主开关从 off 切 on：清所有 pausedUntil，相当于"用户已复核并重新开始"。
+    // 否则历史熔断（可能来自 balance sync 时的假警报）会永远吊住 Autopilot 不动。
+    if (!wasEnabled && c.masterEnabled) {
+      let cleared = 0;
+      for (const k of KEYS) {
+        if (this.state[k].pausedUntil) {
+          this.state[k].pausedUntil = 0;
+          this.state[k].pausedReason = '';
+          this.state[k].consecutiveLosses = 0;
+          cleared++;
+        }
+      }
+      if (cleared) this._log('all', 'resume', `主开关重启：清除 ${cleared} 家历史熔断状态`);
+    }
     this._save();
     return this.status();
   }
@@ -123,6 +148,22 @@ class Autopilot {
     this.state[key].pausedUntil = 0;
     this.state[key].pausedReason = '';
     this.state[key].consecutiveLosses = 0;
+    this._save();
+    return this.status();
+  }
+
+  /** 一键清除所有熔断状态。UI 兜底按钮。 */
+  resumeAll() {
+    let cleared = 0;
+    for (const k of KEYS) {
+      if (this.state[k].pausedUntil) {
+        this.state[k].pausedUntil = 0;
+        this.state[k].pausedReason = '';
+        this.state[k].consecutiveLosses = 0;
+        cleared++;
+      }
+    }
+    if (cleared) this._log('all', 'resume', `一键清除 ${cleared} 家熔断状态`);
     this._save();
     return this.status();
   }
@@ -151,7 +192,15 @@ class Autopilot {
       const st = this.state[k];
       if (st.dayStartDate !== today) {
         const bot = this.bots[k];
-        st.dayStartEquity = bot?.getState().equity ?? 0;
+        const ex = this.exchanges[k];
+        const s = bot?.getState();
+        const eq = s?.equity;
+        // 只在读到合法权益时才落基线；LIVE 适配器连接中 / balance 还没同步过来时
+        // eq 可能是 0 或 null——这时先不设日期，下一 tick 再试，避免"0 基线永远
+        // 触发 100% 亏损"的陷阱。
+        const healthy = ex?.dataSource === 'real' && (!ex.lastOkAt || Date.now() - ex.lastOkAt < 120_000);
+        if (!healthy || !Number.isFinite(eq) || eq <= 0) continue;
+        st.dayStartEquity = eq;
         st.dayStartDate = today;
         st.consecutiveLosses = 0;
       }
@@ -172,9 +221,28 @@ class Autopilot {
       return;
     }
 
-    // 2. 护栏：日亏损
+    // 2. 交易所健康门槛：适配器还在 connecting、走合成行情、或数据陈旧（>2min）→ 一律
+    //    跳过本轮，不做任何护栏判断。假熔断的根因就是 balance sync 窗口 balance=0 触发
+    //    "日亏损 100%"，健康门槛把这窗口挡在外面。
+    const stale = ex?.lastOkAt ? (now - ex.lastOkAt > 120_000) : false;
+    if (ex?.dataSource === 'connecting') {
+      this._log(key, 'skip', '交易所连接中，等就绪再决策');
+      return;
+    }
+    if (ex?.dataSource === 'synthetic') {
+      this._log(key, 'skip', '走合成行情（未连真实交易所），Autopilot 不接管');
+      return;
+    }
+    if (stale) {
+      this._log(key, 'skip', `交易所数据 ${Math.round((now - ex.lastOkAt) / 1000)}s 未更新，跳过本轮`);
+      return;
+    }
+
+    // 3. 护栏：日亏损
+    //    额外要求 cur.balance > 0：LIVE 适配器 init 窗口偶尔 balance=0，
+    //    dayStartEquity>0 会误判成 100% 亏损，直接给假熔断。用 balance 兜底。
     const cur = bot.getState();
-    if (st.dayStartEquity > 0 && cur.equity != null) {
+    if (st.dayStartEquity > 0 && cur.equity != null && cur.balance > 0) {
       const dailyLossPct = (st.dayStartEquity - cur.equity) / st.dayStartEquity * 100;
       if (dailyLossPct >= s.dailyLossPctLimit) {
         await this._emergencyStop(key, `日亏损 ${dailyLossPct.toFixed(2)}% 达阈值 ${s.dailyLossPctLimit}%，紧急熔断`);
@@ -338,7 +406,7 @@ class Autopilot {
   }
 
   _log(key, action, message) {
-    const item = { t: Date.now(), key, exchange: EXNAMES[key], action, message };
+    const item = { t: Date.now(), key, exchange: EXNAMES[key] || key, action, message };
     this.decisions.unshift(item);
     if (this.decisions.length > 50) this.decisions.length = 50;
     this._save();

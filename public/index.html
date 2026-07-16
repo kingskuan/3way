@@ -1970,7 +1970,15 @@ input:focus, select:focus {
 
   <!-- 每所状态 -->
   <div class="panel" style="margin-top:14px">
-    <div class="panel-title">当前状态（每所）</div>
+    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>当前状态（每所）</span>
+      <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px">
+        <button class="btn btn-ghost" style="width:auto;margin:0;padding:4px 10px;font-size:11px;border-color:var(--yel);color:var(--yel)" onclick="apResumeAll()">🧹 清除全部熔断</button>
+      </span>
+    </div>
+    <div id="ap-disabled-note" class="muted" style="font-size:12px;margin-bottom:8px;display:none">
+      ℹ️ 主开关目前关闭。下方的历史熔断状态仅供参考，不会影响任何交易；打开主开关会自动清空这些历史熔断。
+    </div>
     <div id="ap-state" class="grid-2" style="gap:12px"></div>
   </div>
 
@@ -3258,6 +3266,11 @@ function apRender(s) {
     box.appendChild(row);
   }
 
+  // 主开关关闭时给个提示条，把红色熔断降调（不会执行任何决策，历史熔断只是残留）
+  const masterOff = !c.masterEnabled;
+  const note = $('ap-disabled-note');
+  if (note) note.style.display = masterOff ? '' : 'none';
+
   // 每所状态
   const stateBox = $('ap-state');
   stateBox.innerHTML = '';
@@ -3265,16 +3278,19 @@ function apRender(s) {
     const st = s.state?.[k] || {};
     const paused = st.pausedUntil && st.pausedUntil > Date.now();
     const enabled = c.perExchange?.[k]?.enabled;
-    const icon = paused ? '🚨' : (enabled ? '🟢' : '⚪');
+    // 主开关关时熔断退色显示；开时才用红/警告色
+    const icon = masterOff ? '⚪' : (paused ? '🚨' : (enabled ? '🟢' : '⚪'));
+    const pauseColor = masterOff ? 'var(--mut)' : 'var(--red)';
     const box = document.createElement('div');
-    box.style.cssText = 'background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:12px;font-size:12px';
+    box.style.cssText = 'background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:12px;font-size:12px'
+      + (masterOff ? ';opacity:0.7' : '');
     box.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <b style="font-size:14px">${icon} ${AP_EX[k]}</b>
         ${paused ? `<button class="btn btn-ghost" style="width:auto;margin:0;padding:4px 10px;font-size:11px;border-color:var(--yel);color:var(--yel)" onclick="apResume('${k}')">解除熔断</button>` : ''}
       </div>
-      <div class="muted">${enabled ? '已托管' : '未托管（手动模式）'}</div>
-      ${paused ? `<div style="color:var(--red);margin-top:4px">⚠ ${st.pausedReason}</div>` : ''}
+      <div class="muted">${masterOff ? '主开关关闭' : (enabled ? '已托管' : '未托管（手动模式）')}</div>
+      ${paused ? `<div style="color:${pauseColor};margin-top:4px">${masterOff ? 'ℹ️' : '⚠'} ${st.pausedReason}</div>` : ''}
       <div style="margin-top:6px">上次动作：<b>${AP_ACTION_ICON[st.lastAction] || ''} ${AP_ACTION_LABEL[st.lastAction] || st.lastAction || '—'}</b></div>
       <div class="muted" style="font-size:11px;line-height:1.4;margin-top:2px">${st.lastActionReason || '—'}</div>
       ${st.lastDecisionAt ? `<div class="muted" style="font-size:10px;margin-top:4px">决策时间：${apFmtTime(st.lastDecisionAt)}</div>` : ''}
@@ -3301,6 +3317,15 @@ async function apResume(key) {
     const j = await r.json();
     apRender(j);
   } catch (e) { alert('解除失败：' + e.message); }
+}
+
+async function apResumeAll() {
+  if (!confirm('确定清除所有交易所的熔断状态？（如果主开关开着，AI 会在下一轮决策时可能重新起网格）')) return;
+  try {
+    const r = await fetch('/api/autopilot/resume-all', { method:'POST' });
+    const j = await r.json();
+    apRender(j);
+  } catch (e) { alert('清除失败：' + e.message); }
 }
 
 async function apSave() {

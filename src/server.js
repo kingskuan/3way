@@ -420,6 +420,10 @@ const server = http.createServer(async (request, res) => {
         return send(res, 200, autopilot.resumeExchange(String(b.key)));
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
     }
+    if (p === '/api/autopilot/resume-all' && request.method === 'POST') {
+      try { return send(res, 200, autopilot.resumeAll()); }
+      catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+    }
 
     if (p === '/api/ai/chat' && request.method === 'POST') {
       try {
