@@ -223,10 +223,13 @@ export class GridBot {
     };
     this.grid = buildGrid({ lower: this.config.lower, upper: this.config.upper, gridCount: this.config.gridCount });
     // 把每档价格 snap 到市场的 stepPrice（价格 tick）——Ondo 的 API 硬性要求
-    // 价格是 tick 的整数倍，不然 "invalid - doesn't snap to min price increment"
+    // 价格是 tick 的整数倍，不然 "invalid - doesn't snap to min price increment"。
+    // 用 tick 的小数位数 toFixed 消除浮点残尾（关键：Math.round(1978.83/0.1)*0.1
+    // 会产出 1978.8000000000002，Ondo 拒）。
     if (market.stepPrice > 0) {
       const tick = market.stepPrice;
-      this.grid.levels = this.grid.levels.map((lv) => Math.round(lv / tick) * tick);
+      const dp = Math.max(0, Math.min(10, -Math.floor(Math.log10(tick))));
+      this.grid.levels = this.grid.levels.map((lv) => Number((Math.round(lv / tick) * tick).toFixed(dp)));
     }
     this._recomputeRisk();
     this._refillPausedUntil = 0; this._cancelTimes = []; // fresh start clears any back-off
@@ -895,7 +898,10 @@ export class GridBot {
           } catch { /* best effort */ }
         }
         if (tick > 0) {
-          this.grid.levels = this.grid.levels.map((lv) => Math.round(lv / tick) * tick);
+          // 用 tick 的小数位数做 toFixed，消除 `Math.round(lv/tick)*tick` 的浮点
+          // 残尾（1978.83 → 1978.8300000000002 → API 判 not snap）
+          const dp = Math.max(0, Math.min(10, -Math.floor(Math.log10(tick))));
+          this.grid.levels = this.grid.levels.map((lv) => Number((Math.round(lv / tick) * tick).toFixed(dp)));
         }
         const { seedOrders } = await import('./grid.js');
         const seeds = seedOrders({ levels: this.grid.levels, price: this.lastPrice, mode: this.config.mode, spacing: this.grid.spacing });
