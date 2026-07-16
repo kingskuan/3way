@@ -881,6 +881,22 @@ export class GridBot {
         && (now - (this._lastReseedAt || 0) > 60_000)) {
       this._lastReseedAt = now;
       try {
+        // 重铺前先 re-snap 每档到市场当前 stepPrice——resume() 来的老 bot
+        // 里 grid.levels 可能是升级前生成的（没 snap），会被 Ondo 之类的
+        // API 拒（"invalid - doesn't snap to min price increment"）
+        let tick = this.config?.stepPrice || 0;
+        if (!(tick > 0)) {
+          try {
+            const mkt = (await this.ex.getMarkets()).find((m) => m.marketId === this.config.marketId);
+            if (mkt?.stepPrice > 0) {
+              tick = mkt.stepPrice;
+              this.config.stepPrice = tick;   // 记回 config，后续复用
+            }
+          } catch { /* best effort */ }
+        }
+        if (tick > 0) {
+          this.grid.levels = this.grid.levels.map((lv) => Math.round(lv / tick) * tick);
+        }
         const { seedOrders } = await import('./grid.js');
         const seeds = seedOrders({ levels: this.grid.levels, price: this.lastPrice, mode: this.config.mode, spacing: this.grid.spacing });
         this._alert(`⚠️ 网格状态异常：running=true 但交易所 0 单、本地 0 单，尝试重新铺 ${seeds.length} 单…`);
