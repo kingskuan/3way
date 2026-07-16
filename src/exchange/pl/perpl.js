@@ -55,6 +55,10 @@ export class PerplExchange extends EventEmitter {
     this._reqSeq = 0;
     this._pollTimer = null;
     this._reconnectDelay = 1000;
+    // WS 世代号：每次显式 reconnect()/stop() 或 _connectTradingWs() 都自增。
+    // 老 socket 的 close handler 只有在世代号仍匹配时才会拉起下一次重连——
+    // 避免 reconnect() 期间「老 close handler + 新 init」两条重连并发。
+    this._wsGen = 0;
   }
 
   // ── 签名工具 ────────────────────────────────────────────────────────────
@@ -209,10 +213,14 @@ export class PerplExchange extends EventEmitter {
   }
 
   async reconnect() {
+    // bump 世代号：让老 socket 的 close handler 里排的自动重连失效
+    this._wsGen++;
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
     if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
     if (this._ws) { try { this._ws.close(); } catch {} this._ws = null; }
     this._wsReady = false;
     this._wsAuthed = false;
+    this._reconnectDelay = 1000;
     return this.init();
   }
 
@@ -221,6 +229,7 @@ export class PerplExchange extends EventEmitter {
   // ── WebSocket 交易通道 ─────────────────────────────────────────────────
   _connectTradingWs() {
     const url = this.wsUrl + '/ws/v1/trading';
+    const myGen = ++this._wsGen;
     let ws;
     try { ws = new WebSocket(url); }
     catch (e) { this.emit('error', new Error(`Perpl WS 连接失败：${e.message}`)); return; }
@@ -264,11 +273,19 @@ export class PerplExchange extends EventEmitter {
     });
 
     ws.addEventListener('close', () => {
+      // 老 socket 关闭：只有当我们还是当前那一代时才安排重连；否则
+      // reconnect()/stop() 已经推进了 _wsGen，我们直接静默退出。
+      if (myGen !== this._wsGen) return;
       this._wsReady = false;
       this._wsAuthed = false;
       const delay = Math.min(this._reconnectDelay, 30000);
       this._reconnectDelay = Math.min(this._reconnectDelay * 2, 30000);
-      setTimeout(() => { if (this.dataSource === 'real') this._connectTradingWs(); }, delay);
+      this._reconnectTimer = setTimeout(() => {
+        this._reconnectTimer = null;
+        if (myGen !== this._wsGen) return;
+        if (this.dataSource === 'real') this._connectTradingWs();
+      }, delay);
+      this._reconnectTimer.unref?.();
     });
 
     ws.addEventListener('error', (e) => {
@@ -503,8 +520,13 @@ export class PerplExchange extends EventEmitter {
 
   start() { this._startPolling(); }
   stop() {
+    // bump 世代号：让老 socket 的 close handler 不再自动重连
+    this._wsGen++;
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
     if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
     if (this._ws) { try { this._ws.close(); } catch {} this._ws = null; }
+    this._wsReady = false;
+    this._wsAuthed = false;
   }
 
   // ── REST 轮询：价格 / 持仓 / 余额 / fill 兜底 ────────────────────────────
