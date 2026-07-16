@@ -52,8 +52,11 @@ export class PerplExchange extends EventEmitter {
     this._wsReady = false;
     this._wsAuthed = false;
     this._pendingReplies = new Map();  // rq -> {resolve, reject, timer}
-    // rq 用小整数（uint32 兼容 Monad 链上 idempotency 键）；从 1 开始递增
-    this._reqSeq = 0;
+    // rq 必须严格 > 服务端上次记的 lfr（Last Forwarded Request ID），否则
+    // Perpl 服务端会拒「Request Out of Sync」(sr=32)。
+    // 用秒级时间戳做初始值（Date.now()/1000 ≈ 1.7B，稳稳超过历史 rq），
+    // 后续 mt=19/mt=21 消息里带 lfr 时会再往上提升。
+    this._reqSeq = Math.floor(Date.now() / 1000);
     this._pollTimer = null;
     this._reconnectDelay = 1000;
     // Perpl 官方协议要素：
@@ -342,27 +345,33 @@ export class PerplExchange extends EventEmitter {
         return;
       }
     }
-    // mt=19 WalletSnapshot：视为 auth 成功 + 抽取 balance
+    // mt=19 WalletSnapshot：视为 auth 成功 + 抽取 balance + lfr
     if (msg.mt === 19) {
       if (!this._wsAuthed) {
         this._wsAuthed = true;
         console.log('[Perpl] Trading WS 认证成功');
       }
       _extractPerplBalance(this, msg);
-      // WalletSnapshot 可能带 Accounts 数组：抽第一个 account id
+      // WalletSnapshot 可能带 Accounts 数组：抽第一个 account 的 id + lfr
       const accs = Array.isArray(msg.as) ? msg.as : [];
       if (accs.length && accs[0]?.id != null && this.accountId == null) {
         this.accountId = Number(accs[0].id);
         console.log(`[Perpl] accountId=${this.accountId}`);
       }
+      // lfr = last forwarded request id：服务端记的上次 rq，我们必须 > 它才不会
+      // 被判「Request Out of Sync」（sr=32）
+      for (const acc of accs) {
+        if (acc?.lfr != null) _bumpReqSeq(this, Number(acc.lfr));
+      }
       return;
     }
-    // mt=21 Account：包含 accountId + balance 更新
+    // mt=21 Account：包含 accountId + balance 更新 + lfr
     if (msg.mt === 21) {
       if (msg.id != null && this.accountId == null) {
         this.accountId = Number(msg.id);
         console.log(`[Perpl] accountId=${this.accountId}`);
       }
+      if (msg.lfr != null) _bumpReqSeq(this, Number(msg.lfr));
       _extractPerplBalance(this, msg);
       return;
     }
@@ -685,6 +694,17 @@ export class PerplExchange extends EventEmitter {
         }
       } catch { /* skip */ }
     }
+  }
+}
+
+// 把 rq 序号提升到 max(current, lfr+1)。lfr 是 Perpl 服务端记的「上次处理
+// 到的 request id」——我们发的 rq 必须严格 > lfr，否则被判 sr=32 out of sync。
+function _bumpReqSeq(self, lfr) {
+  if (!Number.isFinite(lfr) || lfr < 0) return;
+  if (self._reqSeq <= lfr) {
+    const prev = self._reqSeq;
+    self._reqSeq = lfr + 1;
+    if (prev < lfr) console.log(`[Perpl] rq 提升：${prev} → ${self._reqSeq}（服务端 lfr=${lfr}）`);
   }
 }
 
