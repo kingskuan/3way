@@ -390,17 +390,18 @@ export class PerplExchange extends EventEmitter {
         : (msg.o ? [msg.o] : []);
       for (const o of orders) {
         const rq = o.rq != null ? Number(o.rq) : null;
-        const oid = String(o.oid ?? o.id ?? '');
+        const oidRaw = o.oid ?? o.id;
+        const oid = oidRaw != null && oidRaw !== 0 && oidRaw !== '0' ? String(oidRaw) : '';
+        // 观测（Round 16 log）：拒单响应会带 r:true 和/或 st:7 和/或 oid:0 和/或 sr:<原因码>
+        const rejected = o.r === true || o.st === 7 || (rq != null && !oid);
         if (rq != null && this._pendingReplies.has(rq)) {
           const pending = this._pendingReplies.get(rq);
           this._pendingReplies.delete(rq);
           clearTimeout(pending.timer);
-          if (o.err || o.error || o.rj) {
-            pending.reject(new Error(o.err || o.error || String(o.rj)));
-          } else if (oid) {
-            pending.resolve({ orderId: oid });
+          if (rejected) {
+            pending.reject(new Error(`Perpl 拒单 st=${o.st ?? '?'} sr=${o.sr ?? '?'}${o.err ? ` err=${o.err}` : ''}`));
           } else {
-            pending.reject(new Error(`Perpl 返回无 oid（st=${o.st}）`));
+            pending.resolve({ orderId: oid });
           }
         }
         // 已成交 / 已撤销 / 已过期状态 → 清本地跟踪
