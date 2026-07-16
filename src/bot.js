@@ -814,9 +814,22 @@ export class GridBot {
     // such a snapshot, and in general require an order to be missing from TWO
     // consecutive reconciles before pruning it.
     const massVanish = real.length === 0 && this.active.size >= 3;
-    if (massVanish && now - (this._lastVanishAlertAt || 0) > 60000) {
-      this._lastVanishAlertAt = now;
-      this._alert(`⚠️ 挂单对账：交易所返回 0 单但本地跟踪 ${this.active.size} 单，疑似接口异常快照，本轮不清理（等待下轮复核）。`);
+    if (massVanish) {
+      this._vanishStreak = (this._vanishStreak || 0) + 1;
+      if (now - (this._lastVanishAlertAt || 0) > 60000) {
+        this._lastVanishAlertAt = now;
+        this._alert(`⚠️ 挂单对账：交易所返回 0 单但本地跟踪 ${this.active.size} 单，疑似接口异常快照（连续 ${this._vanishStreak} 次），本轮不清理。`);
+      }
+      // 10 次连续 massVanish（默认 reconcile 30s → 5 分钟）没变 → 认为
+      // 挂单真的没了（被 exchange 撤/成交/过期），信任外部：清本地，让下面
+      // self-heal 逻辑接管重铺。
+      if (this._vanishStreak >= 10) {
+        this._alert(`⚠️ 挂单对账：交易所端 0 单持续 ${this._vanishStreak} 次（>5 分钟），信任外部，清本地 ${this.active.size} 单跟踪，准备重铺。`);
+        this.active.clear();
+        this._vanishStreak = 0;
+      }
+    } else {
+      this._vanishStreak = 0;
     }
     let pruned = 0;
     if (!massVanish) {
