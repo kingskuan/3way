@@ -321,17 +321,22 @@ export class PerplExchange extends EventEmitter {
       this._headBlock = Number(msg.at.b);
       return;
     }
-    // mt=3 是 status/error 响应：Perpl 遇到订单校验失败会推这个（观测样例：
-    // {"mt":3,"sid":100,"sn":<rq>,"status":{"code":400,"error":"..."}}）
-    // sn 字段就是我们发出去的 rq，据此匹配 pending
+    // mt=3 是 status 响应：Perpl 对每个 OrderRequest 都会回一条。观测：
+    //   code=400, error="..."    → 校验失败拒单
+    //   code=0                    → 请求已受理（成功需要等后续 mt=24 OrdersUpdate 才有 orderId）
+    // 之前我把 code=0 也当 reject 了 → 全部下单失败。
     if (msg.mt === 3 && msg.sn != null) {
       const rq = Number(msg.sn);
       if (this._pendingReplies.has(rq)) {
-        const pending = this._pendingReplies.get(rq);
-        this._pendingReplies.delete(rq);
-        clearTimeout(pending.timer);
-        const errMsg = msg.status?.error || msg.error || `Perpl 拒单 code=${msg.status?.code}`;
-        pending.reject(new Error(errMsg));
+        const code = Number(msg.status?.code);
+        const err = msg.status?.error || msg.error;
+        if (err || (code > 0)) {
+          const pending = this._pendingReplies.get(rq);
+          this._pendingReplies.delete(rq);
+          clearTimeout(pending.timer);
+          pending.reject(new Error(err || `Perpl 拒单 code=${code}`));
+        }
+        // code=0 且无 error：请求已受理，等 mt=24 OrdersUpdate 拿 orderId
         return;
       }
     }
