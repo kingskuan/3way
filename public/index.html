@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>网格交易总控台</title>
+<title>QnV · 自动化交易总控台</title>
+<link rel="icon" type="image/png" href="/logo.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 :root {
@@ -433,12 +434,35 @@ body {
   border-bottom: 1px solid var(--v2-line) !important;
   padding: 0 24px !important;
 }
-.header-logo { letter-spacing: -0.02em !important; }
-.header-logo span {
-  background: linear-gradient(90deg, #a5b4fc, #f0abfc) !important;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent !important;
+/* — Logo & 品牌名 — 用真的 <img> 承载视觉，文字用纯色，避免 iOS Safari
+     background-clip: text 时不时失灵渲染成白条的 bug — */
+.header-logo {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  letter-spacing: -0.02em !important;
+}
+.header-logo-img {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  display: block;
+  object-fit: contain;
+  background: #000;
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.25);
+}
+.header-logo-txt {
+  font-size: 17px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em;
+  color: #f1f5f9 !important;
+  /* 不用 background-clip: text，改用 text-shadow 制造微微冷光 */
+  text-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+}
+/* 兜底：老的 .header-logo span 规则被后写的这条覆盖 */
+.header-logo span { color: #f1f5f9 !important; background: none !important; }
+@media (max-width: 640px) {
+  .header-logo-img { width: 24px; height: 24px; }
+  .header-logo-txt { font-size: 15px !important; }
 }
 .header-sep { background: var(--v2-line) !important; }
 .badge {
@@ -743,7 +767,10 @@ input:focus, select:focus {
 
 <!-- ── Header ── -->
 <div class="header">
-  <div class="header-logo">网格交易<span>总控台</span></div>
+  <div class="header-logo">
+    <img class="header-logo-img" src="/logo.png" alt="QnV" />
+    <span class="header-logo-txt">QnV</span>
+  </div>
   <div class="header-sep"></div>
   <span class="hdot idle" id="hdr-de-dot" title=""></span><span id="hdr-de" class="badge badge-paper">DE: PAPER</span>
   <span class="hdot idle" id="hdr-ex-dot" title=""></span><span id="hdr-ex" class="badge badge-paper">EX: PAPER</span>
@@ -779,9 +806,13 @@ input:focus, select:focus {
   <!-- 三交易所汇总卡 -->
   <div class="total-row" style="margin-top:4px">
     <div class="total-card">
-      <div class="lbl">总权益（三所合计）</div>
+      <div class="lbl">总权益</div>
       <div class="val" id="tot-equity">—</div>
-      <div class="sub">余额合计 <span id="tot-balance">—</span></div>
+      <div class="sub">
+        <span id="tot-mode-summary">— Demo · — Live</span>
+        &nbsp;·&nbsp;
+        <span style="color:var(--v2-mut)">余额 <span id="tot-balance">—</span></span>
+      </div>
     </div>
     <div class="total-card">
       <div class="lbl">总盈亏</div>
@@ -2435,6 +2466,18 @@ function renderOverview(data) {
     : `<span class="up">${running}/5 运行中</span>`;
   const modes = ['de','ex','rs','on','pl'].map(p => data[p]?.mode?.toUpperCase() || 'PAPER').join(' / ');
   $('tot-modes').textContent = `DE / EX / RS / ON / PL : ${modes}`;
+
+  // Hero 卡的 demo/live 计数（就算 Live 是 0 也照样显示）
+  const modesArr = ['de','ex','rs','on','pl'].map(p => (data[p]?.mode || 'paper').toLowerCase());
+  const demoN = modesArr.filter((m) => m === 'paper').length;
+  const liveN = modesArr.filter((m) => m === 'live').length;
+  const el = $('tot-mode-summary');
+  if (el) {
+    el.innerHTML =
+      `<span style="color:#93c5fd">${demoN} Demo</span>` +
+      `<span style="color:var(--v2-mut);margin:0 6px">·</span>` +
+      `<span style="color:${liveN > 0 ? '#fca5a5' : 'var(--v2-mut)'}">${liveN} Live</span>`;
+  }
 }
 
 // ── IP 配置功能 ──────────────────────────────────────────────────────────────
