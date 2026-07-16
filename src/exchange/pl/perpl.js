@@ -16,6 +16,9 @@
 // 文档：https://github.com/PerplFoundation/api-docs
 import { EventEmitter } from 'node:events';
 import { createHash, createPrivateKey, sign as edSign, randomFillSync } from 'node:crypto';
+// Node 20 没有全局 WebSocket（21+ 才有）；用 undici 的实现保证 Railway
+// node:20-slim 容器里也能工作
+import { WebSocket } from 'undici';
 
 const POLL_MS = 3000;
 
