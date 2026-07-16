@@ -62,7 +62,9 @@ export class PerplExchange extends EventEmitter {
     //   orderTtlBlocks — Monad 出块 ~1s，20 块给 20s 有效期够用了
     this.accountId = null;
     this._headBlock = 0;
-    this._orderTtlBlocks = 20;
+    // Monad ~1s/块。60 块给 60 秒 TTL——比之前 20 宽裕但比 200（too high）小得多。
+    // 若这个值还是「too high」下次 log 里 mt=3 error 会告诉我。
+    this._orderTtlBlocks = 60;
     // WS 世代号：每次显式 reconnect()/stop() 或 _connectTradingWs() 都自增。
     // 老 socket 的 close handler 只有在世代号仍匹配时才会拉起下一次重连——
     // 避免 reconnect() 期间「老 close handler + 新 init」两条重连并发。
@@ -372,8 +374,14 @@ export class PerplExchange extends EventEmitter {
     // mt=23 OrdersSnapshot / mt=24 OrdersUpdate: 订单响应
     // 官方：rq 回响我们发送时用的 request ID
     if (msg.mt === 23 || msg.mt === 24) {
+      // 一次性打前 3 条完整 payload 看真实字段结构（防止再猜错）
+      if (!this._orderMsgLogged) this._orderMsgLogged = 0;
+      if (this._orderMsgLogged < 3) {
+        this._orderMsgLogged++;
+        try { console.log(`[Perpl] mt=${msg.mt} 消息（诊断 ${this._orderMsgLogged}/3）：` + JSON.stringify(msg).slice(0, 600)); } catch {}
+      }
       // OrdersUpdate/Snapshot 里可能有多条 order 更新，也可能是我们请求的响应
-      const orders = Array.isArray(msg.os) ? msg.os : (msg.o ? [msg.o] : []);
+      const orders = Array.isArray(msg.os) ? msg.os : (Array.isArray(msg.orders) ? msg.orders : (msg.o ? [msg.o] : []));
       for (const o of orders) {
         const rq = o.rq != null ? Number(o.rq) : (msg.rq != null ? Number(msg.rq) : null);
         if (rq != null && this._pendingReplies.has(rq)) {
