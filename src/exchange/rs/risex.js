@@ -325,7 +325,31 @@ export class RisexExchange extends EventEmitter {
   }
 
   async _refreshAccount() {
-    try { const b = await this._info.getBalance(this.account); if (b != null) { this.balance = Number(b); this.lastOkAt = Date.now(); } } catch { /* keep */ }
+    // 首次调用时打诊断日志，看 getBalance 到底返回什么
+    try {
+      const b = await this._info.getBalance(this.account);
+      if (!this._balanceProbed) {
+        console.log(`[RISEx] getBalance(${this.account.slice(0,6)}...) 返回：${JSON.stringify(b)?.slice(0,200)}（type=${typeof b}）`);
+        this._balanceProbed = true;
+      }
+      if (b != null) { this.balance = Number(b); this.lastOkAt = Date.now(); }
+    } catch (e) {
+      if (!this._balanceProbed) {
+        console.log(`[RISEx] getBalance 抛错：${e?.message || e}`);
+        // 尝试其它候选方法名，看 SDK 是否改过接口
+        for (const method of ['getAccountBalance','getAccount','getAccountOverview','getUserBalance']) {
+          if (typeof this._info?.[method] === 'function') {
+            try {
+              const r = await this._info[method](this.account);
+              console.log(`[RISEx] 备选 ${method}() 返回：${JSON.stringify(r)?.slice(0,200)}`);
+            } catch (ee) {
+              console.log(`[RISEx] 备选 ${method}() 抛错：${ee?.message || ee}`);
+            }
+          }
+        }
+        this._balanceProbed = true;
+      }
+    }
     try { const r = await this._info.getRealizedPnl(this.account); if (r?.total_realized_pnl != null) this.realizedPnl = Number(r.total_realized_pnl); } catch { /* keep */ }
   }
 }

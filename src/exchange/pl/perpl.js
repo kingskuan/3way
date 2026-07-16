@@ -261,9 +261,21 @@ export class PerplExchange extends EventEmitter {
   }
 
   _handleTradingMessage(msg) {
-    // Auth 成功
-    if (msg.op === 'authed' || msg.status === 'authed' || msg.type === 'auth-success') {
-      this._wsAuthed = true;
+    // Auth 成功（旧格式兼容 + 新格式：收到 mt=19 WalletSnapshot 即视为已 authed）
+    if (msg.op === 'authed' || msg.status === 'authed' || msg.type === 'auth-success' || msg.mt === 19) {
+      if (!this._wsAuthed) {
+        this._wsAuthed = true;
+        console.log('[Perpl] Trading WS 认证成功');
+      }
+      // mt=19 WalletSnapshot：从 Wallet.as[N].b 提取余额（Amount 字符串）
+      if (msg.mt === 19) {
+        _extractPerplBalance(this, msg);
+      }
+      if (msg.mt !== 19) return;   // 让 mt=19 继续走下面 update 逻辑
+    }
+    // mt=20 WalletUpdate、mt=21 AccountUpdate 也可能更新余额
+    if (msg.mt === 20 || msg.mt === 21) {
+      _extractPerplBalance(this, msg);
       return;
     }
     // Auth 失败
@@ -532,6 +544,24 @@ export class PerplExchange extends EventEmitter {
           }
         }
       } catch { /* skip */ }
+    }
+  }
+}
+
+// 从 Perpl WS 消息里提取账户余额
+// mt=19 WalletSnapshot: { addr, as: [ Account{ b: "210.47", lb: ... } ] }
+// mt=20 WalletUpdate / mt=21 AccountUpdate: 单个 Account 或增量
+function _extractPerplBalance(self, msg) {
+  const accounts = Array.isArray(msg.as) ? msg.as : (msg.a ? [msg.a] : []);
+  const candidates = accounts.length ? accounts : (msg.b !== undefined ? [msg] : []);
+  for (const acc of candidates) {
+    const bal = Number(acc?.b);
+    if (Number.isFinite(bal) && bal >= 0) {
+      const prev = Number(self.balance) || 0;
+      self.balance = bal;
+      if (Math.abs(prev - bal) > 0.001) {
+        console.log(`[Perpl] balance 更新：${prev} → ${bal}`);
+      }
     }
   }
 }
