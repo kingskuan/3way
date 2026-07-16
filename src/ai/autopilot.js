@@ -158,19 +158,18 @@ class Autopilot {
         if (Number.isFinite(p.maxCapitalUsdc)) c.perExchange[k].maxCapitalUsdc = Math.max(0, Number(p.maxCapitalUsdc));
       }
     }
-    // 主开关从 off 切 on：清所有 pausedUntil，相当于"用户已复核并重新开始"。
-    // 否则历史熔断（可能来自 balance sync 时的假警报）会永远吊住 Autopilot 不动。
+    // 主开关从 off 切 on：清所有 pausedUntil + 日基线，相当于"用户已复核并重新开始"。
+    // 只清 pausedUntil 不清 dayStartEquity 会立刻被日亏损护栏再次熔断——因为已实现
+    // 的亏损存在 balance 里但 baseline 还是老值。
     if (!wasEnabled && c.masterEnabled) {
       let cleared = 0;
       for (const k of KEYS) {
         if (this.state[k].pausedUntil) {
-          this.state[k].pausedUntil = 0;
-          this.state[k].pausedReason = '';
-          this.state[k].consecutiveLosses = 0;
+          _clearBreakerAndBaseline(this.state[k]);
           cleared++;
         }
       }
-      if (cleared) this._log('all', 'resume', `主开关重启：清除 ${cleared} 家历史熔断状态`);
+      if (cleared) this._log('all', 'resume', `主开关重启：清除 ${cleared} 家历史熔断状态 + 日基线`);
     }
     this._save();
     return this.status();
@@ -179,9 +178,8 @@ class Autopilot {
   /** 手动清除某所的熔断状态（用户在 UI 上"我已复核，继续跑"） */
   resumeExchange(key) {
     if (!this.state[key]) return { error: 'unknown exchange: ' + key };
-    this.state[key].pausedUntil = 0;
-    this.state[key].pausedReason = '';
-    this.state[key].consecutiveLosses = 0;
+    _clearBreakerAndBaseline(this.state[key]);
+    this._log(key, 'resume', `已解除熔断 + 重置日基线`);
     this._save();
     return this.status();
   }
@@ -191,13 +189,11 @@ class Autopilot {
     let cleared = 0;
     for (const k of KEYS) {
       if (this.state[k].pausedUntil) {
-        this.state[k].pausedUntil = 0;
-        this.state[k].pausedReason = '';
-        this.state[k].consecutiveLosses = 0;
+        _clearBreakerAndBaseline(this.state[k]);
         cleared++;
       }
     }
-    if (cleared) this._log('all', 'resume', `一键清除 ${cleared} 家熔断状态`);
+    if (cleared) this._log('all', 'resume', `一键清除 ${cleared} 家熔断状态 + 日基线`);
     this._save();
     return this.status();
   }
@@ -473,15 +469,37 @@ class Autopilot {
     const lower = pickedLower, upper = pickedUpper;
     const sizeBase = pickedSizeBase, gridCount = pickedGridCount;
     const leverage = pickedLeverage;
+
+    // 市况前置 check：起单前看最近 1h 走势——如果强下跌趋势就跳过。中性网格
+    // 在明显单边行情里 = 主动送死；Perpl 已经因为这个熔断过几次。
+    try {
+      const candles = await ex.getCandles(pick.marketId, 3600, 2);
+      if (candles?.length >= 2) {
+        const first = candles[0].close, last = candles[candles.length - 1].close;
+        if (first > 0 && (last - first) / first * 100 < -2) {
+          const dropPct = ((last - first) / first * 100).toFixed(2);
+          this._log(key, 'skip', `${pick.name} 近 1h 跌 ${dropPct}%，跳过本轮起单等市场稳定`);
+          return;
+        }
+      }
+    } catch { /* 拿不到 K 线不阻塞起单，Autopilot 之前的 fallback 已处理 */ }
+
     try {
       const res = await bot.start(params);
+      // 起单后 3s 让适配器同步 place 结果，再读实际挂上多少
+      await new Promise((r) => setTimeout(r, 3000));
+      const finalState = bot.getState();
+      const actual = Number(finalState.openOrders) || 0;
       st.lastAction = 'started';
-      st.lastActionReason = `选 ${pick.name}（${mode}，${aiReasoning || '规则排序 top1'}），区间 ${lower}~${upper}，${gridCount} 格 x ${sizeBase}`;
+      const rateNote = (actual < gridCount * 0.75)
+        ? `（仅挂上 ${actual}/${gridCount}，成功率低）` : '';
+      st.lastActionReason = `选 ${pick.name}（${mode}，${aiReasoning || '规则排序 top1'}），区间 ${lower}~${upper}，${gridCount} 格 x ${sizeBase}${rateNote}`;
       st.lastDecisionAt = now;
       st.lastAppliedEquity = cur.equity;
       st.startedByAutopilot = true;
       this._log(key, 'start', st.lastActionReason);
-      notify(`【网格 Autopilot·${EXNAMES[key]}】已启动：${pick.name}\n模式：${_modeLabel(mode)} · 区间 ${lower} ~ ${upper}\n${gridCount} 格 × ${sizeBase} · ${leverage}x 杠杆\nAI：${aiReasoning || '规则排序'}`).catch(() => {});
+      const successHint = (actual < gridCount * 0.75) ? `⚠ 起单成功率低：${actual}/${gridCount}\n` : '';
+      notify(`【网格 Autopilot·${EXNAMES[key]}】已启动：${pick.name}\n${successHint}模式：${_modeLabel(mode)} · 区间 ${lower} ~ ${upper}\n${gridCount} 格 × ${sizeBase} · ${leverage}x 杠杆\nAI：${aiReasoning || '规则排序'}`).catch(() => {});
       this._save();
     } catch (e) {
       st.lastAction = 'error';
@@ -504,12 +522,25 @@ class Autopilot {
     }
     try { await bot.stop({ closePosition: true }); } catch { /* best effort */ }
     st.startedByAutopilot = false;
-    st.pausedUntil = Date.now() + 24 * 3600_000;    // 24 小时熔断
+    st.pausedUntil = Date.now() + 24 * 3600_000;
     st.pausedReason = reason;
     st.lastAction = 'emergency_stop';
     st.lastActionReason = reason;
+    // 24h 熔断复发追踪：3 次以上说明真的市况差，自动取消该所托管，别让用户
+    // 陷入「清熔断 → 又熔断 → 又清 → 又熔断」的循环。
+    const now = Date.now();
+    st.emergencyHistory = (st.emergencyHistory || []).filter((t) => now - t < 24 * 3600_000);
+    st.emergencyHistory.push(now);
     this._log(key, 'emergency_stop', reason);
-    notify(`【网格 Autopilot·⚠ 熔断】${EXNAMES[key]}\n${reason}\n已停网格并平仓，未来 24 小时不会自动重启。请人工复核后到 UI 里点"解除熔断"恢复。`).catch(() => {});
+    if (st.emergencyHistory.length >= 3) {
+      this.cfg.perExchange[key].enabled = false;
+      st.emergencyHistory = [];   // reset 计数：等用户重新勾选托管
+      const msg = `24 小时内 3 次熔断，自动取消 ${EXNAMES[key]} 托管`;
+      this._log(key, 'auto_disable', msg);
+      notify(`【网格 Autopilot·🚫 自动取消托管】${EXNAMES[key]}\n${msg}\n最后一次原因：${reason}\n请人工评估市场情况，确认继续跑再到 UI 里重新勾选托管。`).catch(() => {});
+    } else {
+      notify(`【网格 Autopilot·⚠ 熔断】${EXNAMES[key]}\n${reason}\n已停网格并平仓（24h 内第 ${st.emergencyHistory.length} 次熔断），未来 24 小时不会自动重启。请人工复核后到 UI 里点"解除熔断"恢复。`).catch(() => {});
+    }
     this._save();
   }
 
@@ -531,11 +562,24 @@ function _stepAlign(v, step) {
   return Math.round(v / step) * step;
 }
 function _modeLabel(m) { return m === 'long' ? '做多' : m === 'short' ? '做空' : '中性'; }
+// 清熔断状态 + 日基线：解除熔断时必须一并清 dayStartEquity，否则历史已实现
+// 亏损锁在旧 baseline 里，下一 tick 立刻会被日亏损护栏再次触发（Round 20 root cause）。
+function _clearBreakerAndBaseline(st) {
+  st.pausedUntil = 0;
+  st.pausedReason = '';
+  st.consecutiveLosses = 0;
+  st.dayStartEquity = 0;
+  st.dayStartDate = '';
+  st.dayStartMode = '';
+  st.dayStartDataSource = '';
+}
+
 function _freshExState() {
   return {
     lastDecisionAt: 0,
     lastAction: 'none',
     lastActionReason: '',
+    emergencyHistory: [],   // 滚动 24h 熔断时间戳；3 次以上自动取消托管
     dayStartEquity: 0,
     dayStartDate: '',
     dayStartMode: '',        // baseline 打时 ex.mode（paper|live）
