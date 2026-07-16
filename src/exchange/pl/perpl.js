@@ -51,10 +51,18 @@ export class PerplExchange extends EventEmitter {
     this._ws = null;
     this._wsReady = false;
     this._wsAuthed = false;
-    this._pendingReplies = new Map();  // clientId -> {resolve, reject, timer}
-    this._reqSeq = 0;
+    this._pendingReplies = new Map();  // rq -> {resolve, reject, timer}
+    this._reqSeq = Math.floor(Date.now() / 1000) * 1000;  // 单调递增：官方要求 rq 严格递增
     this._pollTimer = null;
     this._reconnectDelay = 1000;
+    // Perpl 官方协议要素：
+    //   accountId — 从 mt=21 (Account) 消息里提取，下单时 acc 字段必填
+    //   headBlock — 从 mt=100 (Heartbeat) 消息里提取，下单时 lb=headBlock+ttl
+    //   orderTtlBlocks — /v1/pub/context 里给的默认 order 有效期（块数）
+    //   marketAccMap — 有些账号是分市场的，一个账号对应一个 marketId
+    this.accountId = null;
+    this._headBlock = 0;
+    this._orderTtlBlocks = 200;    // 保守默认，init 时从 context 读实际值
     // WS 世代号：每次显式 reconnect()/stop() 或 _connectTradingWs() 都自增。
     // 老 socket 的 close handler 只有在世代号仍匹配时才会拉起下一次重连——
     // 避免 reconnect() 期间「老 close handler + 新 init」两条重连并发。
@@ -148,6 +156,8 @@ export class PerplExchange extends EventEmitter {
     this.symbolToId.clear();
     this._priceScales.clear();
     this._sizeScales.clear();
+    // 从 context 读全局 order TTL blocks（有的话）
+    if (Number.isFinite(Number(ctx.order_ttl_blocks))) this._orderTtlBlocks = Number(ctx.order_ttl_blocks);
     for (const m of ctx.markets) {
       const cfg = m.config || {};
       const priceDecimals = Number(cfg.price_decimals ?? 0);
@@ -168,6 +178,10 @@ export class PerplExchange extends EventEmitter {
         minOrderSize: Number(cfg.min_order_size || Math.pow(10, -sizeDecimals)),
       });
       this.symbolToId.set(symbol, Number(m.id));
+      // 每市场自己的 order_ttl_blocks 覆盖全局
+      if (Number.isFinite(Number(cfg.order_ttl_blocks))) {
+        this.markets.get(Number(m.id));  // will be set later by _setMarkets
+      }
     }
     this._setMarkets(list);
 
@@ -296,89 +310,115 @@ export class PerplExchange extends EventEmitter {
   }
 
   _handleTradingMessage(msg) {
-    // Auth 成功（旧格式兼容 + 新格式：收到 mt=19 WalletSnapshot 即视为已 authed）
-    if (msg.op === 'authed' || msg.status === 'authed' || msg.type === 'auth-success' || msg.mt === 19) {
+    // mt=100 Heartbeat：更新 head block（下单要用 lb = head + ttl）
+    if (msg.mt === 100) {
+      if (Number.isFinite(Number(msg.h))) this._headBlock = Number(msg.h);
+      return;
+    }
+    // mt=19 WalletSnapshot：视为 auth 成功 + 抽取 balance
+    if (msg.mt === 19) {
       if (!this._wsAuthed) {
         this._wsAuthed = true;
         console.log('[Perpl] Trading WS 认证成功');
       }
-      // mt=19 WalletSnapshot：从 Wallet.as[N].b 提取余额（Amount 字符串）
-      if (msg.mt === 19) {
-        _extractPerplBalance(this, msg);
+      _extractPerplBalance(this, msg);
+      // WalletSnapshot 可能带 Accounts 数组：抽第一个 account id
+      const accs = Array.isArray(msg.as) ? msg.as : [];
+      if (accs.length && accs[0]?.id != null && this.accountId == null) {
+        this.accountId = Number(accs[0].id);
+        console.log(`[Perpl] accountId=${this.accountId}`);
       }
-      if (msg.mt !== 19) return;   // 让 mt=19 继续走下面 update 逻辑
+      return;
     }
-    // mt=20 WalletUpdate、mt=21 AccountUpdate 也可能更新余额
-    if (msg.mt === 20 || msg.mt === 21) {
+    // mt=21 Account：包含 accountId + balance 更新
+    if (msg.mt === 21) {
+      if (msg.id != null && this.accountId == null) {
+        this.accountId = Number(msg.id);
+        console.log(`[Perpl] accountId=${this.accountId}`);
+      }
       _extractPerplBalance(this, msg);
       return;
     }
-    // Auth 失败
-    if (msg.op === 'auth-error' || msg.status === 'auth-failed') {
-      this.emit('error', new Error(`Perpl WS 认证失败：${msg.error || msg.reason || 'unknown'}`));
+    // mt=20 WalletUpdate 也可能带 accountId 更新
+    if (msg.mt === 20) {
+      _extractPerplBalance(this, msg);
       return;
     }
-    // 订单响应：按 clientOrderId 匹配等待的 promise
-    const cid = msg.clientOrderId || msg.cid || msg.clientId;
-    if (cid && this._pendingReplies.has(cid)) {
-      const pending = this._pendingReplies.get(cid);
-      this._pendingReplies.delete(cid);
-      clearTimeout(pending.timer);
-      if (msg.error || msg.status === 'error' || msg.status === 'rejected') {
-        pending.reject(new Error(msg.error || msg.reason || 'rejected'));
-      } else {
-        pending.resolve({ orderId: String(msg.orderId || msg.id || msg.order?.id) });
+    // mt=23 OrdersSnapshot / mt=24 OrdersUpdate: 订单响应
+    // 官方：rq 回响我们发送时用的 request ID
+    if (msg.mt === 23 || msg.mt === 24) {
+      // OrdersUpdate/Snapshot 里可能有多条 order 更新，也可能是我们请求的响应
+      const orders = Array.isArray(msg.os) ? msg.os : (msg.o ? [msg.o] : []);
+      for (const o of orders) {
+        const rq = o.rq != null ? Number(o.rq) : (msg.rq != null ? Number(msg.rq) : null);
+        if (rq != null && this._pendingReplies.has(rq)) {
+          const pending = this._pendingReplies.get(rq);
+          this._pendingReplies.delete(rq);
+          clearTimeout(pending.timer);
+          if (o.err || o.error || o.rj) {
+            pending.reject(new Error(o.err || o.error || String(o.rj)));
+          } else {
+            pending.resolve({ orderId: String(o.id ?? o.oid ?? '') });
+          }
+        }
+        // fills:  o.fs 是 fills 列表, o.ex 是 executed size, o.st 是 status
+        if (o.fs && Array.isArray(o.fs) && o.fs.length) {
+          const orderId = String(o.id ?? o.oid ?? '');
+          const tracked = this.orders.get(orderId);
+          if (tracked) {
+            const marketId = Number(tracked.marketId);
+            const priceScale = this._priceScales.get(marketId) || 1;
+            const sizeScale = this._sizeScales.get(marketId) || 1;
+            for (const f of o.fs) {
+              const px = f.p != null ? Number(f.p) / priceScale : tracked.price;
+              const sz = f.s != null ? Number(f.s) / sizeScale : tracked.sizeBase;
+              this.emit('fill', {
+                orderId, marketId, side: tracked.side, price: px, sizeBase: sz,
+                levelIndex: tracked.levelIndex, clientOrderId: tracked.clientOrderId,
+              });
+            }
+            // 完全成交 / 撤销 / 过期 → 移除跟踪
+            if (o.st === 2 || o.st === 3 || o.st === 4 || o.remaining === 0) this.orders.delete(orderId);
+          }
+        }
+      }
+      // top-level rq 匹配（有些实现响应把 rq 放外面而不是 orders[0].rq）
+      if (msg.rq != null && this._pendingReplies.has(Number(msg.rq))) {
+        const pending = this._pendingReplies.get(Number(msg.rq));
+        this._pendingReplies.delete(Number(msg.rq));
+        clearTimeout(pending.timer);
+        if (msg.err || msg.error) pending.reject(new Error(msg.err || msg.error));
+        else pending.resolve({ orderId: String(orders[0]?.id ?? orders[0]?.oid ?? '') });
       }
       return;
     }
-    // Fill 事件（推送）
-    if (msg.type === 'fill' || msg.event === 'fill' || msg.op === 'fill') {
-      const orderId = String(msg.orderId || msg.order?.id);
-      const o = this.orders.get(orderId);
-      if (!o) return;
-      const marketId = Number(o.marketId);
-      const priceScale = this._priceScales.get(marketId) || 1;
-      const sizeScale = this._sizeScales.get(marketId) || 1;
-      const price = msg.price ? Number(msg.price) / priceScale : o.price;
-      const size = msg.size ? Number(msg.size) / sizeScale : o.sizeBase;
-      this.emit('fill', {
-        orderId, marketId, side: o.side, price, sizeBase: size,
-        levelIndex: o.levelIndex, clientOrderId: o.clientOrderId,
-      });
-      // 若完全成交，移除跟踪
-      if (msg.remaining === 0 || msg.filled === o.sizeBase) this.orders.delete(orderId);
-    }
-    // 订单状态变更（可选：cancelled/rejected/expired）
-    if ((msg.type === 'order-update' || msg.op === 'order-update')
-        && (msg.status === 'cancelled' || msg.status === 'expired')) {
-      const orderId = String(msg.orderId || msg.id);
-      this.orders.delete(orderId);
-    }
-    // 兜底诊断：如果这条消息看起来是订单响应（有 orderId/status）但没匹配上任何
-    // pending clientOrderId → 说明 Perpl 用了别的字段名回来（reqId/correlationId
-    // 之类）。打印一次让下次 debug 直接看到，别再瞎猜。
-    if ((msg.orderId || msg.id || msg.order) && !cid) {
-      if (!this._unknownReplyLogged) {
-        this._unknownReplyLogged = true;
-        try { console.log('[Perpl] 未匹配的疑似订单响应（字段名探测）：' + JSON.stringify(msg).slice(0, 400)); } catch {}
-      }
+    // 兜底诊断：非 heartbeat、非快照、也没被处理的消息 → 抽样打，防止字段又猜错
+    if (!this._diagFirstN) this._diagFirstN = 0;
+    if (this._diagFirstN < 5) {
+      this._diagFirstN++;
+      try { console.log(`[Perpl] 未识别的 WS 消息（诊断 ${this._diagFirstN}/5）：` + JSON.stringify(msg).slice(0, 400)); } catch {}
     }
   }
 
-  _sendWsRequest(payload, timeoutMs = 6000) {
+  /**
+   * 发一条 mt=22 OrderRequest，用 `rq`（数字自增）做 idempotency key + 响应匹配。
+   * 官方响应会是 mt=24 OrdersUpdate，orders[0].rq 回响我们发出去的 rq。
+   */
+  _sendOrderRequest(payload, timeoutMs = 8000) {
     if (!this._wsReady) throw new Error('Perpl trading WS 未连接，稍等重试');
     if (!this._wsAuthed) throw new Error('Perpl WS 认证未完成，稍等重试');
-    const clientId = `qnv-${Date.now()}-${this._reqSeq++}`;
-    const msg = { ...payload, clientOrderId: clientId };
+    if (this.accountId == null) throw new Error('Perpl accountId 未就绪（等 mt=21 消息）');
+    const rq = ++this._reqSeq;
+    const msg = { mt: 22, rq, acc: this.accountId, ...payload };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this._pendingReplies.delete(clientId);
-        reject(new Error('Perpl WS 请求超时'));
+        this._pendingReplies.delete(rq);
+        reject(new Error(`Perpl WS 请求超时（rq=${rq}, mt=22）`));
       }, timeoutMs);
-      this._pendingReplies.set(clientId, { resolve, reject, timer });
+      this._pendingReplies.set(rq, { resolve, reject, timer });
       try { this._ws.send(JSON.stringify(msg)); }
       catch (e) {
-        this._pendingReplies.delete(clientId);
+        this._pendingReplies.delete(rq);
         clearTimeout(timer);
         reject(new Error(`Perpl WS 发送失败：${e.message}`));
       }
@@ -415,19 +455,26 @@ export class PerplExchange extends EventEmitter {
     const marketId = Number(o.marketId);
     const priceScale = this._priceScales.get(marketId) || 1;
     const sizeScale = this._sizeScales.get(marketId) || 1;
+    // Perpl 官方 mt=22 OrderRequest 定义：
+    //   t: 1=OpenLong, 2=OpenShort, 3=CloseLong, 4=CloseShort, 5=Cancel
+    //   p: 价格 (scaled)   s: 数量 (scaled)
+    //   fl: 0=GTC        lv: 杠杆 hundredths (3x=300)
+    //   lb: last execution block (head + ttl)，超过就作废
+    const t = o.reduceOnly
+      ? (o.side === 'buy' ? 4 : 3)   // reduceOnly: buy = close short, sell = close long
+      : (o.side === 'buy' ? 1 : 2);  // open leg
+    const lv = Math.round(Number(o.leverage || this._defaultLeverage || 3) * 100);
+    // lb: 保守取 head + ttl。head=0（还没收到 heartbeat）时用 0 让服务端拒
+    // 一次，我们能看到明确的 rejection 而不是永远等
+    const lb = this._headBlock > 0 ? this._headBlock + this._orderTtlBlocks : 0;
     const payload = {
-      op: 'place-order',
-      marketId,
-      side: o.side === 'buy' ? 'BUY' : 'SELL',
-      type: 'LIMIT',
-      price: Math.round(Number(o.price) * priceScale),
-      size: Math.round(Number(o.sizeBase) * sizeScale),
-      timeInForce: 'GTC',
-      reduceOnly: !!o.reduceOnly,
-      postOnly: false,
+      mkt: marketId, t,
+      p: Math.round(Number(o.price) * priceScale),
+      s: Math.round(Number(o.sizeBase) * sizeScale),
+      fl: 0, lv, lb,
     };
-    const { orderId } = await this._sendWsRequest(payload);
-    if (!orderId || orderId === 'undefined') throw new Error('Perpl 下单返回无 orderId');
+    const { orderId } = await this._sendOrderRequest(payload);
+    if (!orderId || orderId === 'undefined' || orderId === '') throw new Error('Perpl 下单返回无 orderId');
     this.orders.set(orderId, {
       orderId, marketId, side: o.side,
       price: Number(o.price), sizeBase: Number(o.sizeBase),
@@ -438,8 +485,10 @@ export class PerplExchange extends EventEmitter {
   }
 
   async cancelOrder(marketId, orderId) {
+    const marketIdN = Number(marketId);
     try {
-      await this._sendWsRequest({ op: 'cancel-order', orderId: String(orderId) }, 4000);
+      // t=5 Cancel，用 oid 传要撤的订单
+      await this._sendOrderRequest({ mkt: marketIdN, t: 5, oid: Number(orderId), s: 0, fl: 0, lv: 0, lb: 0 }, 4000);
     } catch (e) {
       if (!/not\s?found|already/i.test(e.message)) throw e;
     }
@@ -449,13 +498,11 @@ export class PerplExchange extends EventEmitter {
 
   async cancelAll(marketId) {
     const marketIdN = Number(marketId);
-    try {
-      await this._sendWsRequest({ op: 'cancel-all', marketId: marketIdN }, 5000);
-    } catch {
-      for (const o of [...this.orders.values()].filter((x) => x.marketId === marketIdN)) {
-        await this.cancelOrder(marketIdN, o.orderId).catch(() => {});
-      }
+    // Perpl 没有单条 cancel-all；逐单撤
+    for (const o of [...this.orders.values()].filter((x) => x.marketId === marketIdN)) {
+      await this.cancelOrder(marketIdN, o.orderId).catch(() => {});
     }
+    // 保底：本地清空该市场跟踪（防止有 orphan）
     for (const [id, o] of this.orders) {
       if (o.marketId === marketIdN) this.orders.delete(id);
     }
@@ -503,17 +550,15 @@ export class PerplExchange extends EventEmitter {
     const marketIdN = Number(marketId);
     const p = this.getPosition(marketIdN);
     if (!p || !p.sizeBase) return null;
-    const priceScale = this._priceScales.get(marketIdN) || 1;
     const sizeScale = this._sizeScales.get(marketIdN) || 1;
-    const price = this.prices.get(marketIdN) || 0;
-    return await this._sendWsRequest({
-      op: 'place-order',
-      marketId: marketIdN,
-      side: p.sizeBase > 0 ? 'SELL' : 'BUY',
-      type: 'MARKET',
-      price: Math.round(price * priceScale),
-      size: Math.round(Math.abs(p.sizeBase) * sizeScale),
-      reduceOnly: true,
+    // Perpl 官方：t=3 CloseLong (卖) / t=4 CloseShort (买)；市价单 p=0；lb=head+ttl
+    const t = p.sizeBase > 0 ? 3 : 4;
+    const lb = this._headBlock > 0 ? this._headBlock + this._orderTtlBlocks : 0;
+    return await this._sendOrderRequest({
+      mkt: marketIdN, t,
+      p: 0,
+      s: Math.round(Math.abs(p.sizeBase) * sizeScale),
+      fl: 0, lv: 100, lb,
     }, 8000);
   }
 

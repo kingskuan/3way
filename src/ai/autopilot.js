@@ -419,11 +419,14 @@ class Autopilot {
       const price = c.price || 0;
       if (!(price > 0)) { rejections.push(`${c.name}:无价格`); continue; }
       const rangePct = s.rangePct;
-      let lower = _stepAlign(price * (1 - rangePct), c.stepSize);
-      let upper = _stepAlign(price * (1 + rangePct), c.stepSize);
+      // stepPrice 是价格 tick（每档差多少），stepSize 是订单量 tick（每张多少）——
+      // lower/upper 必须对齐 stepPrice！之前用 stepSize 对齐，Ondo 报
+      // "doesn't snap to min price increment 0.1" 就是这个原因。
+      const priceTick = c.stepPrice || c.stepSize || 0;
+      let lower = _stepAlign(price * (1 - rangePct), priceTick);
+      let upper = _stepAlign(price * (1 + rangePct), priceTick);
       if (!(upper > lower)) {
-        const step = c.stepSize || c.minOrderSize || 0;
-        if (step > 0) upper = lower + step * s.gridCount;
+        if (priceTick > 0) upper = lower + priceTick * s.gridCount;
         if (!(upper > lower)) { rejections.push(`${c.name}:step 太大`); continue; }
       }
       const leverage = Math.min(s.maxLeverage, c.maxLeverage || s.maxLeverage);

@@ -222,6 +222,12 @@ export class GridBot {
       stepSize: market.stepSize, stepPrice: market.stepPrice,
     };
     this.grid = buildGrid({ lower: this.config.lower, upper: this.config.upper, gridCount: this.config.gridCount });
+    // 把每档价格 snap 到市场的 stepPrice（价格 tick）——Ondo 的 API 硬性要求
+    // 价格是 tick 的整数倍，不然 "invalid - doesn't snap to min price increment"
+    if (market.stepPrice > 0) {
+      const tick = market.stepPrice;
+      this.grid.levels = this.grid.levels.map((lv) => Math.round(lv / tick) * tick);
+    }
     this._recomputeRisk();
     this._refillPausedUntil = 0; this._cancelTimes = []; // fresh start clears any back-off
     this._retryQueue = []; this._noPosStreak = 0;
