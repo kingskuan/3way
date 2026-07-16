@@ -77,6 +77,25 @@ class Autopilot {
     for (const k of KEYS) this.cfg.perExchange[k] ||= { enabled: false, maxCapitalUsdc: 1000 };
     this.state = saved.state || {};        // per-exchange runtime state
     for (const k of KEYS) this.state[k] = { ..._freshExState(), ...(this.state[k] || {}) };
+    // Round 6 迁移：Round 5 之前的存档没有 dayStartMode / dayStartDataSource 字段。
+    // 那些 baseline 可能是 paper 模式下打的（dayStartEquity=10000），切 LIVE 之后
+    // 真实余额=200 → 触发 100%/98% 假熔断。清掉旧 baseline + 挂着的 paused，让下一
+    // tick 用新逻辑重新落基线。
+    let migrated = 0;
+    for (const k of KEYS) {
+      const st = this.state[k];
+      if (st.dayStartEquity > 0 && !st.dayStartMode) {
+        st.dayStartEquity = 0;
+        st.dayStartDate = '';
+        st.pausedUntil = 0;
+        st.pausedReason = '';
+        st.consecutiveLosses = 0;
+        migrated++;
+      }
+    }
+    if (migrated) {
+      console.log(`[Autopilot] Round 6 迁移：清 ${migrated} 家陈旧基线（paper→live 假熔断的根因）`);
+    }
     this.decisions = saved.decisions || [];    // rolling log (~50)
     this._lastTickAt = 0;
     this._busy = false;
@@ -205,20 +224,30 @@ class Autopilot {
     const today = new Date().toISOString().slice(0, 10);
     for (const k of KEYS) {
       const st = this.state[k];
-      if (st.dayStartDate !== today) {
-        const bot = this.bots[k];
-        const ex = this.exchanges[k];
-        const s = bot?.getState();
-        const eq = s?.equity;
-        // 只在读到合法权益时才落基线；LIVE 适配器连接中 / balance 还没同步过来时
-        // eq 可能是 0 或 null——这时先不设日期，下一 tick 再试，避免"0 基线永远
-        // 触发 100% 亏损"的陷阱。
-        const healthy = ex?.dataSource === 'real' && (!ex.lastOkAt || Date.now() - ex.lastOkAt < 120_000);
-        if (!healthy || !Number.isFinite(eq) || eq <= 0) continue;
-        st.dayStartEquity = eq;
-        st.dayStartDate = today;
-        st.consecutiveLosses = 0;
+      const bot = this.bots[k];
+      const ex = this.exchanges[k];
+      const s = bot?.getState();
+      const eq = s?.equity;
+      const healthy = ex?.dataSource === 'real' && (!ex.lastOkAt || Date.now() - ex.lastOkAt < 120_000);
+      // 环境变了（paper↔live 或 real↔synthetic）→ 旧 baseline 作废、强制 rebaseline。
+      // 这是修 Round 4/5 都漏掉的 paper→live 假熔断路径的关键。
+      const envChanged = st.dayStartEquity > 0
+        && (st.dayStartMode !== ex?.mode || st.dayStartDataSource !== ex?.dataSource);
+      if (envChanged) {
+        st.dayStartEquity = 0;
+        st.dayStartDate = '';
+        this._log(k, 'skip', `环境切换（${st.dayStartMode || '?'}/${st.dayStartDataSource || '?'} → ${ex?.mode}/${ex?.dataSource}），旧 baseline 作废，重新校准`);
       }
+      if (st.dayStartDate === today) continue;
+      // 只在读到合法权益时才落基线；LIVE 适配器连接中 / balance 还没同步过来时
+      // eq 可能是 0 或 null——这时先不设日期，下一 tick 再试，避免"0 基线永远
+      // 触发 100% 亏损"的陷阱。
+      if (!healthy || !Number.isFinite(eq) || eq <= 0) continue;
+      st.dayStartEquity = eq;
+      st.dayStartDate = today;
+      st.dayStartMode = ex.mode;
+      st.dayStartDataSource = ex.dataSource;
+      st.consecutiveLosses = 0;
     }
     this._save();
   }
@@ -362,8 +391,18 @@ class Autopilot {
       return;
     }
     const rangePct = s.rangePct;
-    const lower = _stepAlign(price * (1 - rangePct), pick.stepSize);
-    const upper = _stepAlign(price * (1 + rangePct), pick.stepSize);
+    let lower = _stepAlign(price * (1 - rangePct), pick.stepSize);
+    let upper = _stepAlign(price * (1 + rangePct), pick.stepSize);
+    // stepSize 比区间大时（perpl BTC/ETH 用大整数 tick）_stepAlign 会把 lower/upper
+    // 压到同一档甚至倒挂——加一个至少 1 tick 的下限，实在不行就 skip。
+    if (!(upper > lower)) {
+      const step = pick.stepSize || pick.minOrderSize || 0;
+      if (step > 0) upper = lower + step * s.gridCount;   // 每档一 tick，格子数按风格
+      if (!(upper > lower)) {
+        this._log(key, 'skip', `${pick.name} stepSize(${step}) 太大，${(rangePct * 100).toFixed(1)}% 区间挤成一档，跳过`);
+        return;
+      }
+    }
     const capitalUsdc = Math.min(this.cfg.perExchange[key].maxCapitalUsdc || 1000, cur.balance || 1000);
     // 每格数量：capitalUsdc * fraction / price → 转 base asset 单位
     const rawSizeBase = (capitalUsdc * s.sizeFractionOfBalance) / price;
@@ -445,6 +484,8 @@ function _freshExState() {
     lastActionReason: '',
     dayStartEquity: 0,
     dayStartDate: '',
+    dayStartMode: '',        // baseline 打时 ex.mode（paper|live）
+    dayStartDataSource: '',  // baseline 打时 ex.dataSource（real|synthetic|connecting）
     lastAppliedEquity: 0,
     consecutiveLosses: 0,
     pausedUntil: 0,
