@@ -383,67 +383,78 @@ class Autopilot {
         }
       }
     } catch { /* AI 挂了没关系，走 fallback */ }
-    if (!pick) pick = shortlist[0];
-    const mode = pick._aiMode || pick.recommended || 'neutral';
+    // 把 AI/规则选中的 pick 放到 shortlist 最前面，其他按分数留在后面作为 fallback。
+    // Perpl 那种「首选 BTC 但 $210 只够 MON/SOL/ETH」的场景：主选不 afford 就依次
+    // 往下试，选出第一个能塞进保证金的市场。
+    const rankedList = pick ? [pick, ...shortlist.filter((c) => c !== pick)] : shortlist.slice();
 
     // 4d. 代码钳制参数到风格允许区间（AI 永远不能自伤）
-    const price = pick.price || 0;
-    if (!(price > 0)) {
-      this._log(key, 'skip', `${pick.name} 暂无有效价格，跳过`);
-      return;
-    }
-    const rangePct = s.rangePct;
-    let lower = _stepAlign(price * (1 - rangePct), pick.stepSize);
-    let upper = _stepAlign(price * (1 + rangePct), pick.stepSize);
-    // stepSize 比区间大时（perpl BTC/ETH 用大整数 tick）_stepAlign 会把 lower/upper
-    // 压到同一档甚至倒挂——加一个至少 1 tick 的下限，实在不行就 skip。
-    if (!(upper > lower)) {
-      const step = pick.stepSize || pick.minOrderSize || 0;
-      if (step > 0) upper = lower + step * s.gridCount;   // 每档一 tick，格子数按风格
-      if (!(upper > lower)) {
-        this._log(key, 'skip', `${pick.name} stepSize(${step}) 太大，${(rangePct * 100).toFixed(1)}% 区间挤成一档，跳过`);
-        return;
-      }
-    }
     const capitalUsdc = Math.min(this.cfg.perExchange[key].maxCapitalUsdc || 1000, cur.balance || 1000);
-    const leverage = Math.min(s.maxLeverage, pick.maxLeverage || s.maxLeverage);
-    // 每格数量：capitalUsdc * fraction / price → 转 base asset 单位
-    const rawSizeBase = (capitalUsdc * s.sizeFractionOfBalance) / price;
-    const stepUnit = pick.stepSize || pick.minOrderSize || 1e-6;
-    let sizeBase = Math.max(pick.minOrderSize || 0, _stepAlign(rawSizeBase, stepUnit));
-    let gridCount = s.gridCount;
-    if (sizeBase <= 0 || !Number.isFinite(sizeBase)) {
-      this._log(key, 'skip', `${pick.name} 单量计算异常，跳过`);
-      return;
-    }
-    // 保证金自适应：算算真需要多少 margin，超了就先减 gridCount，还超就 skip。
-    // 之前 Perpl BTC minOrderSize 太大，$210 起 20 格 → 名义 $38k → 3x 下需 $13k，
-    // bot.start 里 pre-check 直接抛错。Autopilot 提前处理更干净。
-    const mid = (lower + upper) / 2;
-    let notional = gridCount * sizeBase * mid;
-    let required = notional / leverage;
-    // 保留 20% buffer（保证金峰值往往 > 名义/杠杆算出的静态值）
-    const budget = capitalUsdc * 0.8;
-    if (required > budget) {
-      // 尝试压缩 gridCount
-      const affordable = Math.floor(budget * leverage / (sizeBase * mid));
-      if (affordable >= 6) {
-        gridCount = affordable;
-        notional = gridCount * sizeBase * mid;
-        required = notional / leverage;
-        this._log(key, 'adjusted', `${pick.name} 保证金压力：格数 ${s.gridCount}→${gridCount}（约需 $${required.toFixed(0)} / 可用 $${capitalUsdc.toFixed(0)}）`);
-      } else {
-        this._log(key, 'skip', `${pick.name} 起单需 $${required.toFixed(0)}（min ${pick.minOrderSize} × ${mid.toFixed(0)}），可用 $${capitalUsdc.toFixed(0)} 不够跑网格。请增资到 $${(required / 0.8).toFixed(0)}+ 或换所`);
-        return;
+    const budget = capitalUsdc * 0.8;   // 保留 20% buffer
+
+    let params = null;
+    let picked = null;
+    let pickedGridCount = s.gridCount;
+    let pickedSizeBase = 0;
+    let pickedLower = 0, pickedUpper = 0;
+    let pickedLeverage = s.maxLeverage;
+    const rejections = [];   // 记每个候选被 skip 的原因，方便最后统一 log
+
+    for (const c of rankedList) {
+      const price = c.price || 0;
+      if (!(price > 0)) { rejections.push(`${c.name}:无价格`); continue; }
+      const rangePct = s.rangePct;
+      let lower = _stepAlign(price * (1 - rangePct), c.stepSize);
+      let upper = _stepAlign(price * (1 + rangePct), c.stepSize);
+      if (!(upper > lower)) {
+        const step = c.stepSize || c.minOrderSize || 0;
+        if (step > 0) upper = lower + step * s.gridCount;
+        if (!(upper > lower)) { rejections.push(`${c.name}:step 太大`); continue; }
       }
+      const leverage = Math.min(s.maxLeverage, c.maxLeverage || s.maxLeverage);
+      const stepUnit = c.stepSize || c.minOrderSize || 1e-6;
+      const rawSizeBase = (capitalUsdc * s.sizeFractionOfBalance) / price;
+      let sizeBase = Math.max(c.minOrderSize || 0, _stepAlign(rawSizeBase, stepUnit));
+      if (sizeBase <= 0 || !Number.isFinite(sizeBase)) { rejections.push(`${c.name}:单量异常`); continue; }
+
+      const mid = (lower + upper) / 2;
+      let gridCount = s.gridCount;
+      let required = gridCount * sizeBase * mid / leverage;
+      if (required > budget) {
+        const affordable = Math.floor(budget * leverage / (sizeBase * mid));
+        if (affordable >= 6) {
+          gridCount = affordable;
+          required = gridCount * sizeBase * mid / leverage;
+        } else {
+          rejections.push(`${c.name}:$${required.toFixed(0)}>$${capitalUsdc.toFixed(0)}`);
+          continue;   // 保证金不够 → 换下一个候选
+        }
+      }
+      // 通过所有 check：锁定这个候选
+      picked = c;
+      pickedLower = lower; pickedUpper = upper;
+      pickedSizeBase = sizeBase; pickedGridCount = gridCount;
+      pickedLeverage = leverage;
+      params = {
+        marketId: c.marketId, mode: c._aiMode || c.recommended || 'neutral',
+        lower, upper, gridCount, sizeBase, leverage,
+        outOfRangeAction: s.outOfRangeAction,
+      };
+      if (gridCount !== s.gridCount) {
+        this._log(key, 'adjusted', `${c.name} 保证金压力：格数 ${s.gridCount}→${gridCount}（约需 $${required.toFixed(0)} / 可用 $${capitalUsdc.toFixed(0)}）`);
+      }
+      break;
     }
 
-    // 5. 启动网格
-    const params = {
-      marketId: pick.marketId, mode,
-      lower, upper, gridCount, sizeBase, leverage,
-      outOfRangeAction: s.outOfRangeAction,
-    };
+    if (!picked) {
+      this._log(key, 'skip', `全部 ${rankedList.length} 个候选都不适合：${rejections.slice(0, 5).join('; ')}`);
+      return;
+    }
+    pick = picked;   // 让下方 log/notify 沿用旧命名
+    const mode = params.mode;
+    const lower = pickedLower, upper = pickedUpper;
+    const sizeBase = pickedSizeBase, gridCount = pickedGridCount;
+    const leverage = pickedLeverage;
     try {
       const res = await bot.start(params);
       st.lastAction = 'started';
