@@ -230,8 +230,10 @@ class Autopilot {
       const eq = s?.equity;
       const healthy = ex?.dataSource === 'real' && (!ex.lastOkAt || Date.now() - ex.lastOkAt < 120_000);
       // 环境变了（paper↔live 或 real↔synthetic）→ 旧 baseline 作废、强制 rebaseline。
-      // 这是修 Round 4/5 都漏掉的 paper→live 假熔断路径的关键。
-      const envChanged = st.dayStartEquity > 0
+      // ⚠ 只在 NEW dataSource 是"稳定态"（real/synthetic）时才判断——'connecting'/undefined
+      // 是重启时的过渡态，误当环境变会每次 redeploy 都清一次基线（Round 7 抓到的坑）。
+      const stableCur = ex?.dataSource === 'real' || ex?.dataSource === 'synthetic';
+      const envChanged = st.dayStartEquity > 0 && stableCur
         && (st.dayStartMode !== ex?.mode || st.dayStartDataSource !== ex?.dataSource);
       if (envChanged) {
         st.dayStartEquity = 0;
