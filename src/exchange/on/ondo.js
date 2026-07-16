@@ -114,18 +114,23 @@ export class OndoExchange extends EventEmitter {
   }
 
   async _fetchMarkets() {
-    // Ondo 公开端点：/v1/markets 或 /v1/perps/markets
-    for (const path of ['/v1/markets', '/v1/perps/markets', '/v1/perps/contracts']) {
+    // Ondo 公开端点：markets 数组包在 `result`（真实返回结构）
+    // 端点候选：/v1/perps/contracts 最丰富（有 bid/ask/vol），/v1/markets 是简版
+    for (const path of ['/v1/perps/contracts', '/v1/markets', '/v1/perps/markets']) {
       const j = await this._pubGet(path);
       if (!j) continue;
-      const arr = j.markets || j.data || j.contracts || (Array.isArray(j) ? j : []);
+      // 真实结构是 { success: true, result: [...] }；兼容旧字段名
+      const arr = j.result || j.markets || j.data || j.contracts || (Array.isArray(j) ? j : []);
       const out = [];
       let nextId = 1;
       this.symbolToId.clear();
       for (const m of arr) {
+        // 跳过已停用或关闭的市场
+        if (m.disabled === true || m.isClosed === true) continue;
         const symbol = m.market || m.symbol || m.name;
         if (!symbol) continue;
-        const price = Number(m.markPrice || m.lastPrice || m.mark_price || m.indexPrice || 0);
+        // lastPrice 在 Ondo 返回里是字符串；bid/ask/indexPrice 做备选
+        const price = Number(m.markPrice || m.lastPrice || m.mark_price || m.indexPrice || m.bid || 0);
         if (!price) continue;
         out.push({
           marketId: nextId,
@@ -251,7 +256,7 @@ export class OndoExchange extends EventEmitter {
     if (!symbol) return [];
     try {
       const j = await this._req('GET', `/v1/perps/orders?market=${encodeURIComponent(symbol)}&open=true`);
-      const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
+      const arr = j.result || j.orders || j.data || (Array.isArray(j) ? j : []);
       return arr.map((o) => ({
         orderId: String(o.orderId || o.id),
         price: Number(o.price),
@@ -294,7 +299,7 @@ export class OndoExchange extends EventEmitter {
     // 拉一次全部 open orders 并同步本地 tracking
     try {
       const j = await this._req('GET', '/v1/perps/orders?open=true');
-      const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
+      const arr = j.result || j.orders || j.data || (Array.isArray(j) ? j : []);
       const stillOpen = new Set(arr.map((o) => String(o.orderId || o.id)));
       for (const id of [...this.orders.keys()]) {
         if (!stillOpen.has(id)) this.orders.delete(id);
@@ -318,16 +323,16 @@ export class OndoExchange extends EventEmitter {
   async _poll() {
     this.lastOkAt = Date.now();
 
-    // 1) 价格：拉全 markets 一次（公开）
-    for (const path of ['/v1/markets', '/v1/perps/markets']) {
+    // 1) 价格：拉全 markets 一次（公开，contracts 端点最快）
+    for (const path of ['/v1/perps/contracts', '/v1/markets']) {
       const j = await this._pubGet(path, 5000);
       if (!j) continue;
-      const arr = j.markets || j.data || (Array.isArray(j) ? j : []);
+      const arr = j.result || j.markets || j.data || (Array.isArray(j) ? j : []);
       let any = false;
       for (const m of arr) {
         const id = this.symbolToId.get(m.market || m.symbol || m.name);
         if (!id) continue;
-        const price = Number(m.markPrice || m.lastPrice || m.mark_price || 0);
+        const price = Number(m.markPrice || m.lastPrice || m.mark_price || m.bid || 0);
         if (price > 0) {
           this.prices.set(id, price);
           this.emit('price', { marketId: id, price });
@@ -347,7 +352,7 @@ export class OndoExchange extends EventEmitter {
     // 3) Positions
     try {
       const j = await this._req('GET', '/v1/perps/positions');
-      const arr = j.positions || j.data || (Array.isArray(j) ? j : []);
+      const arr = j.result || j.positions || j.data || (Array.isArray(j) ? j : []);
       const seen = new Set();
       for (const p of arr) {
         const id = this.symbolToId.get(p.market || p.symbol);
@@ -369,7 +374,7 @@ export class OndoExchange extends EventEmitter {
     if (this.orders.size > 0) {
       try {
         const j = await this._req('GET', '/v1/perps/orders?open=true');
-        const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
+        const arr = j.result || j.orders || j.data || (Array.isArray(j) ? j : []);
         const stillOpen = new Set(arr.map((o) => String(o.orderId || o.id)));
         for (const [id, o] of [...this.orders]) {
           if (stillOpen.has(id)) continue;
