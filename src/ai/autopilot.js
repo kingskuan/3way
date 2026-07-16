@@ -76,7 +76,7 @@ class Autopilot {
     // Ensure perExchange has an entry for every key (in case config was saved before a new ex was added)
     for (const k of KEYS) this.cfg.perExchange[k] ||= { enabled: false, maxCapitalUsdc: 1000 };
     this.state = saved.state || {};        // per-exchange runtime state
-    for (const k of KEYS) this.state[k] ||= _freshExState();
+    for (const k of KEYS) this.state[k] = { ..._freshExState(), ...(this.state[k] || {}) };
     this.decisions = saved.decisions || [];    // rolling log (~50)
     this._lastTickAt = 0;
     this._busy = false;
@@ -188,14 +188,24 @@ class Autopilot {
     }
 
     // 3. Bot 已跑同一市场？V1：不换币，只在冲出区间时才干预。
+    //    仅动 Autopilot 自己启动的网格；用户手动开的网格 Autopilot 绝不会 stop/reopen，
+    //    避免把用户手动挂的策略意外平掉。
     if (cur.running) {
+      if (!st.startedByAutopilot) {
+        this._log(key, 'skip', `${cur.config.displayName} 由用户手动启动，Autopilot 不接管`);
+        return;
+      }
       if (cur.outOfRange) {
         this._log(key, 'stop', `${cur.config.displayName} 冲出区间，停网格准备重开`);
         await bot.stop({ closePosition: true }).catch(() => {});
+        st.startedByAutopilot = false;
       } else {
         this._log(key, 'skip', `${cur.config.displayName} 网格运行中，指标正常，保持`);
         return;
       }
+    } else if (st.startedByAutopilot) {
+      // Bot 停了（用户手动停 / 崩了 / 上一轮自己停的），清标志
+      st.startedByAutopilot = false;
     }
 
     // 4. Bot 未运行 → 选币 + 出参数 + 启动
@@ -293,6 +303,7 @@ class Autopilot {
       st.lastActionReason = `选 ${pick.name}（${mode}，${aiReasoning || '规则排序 top1'}），区间 ${lower}~${upper}，${s.gridCount} 格 x ${sizeBase}`;
       st.lastDecisionAt = now;
       st.lastAppliedEquity = cur.equity;
+      st.startedByAutopilot = true;
       this._log(key, 'start', st.lastActionReason);
       notify(`【网格 Autopilot·${EXNAMES[key]}】已启动：${pick.name}\n模式：${_modeLabel(mode)} · 区间 ${lower} ~ ${upper}\n${s.gridCount} 格 × ${sizeBase} · ${leverage}x 杠杆\nAI：${aiReasoning || '规则排序'}`).catch(() => {});
       this._save();
@@ -306,7 +317,17 @@ class Autopilot {
   async _emergencyStop(key, reason) {
     const bot = this.bots[key];
     const st = this.state[key];
+    // 只熔断 Autopilot 自己启动的 bot；用户手动开的网格护栏交给用户自己看
+    if (!st.startedByAutopilot) {
+      st.pausedUntil = Date.now() + 24 * 3600_000;
+      st.pausedReason = reason + '（手动网格未平仓，请人工处理）';
+      this._log(key, 'skip', st.pausedReason);
+      notify(`【网格 Autopilot·⚠ 熔断】${EXNAMES[key]}\n${st.pausedReason}\n未来 24 小时不会自动重启。`).catch(() => {});
+      this._save();
+      return;
+    }
     try { await bot.stop({ closePosition: true }); } catch { /* best effort */ }
+    st.startedByAutopilot = false;
     st.pausedUntil = Date.now() + 24 * 3600_000;    // 24 小时熔断
     st.pausedReason = reason;
     st.lastAction = 'emergency_stop';
@@ -345,5 +366,6 @@ function _freshExState() {
     consecutiveLosses: 0,
     pausedUntil: 0,
     pausedReason: '',
+    startedByAutopilot: false,
   };
 }

@@ -1,7 +1,7 @@
 {
   "name": "grid-bot-all",
   "version": "1.0.0",
-  "description": "三交易所整合网格交易机器人：Decibel / Extended / RISEx，统一仪表盘，支持同时运行三个网格策略。",
+  "description": "QnV · 五所整合网格交易机器人：Decibel / Extended / RISEx / Ondo / Perpl，统一仪表盘，支持同时运行五个网格策略 + AI Autopilot。",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",

@@ -17,8 +17,8 @@ export function createAiService({ bots, exchanges }) {
 
 class AiService {
   constructor(bots, exchanges) {
-    this.bots = bots;             // { de, ex, rs } -> GridBot
-    this.exchanges = exchanges;   // { de, ex, rs } -> adapter
+    this.bots = bots;             // { de, ex, rs, on, pl } -> GridBot
+    this.exchanges = exchanges;   // { de, ex, rs, on, pl } -> adapter
     this.sentinel = null;         // 最近一次巡检 {t, level, summary, detail, advice}
     this.sentinelHistory = [];    // 最近 20 条
     this.sentinelError = null;
@@ -114,7 +114,7 @@ class AiService {
       const text = await aiChat({
         small: true, json: true, maxTokens: 900, temperature: 0.1,
         system: [
-          '你是三交易所网格交易机器人的风控值守 AI。根据状态快照，对每个交易所分别给出巡检结论，并给一句整体结论。',
+          '你是五所网格交易机器人的风控值守 AI。根据状态快照，对每个交易所分别给出巡检结论，并给一句整体结论。',
           '重点关注：health.status 为 error/warn 及其 reason；trackedOrders 与 exchangeOpenOrders 明显不一致（挂单同步漂移）；',
           '保证金/权益吃紧（未实现亏损占权益比例大、returnPct 恶化）；outOfRange=true（价格冲出网格区间）；',
           '告警里的关键词（保证金不足、频繁取消、未确认成交、接口异常、暂停补单）；数据长时间未更新。',
@@ -289,7 +289,7 @@ class AiService {
         '可用 action.type：adjust_range(params:{lower,upper}) | stop_grid(params:{closePosition:true/false}) |',
         'cancel_orders | close_position | reconnect | start_recovery(params:{aboveEntryOnly}) |',
         'start_grid(params:{marketId,mode,lower,upper,gridCount,sizeBase,leverage,outOfRangeAction}) | none',
-        'action.exchange 取 de|ex|rs。一次最多提议一个 action；用户没有明确要操作时 type 用 none。',
+        'action.exchange 取 de|ex|rs|on|pl。一次最多提议一个 action；用户没有明确要操作时 type 用 none。',
         '涉及平仓/停止等不可逆操作时，在 reply 里先说明后果。',
         '回复 JSON：{"reply":"给用户的中文回复","action":{"type":"none","exchange":"de","params":{}}}',
       ].join('\n'),
