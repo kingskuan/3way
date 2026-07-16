@@ -1082,7 +1082,7 @@ input:focus, select:focus {
   <button class="tab-btn" onclick="switchTab('on')"><span class="dot-on">●</span> Ondo</button>
   <button class="tab-btn" onclick="switchTab('pl')"><span class="dot-pl">●</span> Perpl</button>
   <button class="tab-btn" onclick="switchTab('autopilot')">🚀 Autopilot</button>
-  <button class="tab-btn" onclick="switchTab('ai')">🤖 AI助手</button>
+  <button class="tab-btn" onclick="switchTab('ai')">🤖 AI</button>
   <button class="tab-btn" onclick="switchTab('settings')">⚙ IP配置</button>
 </div>
 
@@ -1277,7 +1277,7 @@ input:focus, select:focus {
   <!-- AI 市况分析（BTC，定时报告） -->
   <div class="panel" style="margin-top:14px">
     <div class="panel-title">🤖 AI 市况分析 · BTC<span id="ov-ai-mkt-time" class="muted" style="font-size:11px;margin-left:10px;font-weight:400"></span></div>
-    <div id="ov-ai-market" class="ai-box muted">等待首次分析…（需先在「🤖 AI助手」页配置 API Key）</div>
+    <div id="ov-ai-market" class="ai-box muted">等待首次分析…（需先在「🤖 AI」页配置 API Key）</div>
     <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:6px 16px;font-size:12px" onclick="aiMarketRun(this)">立即分析</button>
       <span class="muted" style="font-size:12px">市况报告间隔</span>
@@ -2018,7 +2018,7 @@ input:focus, select:focus {
 
   <div class="panel">
     <div class="panel-title">🛡 风控哨兵<span id="ai-sent-badge"></span></div>
-    <p class="muted" style="margin-bottom:8px">按设定间隔自动巡检三所状态（健康度/挂单同步/保证金/出区间/告警），发现问题推送通知。</p>
+    <p class="muted" style="margin-bottom:8px">按设定间隔自动巡检五所状态（健康度/挂单同步/保证金/出区间/告警），发现问题推送通知。</p>
     <div id="ai-sentinel-box" class="ai-box muted">尚无巡检结果</div>
     <button class="btn btn-ghost" onclick="aiSentinelRun(this)" style="margin-top:10px;font-size:12px">立即巡检一次</button>
   </div>
@@ -2048,10 +2048,10 @@ input:focus, select:focus {
 
   <div class="panel">
     <div class="panel-title">💬 对话操控</div>
-    <p class="muted" style="margin-bottom:8px">AI 基于三所实时状态回答问题；涉及操作时它只能"提议"，你点确认后才会通过常规接口执行（保证金/杠杆等硬性风控不受 AI 影响）。</p>
+    <p class="muted" style="margin-bottom:8px">AI 基于五所实时状态回答问题；涉及操作时它只能"提议"，你点确认后才会通过常规接口执行（保证金/杠杆等硬性风控不受 AI 影响）。</p>
     <div id="ai-chatlog" class="ai-chatlog"></div>
     <div style="display:flex;gap:8px;margin-top:8px">
-      <input id="ai-chat-input" placeholder="例：三个所现在整体情况怎么样？ / 把 Extended 上边界调到 66000" style="flex:1" onkeydown="if(event.key==='Enter')aiChatSend()">
+      <input id="ai-chat-input" placeholder="例：五所现在整体情况怎么样？ / 把 Extended 上边界调到 66000" style="flex:1" onkeydown="if(event.key==='Enter')aiChatSend()">
       <button class="btn btn-smart" style="margin:0;width:auto;padding:8px 18px" onclick="aiChatSend()">发送</button>
     </div>
   </div>
@@ -2692,7 +2692,7 @@ function setExHealth(p, h, connected) {
 
 function renderOverview(data) {
   lastOverview = data;
-  // 三所汇总
+  // 五所汇总
   let totEquity = 0, totBalance = 0, totPnl = 0, totRealized = 0, totUnrealized = 0, totVolume = 0, totRungs = 0;
   let running = 0;
 
