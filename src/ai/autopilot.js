@@ -344,9 +344,24 @@ class Autopilot {
         });
       } catch { /* skip */ }
     }
+    // 该所 K 线 API 全线返空（例如 Ondo history 端点当前就返 t=[]）：不能只
+    // 因为拿不到打分数据就 skip 整所——用 lastPrice + market metadata 直接
+    // 组 5 个候选，趋势保守当"range/neutral"，让下游 margin check 决定能否起。
     if (!candidates.length) {
-      this._log(key, 'skip', '拉不到 K 线数据，跳过本轮');
-      return;
+      this._log(key, 'skip-nocandles', `${key} K 线 API 返空，用 lastPrice fallback 选币`);
+      for (const m of markets.slice(0, 5)) {
+        if (!(Number(m.lastPrice) > 0)) continue;
+        candidates.push({
+          marketId: m.marketId, name: m.displayName, price: Number(m.lastPrice),
+          minOrderSize: m.minOrderSize, stepSize: m.stepSize, maxLeverage: m.maxLeverage,
+          trend: 'range', recommended: 'neutral',
+          strength: 0, atrPct: null,
+        });
+      }
+      if (!candidates.length) {
+        this._log(key, 'skip', '无 K 线且无有效 lastPrice，跳过本轮');
+        return;
+      }
     }
 
     // 4b. 简单规则打分（不需要 AI 也能跑：震荡 + 波动率适中 = 高分）
