@@ -573,15 +573,24 @@ export class PerplExchange extends EventEmitter {
     try {
       const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=100');
       const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
+      // 一次性诊断日志：dump 首个订单字段结构，方便下次核对 API
+      if (!this._openOrdersDumped && arr.length) {
+        this._openOrdersDumped = true;
+        try {
+          console.log('[Perpl] fetchOpenOrders 响应字段结构（诊断）：' + JSON.stringify(arr[0]).slice(0, 500));
+        } catch {}
+      }
       const mIdN = Number(marketId);
       return arr
-        .filter((o) => Number(o.marketId || o.market_id) === mIdN)
+        .filter((o) => Number(o.mkt ?? o.marketId ?? o.market_id) === mIdN)
         .map((o) => {
           const scale = this._priceScales.get(mIdN) || 1;
+          const rawPrice = Number(o.p ?? o.price);
+          const rawSide = String(o.s ?? o.side ?? '').toLowerCase();
           return {
-            orderId: String(o.orderId || o.id),
-            price: Number(o.price) / scale,
-            side: (o.side || '').toLowerCase() === 'sell' ? 'sell' : 'buy',
+            orderId: String(o.rq ?? o.orderId ?? o.id),
+            price: rawPrice / scale,
+            side: rawSide === 'sell' || rawSide === 'ask' ? 'sell' : 'buy',
           };
         });
     } catch { return []; }
