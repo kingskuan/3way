@@ -2488,11 +2488,30 @@ function makeExchangeCtrl(prefix, chartId) {
     P('range-warn').innerHTML = s.outOfRange ? `<div class="warn-box">⚠️ 价格已脱离网格区间，已暂停区间外补单。</div>` : '';
 
     if (s.grid && s.config) drawGridOverlay(s);
+    // 自动跟随 bot 正在跑的市场：如果 bot 有 config.marketId 且跟当前 select 不同，
+    // 切到那个市场并刷新 chart —— 之前用户曾选过 BTC 但 bot 在跑 ETH 时，chart y
+    // 轴还是 BTC 价位（62000+），ETH 网格档位（1789~1978）全部落在 y.min 以下被
+    // gridPlugin filter 掉，用户看不到网格线。
+    if (s.config?.marketId != null) {
+      const sel = P('market');
+      if (sel && String(sel.value) !== String(s.config.marketId)) {
+        sel.value = String(s.config.marketId);
+        refreshTrend().catch(() => {});
+      }
+    }
   }
 
   function drawChart(candles) {
-    const labels = candles.map(c => new Date(c.time).toLocaleString('zh-CN', {month:'numeric',day:'numeric',hour:'2-digit'}));
-    const data = candles.map(c => c.close);
+    // Ondo history 端点常返空数组 → chart 完全空白，看不出价格更看不出网格档位。
+    // 用 bot 当前 lastPrice 合成 1 个点让 chart y 轴至少能定位到那个价位，网格
+    // 档位就能画出来了。
+    let workingCandles = candles;
+    if (!candles.length && lastState?.lastPrice > 0) {
+      const now = Date.now();
+      workingCandles = [{ time: now - 3600_000, close: lastState.lastPrice }, { time: now, close: lastState.lastPrice }];
+    }
+    const labels = workingCandles.map(c => new Date(c.time).toLocaleString('zh-CN', {month:'numeric',day:'numeric',hour:'2-digit'}));
+    const data = workingCandles.map(c => c.close);
     const gridPlugin = {
       id: 'gridLines',
       afterDraw(c) {
@@ -2520,13 +2539,23 @@ function makeExchangeCtrl(prefix, chartId) {
         ctx.restore();
       },
     };
+    // 若有网格 config，把 chart y 轴强制扩到覆盖整个网格区间——不然当合成
+    // K 线只有 lastPrice 一个值时 y 自动缩得很紧，网格档位全部落在可视区外。
+    let yMin, yMax;
+    if (lastState?.config?.lower != null && lastState?.config?.upper != null) {
+      const pad = (lastState.config.upper - lastState.config.lower) * 0.05;
+      const dataMin = data.length ? Math.min(...data) : lastState.lastPrice ?? lastState.config.lower;
+      const dataMax = data.length ? Math.max(...data) : lastState.lastPrice ?? lastState.config.upper;
+      yMin = Math.min(lastState.config.lower, dataMin) - pad;
+      yMax = Math.max(lastState.config.upper, dataMax) + pad;
+    }
     const config = {
       type: 'line',
       data: { labels, datasets: [{ data, borderColor: prefix === 'de' ? '#f59e0b' : prefix === 'ex' ? '#3b82f6' : '#22c55e', borderWidth: 1.5, pointRadius: 0, tension: .15 }] },
       options: { responsive:true, maintainAspectRatio:false, animation:false,
         plugins:{legend:{display:false}},
         scales: { x:{ticks:{color:'#6b82a0',maxTicksLimit:8},grid:{color:'#1e2d45'}},
-                  y:{ticks:{color:'#6b82a0'},grid:{color:'#1e2d45'}} } },
+                  y:{ticks:{color:'#6b82a0'},grid:{color:'#1e2d45'}, min:yMin, max:yMax} } },
       plugins: [gridPlugin],
     };
     if (chart) chart.destroy();
