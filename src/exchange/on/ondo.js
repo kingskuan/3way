@@ -258,17 +258,18 @@ export class OndoExchange extends EventEmitter {
   async cancelAll(marketId) {
     const symbol = this.markets.get(Number(marketId))?.displayName;
     if (!symbol) return true;
-    // 优先尝试批量撤（market 级）
+    // 先批量撤（market 级）
     try {
       await this._req('DELETE', `/v1/perps/orders?market=${encodeURIComponent(symbol)}`);
-    } catch {
-      // 降级：逐单撤
-      const toKill = [...this.orders.values()].filter((o) => o.marketId === Number(marketId));
-      for (const o of toKill) {
-        await this.cancelOrder(marketId, o.orderId).catch(() => {});
-      }
+    } catch { /* 忽略，下面兜底逐单撤 */ }
+    // 兜底：从 exchange 拉真实 open orders 逐单撤——批量删除可能 silent 成功但
+    // 实际留 orphan（用户遇到过 Perpl 132 单遗留同类问题）
+    const exchangeOrders = await this.fetchOpenOrders(Number(marketId)).catch(() => []);
+    for (const o of exchangeOrders) {
+      const oid = String(o.orderId ?? o.id ?? '');
+      if (oid) await this.cancelOrder(Number(marketId), oid).catch(() => {});
     }
-    // 清本地跟踪
+    // 最后清本地跟踪
     for (const [id, o] of this.orders) {
       if (o.marketId === Number(marketId)) this.orders.delete(id);
     }
@@ -430,19 +431,28 @@ export class OndoExchange extends EventEmitter {
     // 3) Positions
     try {
       const j = await this._req('GET', '/v1/perps/positions');
-      const arr = j.result || j.positions || j.data || (Array.isArray(j) ? j : []);
+      // _req 已 unwrap { success, result }。arr 可能直接是 array 或再包一层
+      const arr = Array.isArray(j) ? j : (j.result || j.positions || j.data || []);
+      // 首次拉到时 dump 结构方便日后加字段（用户反映 Ondo 官方 UI 有持仓但 QnV 显示无）
+      if (arr.length && !this._posSchemaLogged) {
+        this._posSchemaLogged = true;
+        try { console.log('[Ondo] positions 响应字段结构（诊断）：' + JSON.stringify(arr[0]).slice(0, 400)); } catch {}
+      }
       const seen = new Set();
       for (const p of arr) {
-        const id = this.symbolToId.get(p.market || p.symbol);
+        // 官方字段名候选：market / symbol / instrument / pair
+        const sym = p.market || p.symbol || p.instrument || p.pair;
+        const id = this.symbolToId.get(sym);
         if (!id) continue;
         seen.add(id);
-        const rawSize = Number(p.size || p.sizeBase || p.baseAsset || 0);
-        const isShort = p.side === 'short' || p.side === 'SELL' || rawSize < 0;
+        // 数量字段候选：size / sizeBase / baseAsset / netQuantity / positionSize / quantity
+        const rawSize = Number(p.size ?? p.sizeBase ?? p.baseAsset ?? p.netQuantity ?? p.positionSize ?? p.quantity ?? 0);
+        const isShort = p.side === 'short' || p.side === 'SELL' || p.side === 'sell' || rawSize < 0;
         const size = isShort ? -Math.abs(rawSize) : Math.abs(rawSize);
         this.positions.set(id, {
           sizeBase: size,
-          entryPrice: Number(p.entryPrice || p.avgEntryPrice || 0),
-          unrealizedPnl: Number(p.unrealizedPnl || p.upnl || 0),
+          entryPrice: Number(p.entryPrice ?? p.avgEntryPrice ?? p.averagePrice ?? p.avgPrice ?? 0),
+          unrealizedPnl: Number(p.unrealizedPnl ?? p.upnl ?? p.unrealisedPnl ?? p.pnl ?? 0),
         });
       }
       for (const id of [...this.positions.keys()]) if (!seen.has(id)) this.positions.delete(id);

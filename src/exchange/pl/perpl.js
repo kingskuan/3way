@@ -531,11 +531,24 @@ export class PerplExchange extends EventEmitter {
 
   async cancelAll(marketId) {
     const marketIdN = Number(marketId);
-    // Perpl 没有单条 cancel-all；逐单撤
-    for (const o of [...this.orders.values()].filter((x) => x.marketId === marketIdN)) {
-      await this.cancelOrder(marketIdN, o.orderId).catch(() => {});
+    // 先从 exchange 端拉真实 open orders，把服务端所有单都撤 —— 不再只信本地
+    // this.orders map。之前用户遇到 132 个链上遗留单，因为本地 map 空所以撤不到；
+    // 现在总是先真拉一次 exchange，再撤本地里剩下的（防止 fetchOpenOrders 漏）。
+    const exchangeOrders = await this.fetchOpenOrders(marketIdN).catch(() => []);
+    const exIds = new Set();
+    for (const o of exchangeOrders) {
+      const oid = String(o.orderId ?? o.id ?? '');
+      if (oid && oid !== '0') {
+        exIds.add(oid);
+        await this.cancelOrder(marketIdN, oid).catch(() => {});
+      }
     }
-    // 保底：本地清空该市场跟踪（防止有 orphan）
+    // 兜底：本地 tracking 里还有没撤到的，也撤一遍
+    for (const o of [...this.orders.values()].filter((x) => x.marketId === marketIdN)) {
+      const oid = String(o.orderId);
+      if (!exIds.has(oid)) await this.cancelOrder(marketIdN, oid).catch(() => {});
+    }
+    // 清本地 tracking
     for (const [id, o] of this.orders) {
       if (o.marketId === marketIdN) this.orders.delete(id);
     }
