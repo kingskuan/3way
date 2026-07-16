@@ -665,6 +665,9 @@ await Promise.all([
   resumeIfWasRunning(onBot, onExchange, 'on'),
   resumeIfWasRunning(plBot, plExchange, 'pl'),
 ]);
+// Autopilot 迁移补丁：resume 完之后再认领在跑的托管 bot（构造函数里做为时过早，
+// 那时 bot.running 都还是 false）
+autopilot.adoptRunningBots();
 
 // After init, surface any LEFTOVER position so the dashboard can prompt the user
 // (recovery ladder / re-grid / market close). Decibel & Extended RE-NUMBER their

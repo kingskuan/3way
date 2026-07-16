@@ -77,19 +77,34 @@ class Autopilot {
     for (const k of KEYS) this.cfg.perExchange[k] ||= { enabled: false, maxCapitalUsdc: 1000 };
     this.state = saved.state || {};        // per-exchange runtime state
     for (const k of KEYS) this.state[k] = { ..._freshExState(), ...(this.state[k] || {}) };
-    // 迁移补丁：Round 1 加了 startedByAutopilot，旧存档没这字段，如果重启前 bot 就在跑
-    // 且这一所在 Autopilot 里托管着，认领它——避免"用户手动启动"误判 + 假熔断连锁。
+    this.decisions = saved.decisions || [];    // rolling log (~50)
+    this._lastTickAt = 0;
+    this._busy = false;
+  }
+
+  /**
+   * 迁移补丁：Round 1 加了 startedByAutopilot 字段，旧存档没这字段（默认 false）。
+   * 如果 resume 之后某所 bot 已经在跑、且这一所在 Autopilot 里托管着，就认领它——
+   * 避免「用户手动启动」误判触发假熔断链。
+   *
+   * 必须在 server.js 里 resumeIfWasRunning 完成 **之后** 调用（否则 bot.running 还是
+   * false）。改到构造函数里做认领是错的（bots 那时都还没 resume）。
+   */
+  adoptRunningBots() {
+    let adopted = 0;
     for (const k of KEYS) {
       const bot = this.bots[k];
       const running = !!(bot?.getState?.()?.running);
       if (running && this.cfg.perExchange[k]?.enabled && !this.state[k].startedByAutopilot) {
         this.state[k].startedByAutopilot = true;
         this.state[k].adoptedOnBoot = true;   // 打个标记方便日后排查
+        adopted++;
       }
     }
-    this.decisions = saved.decisions || [];    // rolling log (~50)
-    this._lastTickAt = 0;
-    this._busy = false;
+    if (adopted) {
+      this._log('all', 'resume', `启动认领 ${adopted} 家已在跑的托管网格（迁移旧存档）`);
+      this._save();
+    }
   }
 
   start() {
