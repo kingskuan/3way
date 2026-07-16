@@ -282,15 +282,29 @@ export class OndoExchange extends EventEmitter {
   async fetchOpenOrders(marketId) {
     const symbol = this.markets.get(Number(marketId))?.displayName;
     if (!symbol) return [];
-    try {
-      const j = await this._req('GET', `/v1/perps/orders?market=${encodeURIComponent(symbol)}&open=true`);
-      const arr = j.result || j.orders || j.data || (Array.isArray(j) ? j : []);
-      return arr.map((o) => ({
-        orderId: String(o.orderId || o.id),
-        price: Number(o.price),
-        side: o.side,
-      }));
-    } catch { return []; }
+    // Ondo 参数名不完全确定：`open=true` 可能返空，`state=open` 是 TradingView UDF
+    // 常见格式；再兜底不带过滤器（拿全部再本地过滤）。哪个先命中就用哪个。
+    for (const q of [`market=${encodeURIComponent(symbol)}&open=true`,
+                     `market=${encodeURIComponent(symbol)}&state=open`,
+                     `market=${encodeURIComponent(symbol)}`]) {
+      try {
+        const j = await this._req('GET', `/v1/perps/orders?${q}`);
+        let arr = Array.isArray(j) ? j : (j.result || j.orders || j.data || []);
+        // 若未按 open 过滤，我们自己过滤掉已成交/已撤销
+        arr = arr.filter((o) => {
+          const st = String(o.status || o.state || '').toLowerCase();
+          return !st || st === 'open' || st === 'active' || st === 'new' || st === 'placed';
+        });
+        if (arr.length) {
+          return arr.map((o) => ({
+            orderId: String(o.orderId || o.id),
+            price: Number(o.price),
+            side: o.side,
+          }));
+        }
+      } catch { /* try next */ }
+    }
+    return [];
   }
 
   adoptOrder({ orderId, marketId, levelIndex, side, price, sizeBase }) {
