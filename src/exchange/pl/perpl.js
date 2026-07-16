@@ -225,18 +225,33 @@ export class PerplExchange extends EventEmitter {
     ws.addEventListener('open', () => {
       this._wsReady = true;
       this._reconnectDelay = 1000;
-      // 发送 auth handshake：文档未给出确切格式，用签名 header 上传作 auth payload
-      const auth = this._signHeaders('CONNECT', '/ws/v1/trading', '');
+      // 官方 ApiKeySignIn (mt=29) 认证：canonical 是 4 段（不是 REST 的 6 段）：
+      //   [chain_id, 'trading-ws-signin', timestamp_ms, nonce].join('\n')
+      // 字段名 snake_case：mt / chain_id / api_key / timestamp / nonce / signature
+      const ts = String(Date.now());
+      const nonce = this._nonce();
+      const canonical = [this.chainId, 'trading-ws-signin', ts, nonce].join('\n');
+      let signature;
+      try {
+        signature = edSign(null, Buffer.from(canonical), this._privateKey).toString('base64url');
+      } catch (e) {
+        this.emit('error', new Error(`Perpl WS 签名失败：${e.message}`));
+        try { ws.close(); } catch {}
+        return;
+      }
       try {
         ws.send(JSON.stringify({
-          op: 'auth',
-          apiKey: auth['X-API-Key'],
-          timestamp: auth['X-API-Timestamp'],
-          nonce: auth['X-API-Nonce'],
-          signature: auth['X-API-Signature'],
-          chainId: this.chainId,
+          mt: 29,
+          chain_id: this.chainId,
+          api_key: this.apiKey,
+          timestamp: ts,
+          nonce,
+          signature,
         }));
-      } catch {}
+        console.log(`[Perpl] Trading WS auth 已发送（mt=29, chain_id=${this.chainId}）`);
+      } catch (e) {
+        this.emit('error', new Error(`Perpl WS 发送 auth 失败：${e.message}`));
+      }
     });
 
     ws.addEventListener('message', (ev) => {
