@@ -188,7 +188,7 @@ class AiService {
         json: false, maxTokens: 1200, temperature: 0.4,
         system: [
           '你是网格交易机器人的复盘分析师。用简洁的中文写一份运行日报（纯文本，不用 markdown 标题符号）。',
-          '内容：1)三所各自的盈亏归因（网格已实现 vs 持仓浮动）；2)成交活跃度与网格参数是否匹配（完成格数、间距）；',
+          '内容：1)五所各自的盈亏归因（网格已实现 vs 持仓浮动）；2)成交活跃度与网格参数是否匹配（完成格数、间距）；',
           '3)风险点（保证金、区间边缘、挂单异常）；4)下一步的 1-3 条可执行建议。',
           '数字保留两位小数；paper 为模拟盘要注明；没跑的交易所一句话带过。总长 300 字以内。',
         ].join('\n'),
@@ -267,7 +267,7 @@ class AiService {
           if (m) { src = key; marketId = m.marketId; break; }
         } catch { /* 换下一个所 */ }
       }
-      if (!src) throw new Error('没有可用的真实行情来源（三所均未连接或没有 BTC 市场）。');
+      if (!src) throw new Error('没有可用的真实行情来源（五所均未连接或没有 BTC 市场）。');
       this.market = await this._regime(src, marketId, {});
       this.marketError = null;
       this._save();

@@ -42,7 +42,7 @@ export function getAiConfig() {
  */
 export async function aiChat({ system = '', messages, small = false, json = false, maxTokens = 1500, temperature = 0.3, timeoutMs = 60000 }) {
   const cfg = getAiConfig();
-  if (!cfg.apiKey) throw new Error('未配置 AI_API_KEY，请在「AI 助手」页填写接入信息。');
+  if (!cfg.apiKey) throw new Error('未配置 AI_API_KEY，请在「AI」页填写接入信息。');
   const model = small ? cfg.modelSmall : cfg.model;
   const signal = AbortSignal.timeout(timeoutMs);
 
