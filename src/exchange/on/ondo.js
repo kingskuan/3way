@@ -323,15 +323,16 @@ export class OndoExchange extends EventEmitter {
             _debugDumpAccount('Ondo balance', r);
             this._balanceEndpointFound = path;
           }
-          // 尝试常见字段名
+          // 已确认 Ondo /v1/perps/balance 返回 { walletBalance: "200",
+          //   realizedPnl: "0", unrealizedPnl: "0" }，walletBalance 是钱包/USDC 余额
           const bal = Number(
-            r?.balance ?? r?.usdcBalance ?? r?.usdBalance ??
+            r?.walletBalance ?? r?.balance ?? r?.usdcBalance ?? r?.usdBalance ??
             r?.availableBalance ?? r?.available ?? r?.free ??
             r?.equity ?? r?.totalCollateral ?? r?.availableMargin ??
             r?.freeCollateral ?? r?.marginBalance ?? r?.total ??
             (Array.isArray(r) ? r.find((x) => x?.asset === 'USD' || x?.currency === 'USD')?.balance : null)
           );
-          if (Number.isFinite(bal)) return bal;
+          if (Number.isFinite(bal) && bal >= 0) return bal;
         }
       } catch { /* 404 or 401，试下一个 */ }
     }
