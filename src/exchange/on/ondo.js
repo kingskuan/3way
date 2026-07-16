@@ -72,6 +72,9 @@ export class OndoExchange extends EventEmitter {
       const msg = j?.error || j?.message || text.slice(0, 160) || `HTTP ${res.status}`;
       throw new Error(`Ondo ${method} ${path} → ${msg}`);
     }
+    // Ondo 统一响应结构 { success: true, result: ... }：自动解包 result 让上层代码
+    // 不用到处写 j.result?.xxx。error case 上面已经 throw 掉了。
+    if (j && typeof j === 'object' && j.success === true && 'result' in j) return j.result;
     return j;
   }
 
@@ -101,7 +104,12 @@ export class OndoExchange extends EventEmitter {
         `  或本地时钟是否偏离 UTC 超过 30 秒（Ondo 硬性要求）`
       );
     }
-    this.balance = Number(acc?.balance ?? acc?.usdcBalance ?? acc?.availableBalance ?? 0);
+    // Ondo /v1/account 返回结构未在文档明确，尽量多字段 fallback
+    this.balance = Number(
+      acc?.balance ?? acc?.usdcBalance ?? acc?.availableBalance ??
+      acc?.equity ?? acc?.totalCollateral ?? acc?.availableMargin ??
+      acc?.freeCollateral ?? acc?.marginBalance ?? 0
+    );
 
     this.dataSource = 'real';
     this._startPolling();
@@ -119,7 +127,7 @@ export class OndoExchange extends EventEmitter {
     for (const path of ['/v1/perps/contracts', '/v1/markets', '/v1/perps/markets']) {
       const j = await this._pubGet(path);
       if (!j) continue;
-      // 真实结构是 { success: true, result: [...] }；兼容旧字段名
+      // _pubGet 是公开端点，不走 _req 的自动解包；这里保留手写解包
       const arr = j.result || j.markets || j.data || j.contracts || (Array.isArray(j) ? j : []);
       const out = [];
       let nextId = 1;
@@ -345,7 +353,11 @@ export class OndoExchange extends EventEmitter {
     // 2) 账户 balance
     try {
       const acc = await this._req('GET', '/v1/account');
-      const bal = Number(acc?.balance ?? acc?.usdcBalance ?? acc?.availableBalance);
+      const bal = Number(
+        acc?.balance ?? acc?.usdcBalance ?? acc?.availableBalance ??
+        acc?.equity ?? acc?.totalCollateral ?? acc?.availableMargin ??
+        acc?.freeCollateral ?? acc?.marginBalance
+      );
       if (Number.isFinite(bal)) this.balance = bal;
     } catch { /* transient */ }
 
