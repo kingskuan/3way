@@ -247,10 +247,23 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
 
     // 紧急清链上残留：撤所有市场的挂单 + 平所有持仓。绕过 bot 状态，直接调
     // exchange 层。用于 bot 无 config / autopilot 崩溃后链上有残留的场景。
-    // 循环 fetchOpenOrders + cancelAll 直到链上为空（防 API pagination 上限）。
+    //
+    // 数据源三路 union（针对 Perpl REST 401 / 本地 map 漂移的场景）：
+    //   1) exchange.fetchOpenOrders(mktId)  — Round 30 REST + WS 本地 fallback
+    //   2) bot.active                       — bot 自己下过的单（oid 是从 mt=24 回响拿的）
+    //   3) exchange.orders  (Perpl 私有)   — 适配器 map（WS mt=23 收养的 + placeLimitOrder 加的）
+    // dedupe 后 cancel by oid（直接 mt=22 t=5，不经 fetchOpenOrders）。
     if (subPath === '/emergency-cleanup' && req.method === 'POST') {
       try {
         const b = await readBody(req).catch(() => ({}));
+        // WS 重连一次 —— 触发 Perpl mt=23 OrdersSnapshot 全量到达，让适配器
+        // 的 this.orders map 一次性收养所有链上开放单（包括我们不知道 oid 的孤儿）。
+        // 用户之前点清理只撤 0 单，就是因为本地 map 空、REST 401、fetchOpenOrders
+        // 返 []，根本没 oid 可撤。重连拿到 mt=23 才是获取链上真单最可靠的路径。
+        if (typeof exchange.reconnect === 'function') {
+          await exchange.reconnect().catch(() => {});
+          await new Promise((r) => setTimeout(r, 3500));  // 等 mt=23 snapshot 到
+        }
         const markets = await exchange.getMarkets().catch(() => []);
         const targets = b?.marketId != null
           ? [markets.find((m) => Number(m.marketId) === Number(b.marketId))].filter(Boolean)
@@ -259,18 +272,35 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
         let totalClosed = 0;
         const perMarket = [];
         for (const m of targets) {
-          let cancelledHere = 0;
-          for (let round = 0; round < 5; round++) {
-            const ords = await exchange.fetchOpenOrders(m.marketId).catch(() => []);
-            if (!ords.length) break;
-            cancelledHere += ords.length;
-            await exchange.cancelAll(m.marketId).catch(() => {});
-            await new Promise((r) => setTimeout(r, 800));   // 让链上响应
+          const mktId = Number(m.marketId);
+          const oids = new Set();
+          // 源 1：REST + 适配器本地 map fallback
+          try {
+            const ords = await exchange.fetchOpenOrders(mktId);
+            for (const o of ords) if (o.orderId) oids.add(String(o.orderId));
+          } catch { /* skip */ }
+          // 源 2：bot 内部的 active map（如果 bot 正跑同一 market）
+          if (bot?.config?.marketId === mktId && bot.active) {
+            for (const oid of bot.active.keys()) if (oid) oids.add(String(oid));
           }
+          // 源 3：适配器 orders map 直接读（防止 fetchOpenOrders 又漏）
+          if (exchange.orders && typeof exchange.orders.values === 'function') {
+            for (const o of exchange.orders.values()) {
+              if (Number(o.marketId) === mktId && o.orderId) oids.add(String(o.orderId));
+            }
+          }
+          // dedupe 完开撤
+          let cancelledHere = 0;
+          for (const oid of oids) {
+            const r = await exchange.cancelOrder?.(mktId, oid).catch(() => null);
+            if (r || r === true || r === undefined) cancelledHere++;
+          }
+          // 再跑一次 cancelAll 兜底（会重新 fetch + cancel 剩下的）
+          await exchange.cancelAll?.(mktId).catch(() => {});
           totalCancelled += cancelledHere;
           let closedHere = false;
           if (typeof exchange.closePosition === 'function') {
-            const r = await exchange.closePosition(m.marketId).catch(() => null);
+            const r = await exchange.closePosition(mktId).catch(() => null);
             if (r) { totalClosed++; closedHere = true; }
           }
           if (cancelledHere > 0 || closedHere) {
