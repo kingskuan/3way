@@ -814,7 +814,11 @@ export class GridBot {
     // tracked orders and orphaned them on the exchange. Skip pruning entirely on
     // such a snapshot, and in general require an order to be missing from TWO
     // consecutive reconciles before pruning it.
-    const massVanish = real.length === 0 && this.active.size >= 3;
+    // Round 34：某些适配器（Perpl）REST 端不可靠枚举链上单——real=[] 不一定
+    // 是"exchange 真的 0 单"，可能只是 REST 401 我方看不见。这类适配器上不做
+    // massVanish 的清+reseed 逻辑，纯靠 WS 事件（mt=24 fill/cancel）维持一致性。
+    const unreliableListing = this.ex?.hasReliableOrderListing === false;
+    const massVanish = !unreliableListing && real.length === 0 && this.active.size >= 3;
     if (massVanish) {
       this._vanishStreak = (this._vanishStreak || 0) + 1;
       if (now - (this._lastVanishAlertAt || 0) > 60000) {
@@ -903,7 +907,9 @@ export class GridBot {
     // 说明 start() 挂单挂丢了（例如 Perpl WS 响应字段名对不上、进程重启时
     // resume 拿到的 snapshot.active 是空的等）→ 重新 seedOrders 一次。
     // 打的日志: adapter 侧的 diagnostic + bot 侧 alert，方便 debug。
-    if (!recovery && !this.outOfRange && this.running
+    // Round 34：适配器不可靠枚举时，跳过 self-heal reseed。real=0 可能只是
+    // 我方看不见，链上其实还挂着单——reseed 会往链上再压一批变孤儿。
+    if (!recovery && !this.outOfRange && this.running && !unreliableListing
         && this.grid && real.length === 0 && this.active.size === 0
         && (!this._refillPausedUntil || now >= this._refillPausedUntil)
         && Number.isFinite(this.lastPrice) && this.lastPrice > 0
