@@ -397,6 +397,35 @@ export class PerplExchange extends EventEmitter {
         : Array.isArray(msg.os) ? msg.os
         : Array.isArray(msg.orders) ? msg.orders
         : (msg.o ? [msg.o] : []);
+      // mt=23 = OrdersSnapshot（连接后首次的全量快照）—— 把里面未跟踪的持久单
+      // 收养到 this.orders，防止重启/重连后本地空，但链上还有单的场景（用户
+      // 累积 155 孤儿单的根因之一）。mt=24 是增量更新不做批量收养。
+      const isSnapshot = msg.mt === 23;
+      if (isSnapshot && orders.length) {
+        let adopted = 0;
+        for (const o of orders) {
+          const oidRaw = o.oid ?? o.id;
+          const oid = oidRaw != null && oidRaw !== 0 && oidRaw !== '0' ? String(oidRaw) : '';
+          if (!oid || this.orders.has(oid)) continue;
+          if (o.st === 2 || o.st === 3 || o.st === 4) continue;  // 已成/撤/过期不收养
+          const marketIdN = Number(o.mkt ?? o.marketId ?? o.market);
+          if (!Number.isFinite(marketIdN)) continue;
+          const priceScale = this._priceScales.get(marketIdN) || 1;
+          const sizeScale = this._sizeScales.get(marketIdN) || 1;
+          const price = Number(o.p) / priceScale;
+          const sizeBase = Number(o.s ?? o.os) / sizeScale;
+          if (!Number.isFinite(price) || !Number.isFinite(sizeBase) || sizeBase <= 0) continue;
+          // t 是订单类型：mt=22 里 1=Long/2=Short（观测猜的）。这里保守当作 side
+          const side = Number(o.t) === 2 ? 'sell' : 'buy';
+          this.orders.set(oid, {
+            orderId: oid, marketId: marketIdN,
+            side, price, sizeBase, levelIndex: null, clientOrderId: '',
+            reduceOnly: false,
+          });
+          adopted++;
+        }
+        if (adopted > 0) console.log(`[Perpl] mt=23 快照收养 ${adopted} 笔链上单到本地（防止 reseed loop）`);
+      }
       for (const o of orders) {
         const rq = o.rq != null ? Number(o.rq) : null;
         const oidRaw = o.oid ?? o.id;
@@ -620,7 +649,22 @@ export class PerplExchange extends EventEmitter {
             side: rawSide === 'sell' || rawSide === 'ask' ? 'sell' : 'buy',
           };
         });
-    } catch { return []; }
+    } catch (e) {
+      // Round 30 根因：/v1/trading/order-history?state=open 对当前签名方案返回
+      // 401 Unauthorized（诊断日志确认），所以 REST 永远拿不到订单。之前静默
+      // return [] → bot 以为交易所 0 单 → massVanish → reseed 死循环 → 链上累积
+      // 155 孤儿单。修：回退到 WS 本地跟踪的 orders map（placeLimitOrder 加，
+      // mt=24 status=filled/cancelled 减，是准确的 open orders 视图）。
+      if (!this._restFallbackLogged) {
+        this._restFallbackLogged = true;
+        console.log(`[Perpl] fetchOpenOrders REST 失败（${String(e?.message || e).slice(0, 160)}），回退用 WS 本地跟踪的 ${this.orders.size} 单`);
+      }
+      return this.getOpenOrders(mIdN).map((o) => ({
+        orderId: String(o.orderId),
+        price: Number(o.price),
+        side: o.side,
+      }));
+    }
   }
 
   adoptOrder({ orderId, marketId, levelIndex, side, price, sizeBase }) {
