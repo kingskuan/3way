@@ -1898,6 +1898,7 @@ input:focus, select:focus {
       <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="pl-st-orders">—</span></div>
       <button class="btn btn-ghost" id="pl-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
       <button class="btn btn-ghost" id="pl-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="pl-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
       <div class="panel-title">价格 / 网格</div>
@@ -2399,6 +2400,27 @@ function makeExchangeCtrl(prefix, chartId) {
   };
 
   if (P('reconnect-btn')) P('reconnect-btn').onclick = () => reconnectEx(prefix, P('reconnect-btn'));
+
+  // 紧急清链上残留：不管 bot 状态，直接调 exchange 层撤所有市场的挂单 + 平所有仓
+  // 用户遇到过 Perpl 链上 155 单 + 1 仓，QnV bot 状态为空的场景（autopilot 崩溃遗留）
+  if (P('emergency-cleanup-btn')) P('emergency-cleanup-btn').onclick = async () => {
+    if (!confirm('确认紧急清链上残留？\n\n将【绕过 QnV bot 状态】直接对交易所调用：\n① 撤该交易所所有市场的挂单\n② 市价平所有持仓\n\n此操作不可撤销，用于清 autopilot 崩溃或历史遗留的孤儿单/孤儿仓。')) return;
+    const btn = P('emergency-cleanup-btn');
+    btn.disabled = true;
+    const oldText = btn.textContent;
+    btn.textContent = '清理中…（可能 30s+）';
+    try {
+      const r = await fetch(`/api/${prefix}/emergency-cleanup`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+      const j = await r.json();
+      if (j.error) { alert('清理失败：' + j.error); return; }
+      const per = (j.perMarket || []).map(x => `${x.market}: 撤 ${x.cancelled} 单${x.closed ? '，已平仓' : ''}`).join('\n');
+      alert(`✅ 清理完成\n\n共撤单 ${j.totalCancelled} 个，平仓 ${j.totalClosed} 个市场${per ? '\n\n' + per : ''}`);
+    } catch (e) {
+      alert('清理请求失败：' + (e?.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = oldText;
+    }
+  };
 
   P('cancel-orders-btn').onclick = async () => {
     if (!confirm('确认一键撤销该交易所的全部挂单？\n持仓不受影响（不会平仓）。网格将停止，需要时可重新启动。')) return;
