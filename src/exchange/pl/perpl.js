@@ -731,8 +731,16 @@ export class PerplExchange extends EventEmitter {
       const j = await this._req('GET', '/v1/trading/account-history?limit=1');
       const snap = j?.data?.[0] || j?.[0] || j;
       if (snap) {
-        const bal = Number(snap.balance ?? snap.usdcBalance ?? snap.collateral);
-        if (Number.isFinite(bal)) this.balance = bal;
+        if (!this._accountSnapDumped) {
+          this._accountSnapDumped = true;
+          try { console.log('[Perpl] account-history snapshot 字段结构（诊断）：' + JSON.stringify(snap).slice(0, 800)); } catch {}
+        }
+        // 优先总值语义（accountValue/equity/collateral/totalBalance）→ 兜底 balance
+        const bal = Number(
+          snap.accountValue ?? snap.totalBalance ?? snap.total ?? snap.equity
+          ?? snap.collateral ?? snap.usdcBalance ?? snap.balance
+        );
+        if (Number.isFinite(bal) && bal > 0) this.balance = bal;
         // 持仓：不管本地 map 状态如何，snapshot 一到就同步一次（不然 UI 显示不出）
         const raw = snap.positions || snap.p || snap.ps || snap.pos || [];
         const arr = Array.isArray(raw) ? raw : [];
@@ -801,17 +809,31 @@ function _bumpReqSeq(self, lfr) {
 // Amount 字段是 **微美分**（1 USDC = 1_000_000）——文档里 Micros = int64
 // "Value in 10^-6 fractions"。除以 1e6 得到真实 USD。
 const PERPL_AMOUNT_SCALE = 1_000_000;
+// 用户报的坑：Perpl UI「Account」= $329.76，QnV 显示 $273.72，差 = 位置 margin。
+// 说明 acc.b 只是「free collateral」，不是账户总值。UI 期待的是总值。
+// 试多个字段名，优先总值语义（col/collateral > eq/equity > tot/total > b）。
+// 首个 mt=19 payload 全量 dump 到日志，便于确定 Perpl 实际给的字段名。
+const _PERPL_BALANCE_FIELDS = ['col', 'collateral', 'tot', 'total', 'eq', 'equity', 'nav', 'v', 'value', 'b'];
 function _extractPerplBalance(self, msg) {
+  if (!self._walletMsgDumped) {
+    self._walletMsgDumped = true;
+    try { console.log(`[Perpl] mt=${msg.mt} 首个账户消息全量 dump（诊断）：` + JSON.stringify(msg).slice(0, 1000)); } catch {}
+  }
   const accounts = Array.isArray(msg.as) ? msg.as : (msg.a ? [msg.a] : []);
   const candidates = accounts.length ? accounts : (msg.b !== undefined ? [msg] : []);
   for (const acc of candidates) {
-    const raw = Number(acc?.b);
-    if (!Number.isFinite(raw) || raw < 0) continue;
-    const bal = raw / PERPL_AMOUNT_SCALE;
+    let picked = null, pickedField = null;
+    for (const f of _PERPL_BALANCE_FIELDS) {
+      const raw = Number(acc?.[f]);
+      if (!Number.isFinite(raw) || raw < 0) continue;
+      picked = raw; pickedField = f; break;   // 头部字段优先
+    }
+    if (picked == null) continue;
+    const bal = picked / PERPL_AMOUNT_SCALE;
     const prev = Number(self.balance) || 0;
     self.balance = bal;
     if (Math.abs(prev - bal) > 0.001) {
-      console.log(`[Perpl] balance 更新：$${prev.toFixed(2)} → $${bal.toFixed(2)}（raw=${raw}）`);
+      console.log(`[Perpl] balance 更新：$${prev.toFixed(2)} → $${bal.toFixed(2)}（field=${pickedField}, raw=${picked}）`);
     }
   }
 }
