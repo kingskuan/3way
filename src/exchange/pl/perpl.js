@@ -45,6 +45,11 @@ export class PerplExchange extends EventEmitter {
     this.realizedPnl = 0;
     this.lastOkAt = Date.now();
     this.lastError = null;
+    // 硬限制：Perpl REST /v1/trading/order-history?state=open 返 401（未授权），
+    // WS 也不主动推 OrdersSnapshot——所以我们没法可靠枚举链上开放单。
+    // bot.reconcile 看这个 flag 就跳过 massVanish 逻辑（不要基于"REST 返 0"就
+    // 相信 exchange 没单，因为大概率是我们看不见而已）。
+    this.hasReliableOrderListing = false;
 
     // Ed25519 私钥对象化（懒解析：init 才做）
     this._privateKey = null;

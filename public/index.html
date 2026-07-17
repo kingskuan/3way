@@ -1894,6 +1894,11 @@ input:focus, select:focus {
       <button class="btn btn-ghost" id="pl-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
       <button class="btn btn-ghost" id="pl-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
       <button class="btn btn-ghost" id="pl-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
+      <div style="margin-top:6px;padding:8px;font-size:11px;background:rgba(255,215,0,0.08);border:1px dashed var(--yel);border-radius:6px;color:var(--yel);line-height:1.5">
+        ⚠️ Perpl REST 接口对 open orders 一直返 401，QnV 无法从我方枚举链上历史孤儿。
+        紧急清理只能撤本地跟踪的挂单。链上遗留请到
+        <a href="https://app.perpl.xyz" target="_blank" rel="noopener" style="color:var(--yel);text-decoration:underline">Perpl 网页</a>
+        直接点 "Cancel All"（网页 UI 能看到全部单）。</div>
     </div>
     <div class="panel" style="margin-bottom:14px">
       <div class="panel-title">价格 / 网格</div>
