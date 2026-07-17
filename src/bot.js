@@ -234,6 +234,7 @@ export class GridBot {
     this._recomputeRisk();
     this._refillPausedUntil = 0; this._cancelTimes = []; // fresh start clears any back-off
     this._retryQueue = []; this._noPosStreak = 0;
+    this._reseedCount = 0; this._lastReseedAt = 0; this._vanishStreak = 0;
     this.recovery = false;
 
     // record the starting equity up front (margin pre-check, returnPct, recovery)
@@ -823,10 +824,22 @@ export class GridBot {
       // 10 次连续 massVanish（默认 reconcile 30s → 5 分钟）没变 → 认为
       // 挂单真的没了（被 exchange 撤/成交/过期），信任外部：清本地，让下面
       // self-heal 逻辑接管重铺。
-      if (this._vanishStreak >= 10) {
+      //
+      // 保护：如果最近 15 min 内刚 reseed 过（本地重铺了），不清 active。
+      // 否则会形成"reseed 20 → 5 min后又 vanish → clear+reseed 20"的死循环，
+      // 用户见过链上累积到 155 单。既然刚 reseed 过又 vanish，多半是接口
+      // 侧 fetchOpenOrders 返 [] 而不是订单真被撤，别再自动清了。
+      const recentReseed = this._lastReseedAt && (now - this._lastReseedAt < 15 * 60_000);
+      if (this._vanishStreak >= 10 && !recentReseed) {
         this._alert(`⚠️ 挂单对账：交易所端 0 单持续 ${this._vanishStreak} 次（>5 分钟），信任外部，清本地 ${this.active.size} 单跟踪，准备重铺。`);
         this.active.clear();
         this._vanishStreak = 0;
+      } else if (this._vanishStreak >= 10 && recentReseed) {
+        // 抑制重复告警
+        if (now - (this._lastVanishSuppressAlertAt || 0) > 5 * 60_000) {
+          this._lastVanishSuppressAlertAt = now;
+          this._alert(`⚠️ 挂单持续 vanish 但最近刚重铺过——多半是 fetchOpenOrders 接口异常，不再自动清本地。请人工排查（打开 /api/${this.ex?._exKey || '?'}/debug）。`);
+        }
       }
     } else {
       this._vanishStreak = 0;
@@ -895,7 +908,19 @@ export class GridBot {
         && (!this._refillPausedUntil || now >= this._refillPausedUntil)
         && Number.isFinite(this.lastPrice) && this.lastPrice > 0
         && (now - (this._lastReseedAt || 0) > 60_000)) {
+      // Reseed 次数上限：如果已 reseed >= 3 次 bot 却仍然 real=0，几乎肯定是
+      // 接口异常（fetchOpenOrders 字段名或 endpoint 有问题）不是订单真丢了。
+      // 再 reseed 只会往链上继续压钱。停手，让人工排查。
+      this._reseedCount = (this._reseedCount || 0);
+      if (this._reseedCount >= 3) {
+        if (now - (this._lastReseedCapAlertAt || 0) > 10 * 60_000) {
+          this._lastReseedCapAlertAt = now;
+          this._alert(`⚠️ 已 reseed ${this._reseedCount} 次仍然本地/交易所都 0 单——接口疑似异常，停止自动重铺（避免链上累积孤儿单）。请人工排查 /api/${this.ex?._exKey || '?'}/debug 后手动重启网格。`);
+        }
+        return;
+      }
       this._lastReseedAt = now;
+      this._reseedCount++;
       try {
         // 重铺前先 re-snap 每档到市场**当前** stepPrice。之前 resume 出来的
         // 老 bot 里 config.stepPrice 可能是升级前保存的旧值（比如 0.01），跟

@@ -580,18 +580,32 @@ export class PerplExchange extends EventEmitter {
       // 最多拉 4 页（2000 单），防止死循环
       for (let page = 0; page < 4; page++) {
         const j = await this._req('GET', `/v1/trading/order-history?state=open&limit=${PER_PAGE}&offset=${offset}`);
+        // 首次 dump 完整响应 body（1500 字符）+ 首个订单，方便定位 arr 提取
+        // 路径 & 字段名不对时的问题（用户见过 fetchOpenOrders 返 [] 但链上
+        // 明明有 20+ 单，最终发现是 mkt/oid 字段名的锅）
+        if (!this._openOrdersFullDumped) {
+          this._openOrdersFullDumped = true;
+          try { console.log('[Perpl] fetchOpenOrders 完整响应（诊断）：' + JSON.stringify(j).slice(0, 1500)); } catch {}
+        }
         const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
         if (!arr.length) break;
         if (!this._openOrdersDumped) {
           this._openOrdersDumped = true;
-          try { console.log('[Perpl] fetchOpenOrders 响应字段结构（诊断）：' + JSON.stringify(arr[0]).slice(0, 500)); } catch {}
+          try { console.log('[Perpl] fetchOpenOrders 首单字段结构（诊断）：' + JSON.stringify(arr[0]).slice(0, 500)); } catch {}
         }
         collected.push(...arr);
         if (arr.length < PER_PAGE) break;
         offset += PER_PAGE;
       }
-      return collected
-        .filter((o) => Number(o.mkt ?? o.marketId ?? o.market_id) === mIdN)
+      // 若过滤前有单、过滤后 0 单，log 一次帮定位（说明 mkt 字段名对不上）
+      const before = collected.length;
+      const filtered = collected
+        .filter((o) => Number(o.mkt ?? o.marketId ?? o.market_id ?? o.m ?? o.market) === mIdN);
+      if (before > 0 && filtered.length === 0 && !this._filterMissLogged) {
+        this._filterMissLogged = true;
+        try { console.log(`[Perpl] fetchOpenOrders 过滤后 0 单（原有 ${before} 单），可能 marketId 字段名不对。首单 keys: ${Object.keys(collected[0] || {}).join(',')}`); } catch {}
+      }
+      return filtered
         .map((o) => {
           const scale = this._priceScales.get(mIdN) || 1;
           const rawPrice = Number(o.p ?? o.price);
