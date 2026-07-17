@@ -596,8 +596,12 @@ export class PerplExchange extends EventEmitter {
           const scale = this._priceScales.get(mIdN) || 1;
           const rawPrice = Number(o.p ?? o.price);
           const rawSide = String(o.s ?? o.side ?? '').toLowerCase();
+          // ⚠️ orderId 用 oid（持久订单 ID），不能用 rq（rq 是发单时的
+          // 请求 ID，只在响应里回响一次，取消订单需要 oid。Round 24 错
+          // 把 rq 放最前面，导致 cancelOrder 送错 oid → Perpl 静默拒绝
+          // → 用户点紧急清链上残留没效果，146 单一直躺链上。
           return {
-            orderId: String(o.rq ?? o.orderId ?? o.id),
+            orderId: String(o.oid ?? o.orderId ?? o.id ?? o.rq),
             price: rawPrice / scale,
             side: rawSide === 'sell' || rawSide === 'ask' ? 'sell' : 'buy',
           };
@@ -674,11 +678,38 @@ export class PerplExchange extends EventEmitter {
     } catch { return []; }
   }
 
+  /** 诊断接口：拉 raw REST 响应，方便人工核对 Perpl 实际字段名。 */
+  async getDebugSnapshot() {
+    const out = {};
+    // 账户 snapshot
+    try {
+      const j = await this._req('GET', '/v1/trading/account-history?limit=1');
+      out.accountRaw = j?.data?.[0] || j?.[0] || j;
+    } catch (e) { out.accountError = e?.message || String(e); }
+    // 开放订单：取首 3 单看字段
+    try {
+      const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=5');
+      const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
+      out.openOrdersCount = arr.length;
+      out.openOrdersSample = arr.slice(0, 3);
+    } catch (e) { out.openOrdersError = e?.message || String(e); }
+    // 本地缓存
+    out.localBalance = this.balance;
+    out.localAccountId = this.accountId;
+    out.localPositionsCount = this.positions.size;
+    out.localPositions = [...this.positions.values()].slice(0, 5);
+    out.localOrdersCount = this.orders.size;
+    out.wsAuthed = this._wsAuthed;
+    out.wsReady = this._wsReady;
+    return out;
+  }
+
   async reconcileOpenOrders() {
     try {
-      const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=100');
+      const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=500');
       const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
-      const stillOpen = new Set(arr.map((o) => String(o.orderId || o.id)));
+      // oid 是持久订单 ID（对齐 Round 28 fetchOpenOrders 修的字段名）
+      const stillOpen = new Set(arr.map((o) => String(o.oid ?? o.orderId ?? o.id ?? o.rq)));
       for (const id of [...this.orders.keys()]) if (!stillOpen.has(id)) this.orders.delete(id);
     } catch { /* skip */ }
     return true;
@@ -777,9 +808,9 @@ export class PerplExchange extends EventEmitter {
     //    单是否还在 open 里；不在就查详情看是否 filled
     if (this.orders.size > 0) {
       try {
-        const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=200');
+        const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=500');
         const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
-        const stillOpen = new Set(arr.map((o) => String(o.orderId || o.id)));
+        const stillOpen = new Set(arr.map((o) => String(o.oid ?? o.orderId ?? o.id ?? o.rq)));
         for (const id of [...this.orders.keys()]) {
           if (!stillOpen.has(id)) {
             // WS 通常会先推 fill，这里静默清理即可
