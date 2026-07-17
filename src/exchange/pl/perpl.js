@@ -397,25 +397,28 @@ export class PerplExchange extends EventEmitter {
         : Array.isArray(msg.os) ? msg.os
         : Array.isArray(msg.orders) ? msg.orders
         : (msg.o ? [msg.o] : []);
-      // mt=23 = OrdersSnapshot（连接后首次的全量快照）—— 把里面未跟踪的持久单
-      // 收养到 this.orders，防止重启/重连后本地空，但链上还有单的场景（用户
-      // 累积 155 孤儿单的根因之一）。mt=24 是增量更新不做批量收养。
+      // mt=23 = OrdersSnapshot（连接后的全量快照）—— 做 FULL RECONCILE：
+      //   1) 收养快照里我们没跟踪的持久单
+      //   2) 删掉本地跟踪、但快照里没有的单（视为已成/撤）
+      // snapshot 里出现的都是 open orders（Perpl 只会推 open 状态给 snapshot），
+      // 不再看 st 猜测。mt=24 是增量事件，另外处理。
       const isSnapshot = msg.mt === 23;
       if (isSnapshot && orders.length) {
-        let adopted = 0;
+        let adopted = 0, dropped = 0;
+        const snapOids = new Set();
         for (const o of orders) {
           const oidRaw = o.oid ?? o.id;
           const oid = oidRaw != null && oidRaw !== 0 && oidRaw !== '0' ? String(oidRaw) : '';
-          if (!oid || this.orders.has(oid)) continue;
-          if (o.st === 2 || o.st === 3 || o.st === 4) continue;  // 已成/撤/过期不收养
+          if (!oid) continue;
+          snapOids.add(oid);
+          if (this.orders.has(oid)) continue;
           const marketIdN = Number(o.mkt ?? o.marketId ?? o.market);
           if (!Number.isFinite(marketIdN)) continue;
           const priceScale = this._priceScales.get(marketIdN) || 1;
           const sizeScale = this._sizeScales.get(marketIdN) || 1;
           const price = Number(o.p) / priceScale;
-          const sizeBase = Number(o.s ?? o.os) / sizeScale;
+          const sizeBase = Number(o.os ?? o.s) / sizeScale;
           if (!Number.isFinite(price) || !Number.isFinite(sizeBase) || sizeBase <= 0) continue;
-          // t 是订单类型：mt=22 里 1=Long/2=Short（观测猜的）。这里保守当作 side
           const side = Number(o.t) === 2 ? 'sell' : 'buy';
           this.orders.set(oid, {
             orderId: oid, marketId: marketIdN,
@@ -424,7 +427,13 @@ export class PerplExchange extends EventEmitter {
           });
           adopted++;
         }
-        if (adopted > 0) console.log(`[Perpl] mt=23 快照收养 ${adopted} 笔链上单到本地（防止 reseed loop）`);
+        // 反向清理：本地跟踪的、快照里没有的 → 应该已成/撤/过期，删掉
+        for (const [oid] of [...this.orders]) {
+          if (!snapOids.has(oid)) { this.orders.delete(oid); dropped++; }
+        }
+        if (adopted > 0 || dropped > 0) {
+          console.log(`[Perpl] mt=23 快照对账：收养 ${adopted} 单（链上有但本地没），清 ${dropped} 单（本地有但链上没）。本地现存 ${this.orders.size}。`);
+        }
       }
       for (const o of orders) {
         const rq = o.rq != null ? Number(o.rq) : null;
@@ -442,14 +451,16 @@ export class PerplExchange extends EventEmitter {
             pending.resolve({ orderId: oid });
           }
         }
-        // 已成交 / 已撤销 / 已过期状态 → 清本地跟踪
-        //   st=1 pending, 2 filled/done, 3 cancelled, 4 expired（观测猜的）
+        // mt=24 增量：只用 os===0（open size = 0）判定订单终结。
+        //   之前用猜测的 st 值（2=filled? 3=cancelled? 4=expired?）判删，猜错就把
+        //   活着的订单从本地删了 —— bot 见 local=0/exchange=0 → self-heal reseed，
+        //   链上累积 40/60/155 单。改成看 os 更靠谱：Perpl 里 os 是"open size"，
+        //   全部成交/撤销后必然归 0。发 fill 事件独立于删除（本地 map 由 os 门控）。
         if (oid && this.orders.has(oid)) {
           const tracked = this.orders.get(oid);
           const marketId = Number(tracked.marketId);
           const priceScale = this._priceScales.get(marketId) || 1;
           const sizeScale = this._sizeScales.get(marketId) || 1;
-          // fp/fs 是 fill price / fill size（scaled）；只在有变化时 emit
           if (Number(o.fs) > 0) {
             this.emit('fill', {
               orderId: oid, marketId, side: tracked.side,
@@ -458,7 +469,10 @@ export class PerplExchange extends EventEmitter {
               levelIndex: tracked.levelIndex, clientOrderId: tracked.clientOrderId,
             });
           }
-          if (o.st === 2 || o.st === 3 || o.st === 4) this.orders.delete(oid);
+          // 只在有明确 os 字段且值为 0 时删；os 不存在的事件不动本地（保守）
+          if (o.os !== undefined && Number(o.os) === 0) this.orders.delete(oid);
+          // 显式拒单（Round 17 观察）也删本地——这条单其实从没上链
+          else if (o.r === true || o.st === 7) this.orders.delete(oid);
         }
       }
       return;
