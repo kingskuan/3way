@@ -234,6 +234,17 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
       catch (e) { return send(res, 400, { error: e.message }); }
     }
 
+    // 诊断接口：返回适配器的 raw REST 响应快照（供人工核对 API 字段名）。
+    // 只有实现了 getDebugSnapshot 的适配器才有内容。
+    if (subPath === '/debug' && req.method === 'GET') {
+      try {
+        if (typeof exchange.getDebugSnapshot !== 'function') {
+          return send(res, 200, { info: '该适配器未实现 getDebugSnapshot' });
+        }
+        return send(res, 200, await exchange.getDebugSnapshot());
+      } catch (e) { return send(res, 500, { error: e.message }); }
+    }
+
     // 紧急清链上残留：撤所有市场的挂单 + 平所有持仓。绕过 bot 状态，直接调
     // exchange 层。用于 bot 无 config / autopilot 崩溃后链上有残留的场景。
     // 循环 fetchOpenOrders + cancelAll 直到链上为空（防 API pagination 上限）。
