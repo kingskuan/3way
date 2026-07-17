@@ -234,6 +234,42 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
       catch (e) { return send(res, 400, { error: e.message }); }
     }
 
+    // 紧急清链上残留：撤所有市场的挂单 + 平所有持仓。绕过 bot 状态，直接调
+    // exchange 层。用于 bot 无 config / autopilot 崩溃后链上有残留的场景。
+    // 循环 fetchOpenOrders + cancelAll 直到链上为空（防 API pagination 上限）。
+    if (subPath === '/emergency-cleanup' && req.method === 'POST') {
+      try {
+        const b = await readBody(req).catch(() => ({}));
+        const markets = await exchange.getMarkets().catch(() => []);
+        const targets = b?.marketId != null
+          ? [markets.find((m) => Number(m.marketId) === Number(b.marketId))].filter(Boolean)
+          : markets;
+        let totalCancelled = 0;
+        let totalClosed = 0;
+        const perMarket = [];
+        for (const m of targets) {
+          let cancelledHere = 0;
+          for (let round = 0; round < 5; round++) {
+            const ords = await exchange.fetchOpenOrders(m.marketId).catch(() => []);
+            if (!ords.length) break;
+            cancelledHere += ords.length;
+            await exchange.cancelAll(m.marketId).catch(() => {});
+            await new Promise((r) => setTimeout(r, 800));   // 让链上响应
+          }
+          totalCancelled += cancelledHere;
+          let closedHere = false;
+          if (typeof exchange.closePosition === 'function') {
+            const r = await exchange.closePosition(m.marketId).catch(() => null);
+            if (r) { totalClosed++; closedHere = true; }
+          }
+          if (cancelledHere > 0 || closedHere) {
+            perMarket.push({ market: m.displayName, cancelled: cancelledHere, closed: closedHere });
+          }
+        }
+        return send(res, 200, { ok: true, totalCancelled, totalClosed, perMarket });
+      } catch (e) { return send(res, 500, { error: e.message }); }
+    }
+
     if (subPath === '/start-recovery' && req.method === 'POST') {
       try { return send(res, 200, await bot.startRecovery(await readBody(req))); }
       catch (e) { return send(res, 400, { error: e.message }); }

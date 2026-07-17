@@ -569,19 +569,28 @@ export class PerplExchange extends EventEmitter {
   }
 
   async fetchOpenOrders(marketId) {
-    // Perpl 用 REST 查历史订单，open 状态过滤
+    // Perpl 用 REST 查开放订单。用户遇到 155 单在链上时 limit=100 只拉到
+    // 100 单，Round 21 的 cancelAll 只能撤 100 单，剩 55 单成孤儿。
+    // 改：limit=500 + offset 分页兜底，直到 API 返空。
+    const mIdN = Number(marketId);
+    const collected = [];
+    let offset = 0;
+    const PER_PAGE = 500;
     try {
-      const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=100');
-      const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
-      // 一次性诊断日志：dump 首个订单字段结构，方便下次核对 API
-      if (!this._openOrdersDumped && arr.length) {
-        this._openOrdersDumped = true;
-        try {
-          console.log('[Perpl] fetchOpenOrders 响应字段结构（诊断）：' + JSON.stringify(arr[0]).slice(0, 500));
-        } catch {}
+      // 最多拉 4 页（2000 单），防止死循环
+      for (let page = 0; page < 4; page++) {
+        const j = await this._req('GET', `/v1/trading/order-history?state=open&limit=${PER_PAGE}&offset=${offset}`);
+        const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
+        if (!arr.length) break;
+        if (!this._openOrdersDumped) {
+          this._openOrdersDumped = true;
+          try { console.log('[Perpl] fetchOpenOrders 响应字段结构（诊断）：' + JSON.stringify(arr[0]).slice(0, 500)); } catch {}
+        }
+        collected.push(...arr);
+        if (arr.length < PER_PAGE) break;
+        offset += PER_PAGE;
       }
-      const mIdN = Number(marketId);
-      return arr
+      return collected
         .filter((o) => Number(o.mkt ?? o.marketId ?? o.market_id) === mIdN)
         .map((o) => {
           const scale = this._priceScales.get(mIdN) || 1;
@@ -612,7 +621,14 @@ export class PerplExchange extends EventEmitter {
 
   async closePosition(marketId) {
     const marketIdN = Number(marketId);
-    const p = this.getPosition(marketIdN);
+    let p = this.getPosition(marketIdN);
+    // 兜底：本地 positions map 若空（bot 重启 / autopilot 崩溃后 WS 没 replay
+    // account snapshot），先从 REST 拉一遍，避免"本地不知道 = 无法平仓"陷阱。
+    // 用户遇到过链上有 0.063 ETH 长仓、QnV 完全看不见的场景。
+    if (!p || !p.sizeBase) {
+      await this._fetchAndCachePositions().catch(() => {});
+      p = this.getPosition(marketIdN);
+    }
     if (!p || !p.sizeBase) return null;
     const sizeScale = this._sizeScales.get(marketIdN) || 1;
     // Perpl 官方：t=3 CloseLong (卖) / t=4 CloseShort (买)；市价单 p=0；lb=head+ttl
@@ -624,6 +640,38 @@ export class PerplExchange extends EventEmitter {
       s: Math.round(Math.abs(p.sizeBase) * sizeScale),
       fl: 0, lv: 100, lb,
     }, 8000);
+  }
+
+  /** 从 REST account snapshot 拉最新持仓、缓存到 this.positions（供 closePosition 兜底）。 */
+  async _fetchAndCachePositions() {
+    const j = await this._req('GET', '/v1/trading/account-history?limit=1');
+    const snap = j?.data?.[0] || j?.[0] || j;
+    const raw = snap?.positions || snap?.p || snap?.ps || snap?.pos || [];
+    const arr = Array.isArray(raw) ? raw : [];
+    for (const pos of arr) {
+      const marketIdN = Number(pos.mkt ?? pos.marketId ?? pos.market_id ?? pos.market);
+      if (!Number.isFinite(marketIdN)) continue;
+      // size: 正=long 负=short；Perpl 存的可能是 micros/base；试多种字段名
+      const rawSize = Number(pos.size ?? pos.sz ?? pos.s ?? pos.qty ?? pos.q);
+      if (!Number.isFinite(rawSize)) continue;
+      if (rawSize === 0) { this.positions.delete(marketIdN); continue; }
+      const sizeScale = this._sizeScales.get(marketIdN) || 1;
+      const priceScale = this._priceScales.get(marketIdN) || 1;
+      const rawEp = Number(pos.entryPrice ?? pos.avgPrice ?? pos.ep ?? pos.p ?? pos.avg);
+      this.positions.set(marketIdN, {
+        marketId: marketIdN,
+        sizeBase: rawSize / sizeScale,
+        entryPrice: Number.isFinite(rawEp) && rawEp > 0 ? rawEp / priceScale : 0,
+      });
+    }
+  }
+
+  /** 拉当前所有持仓（供 UI/紧急清理用）。 */
+  async fetchPositions() {
+    try {
+      await this._fetchAndCachePositions();
+      return [...this.positions.values()];
+    } catch { return []; }
   }
 
   async reconcileOpenOrders() {
@@ -678,13 +726,42 @@ export class PerplExchange extends EventEmitter {
     // 1) 价格
     await this._pollPrices();
 
-    // 2) 账户历史 → 推 balance / 持仓（perpl 用 account-history 查最新 snapshot）
+    // 2) 账户历史 → 推 balance + 持仓（perpl 用 account-history 查最新 snapshot）
     try {
       const j = await this._req('GET', '/v1/trading/account-history?limit=1');
       const snap = j?.data?.[0] || j?.[0] || j;
       if (snap) {
         const bal = Number(snap.balance ?? snap.usdcBalance ?? snap.collateral);
         if (Number.isFinite(bal)) this.balance = bal;
+        // 持仓：不管本地 map 状态如何，snapshot 一到就同步一次（不然 UI 显示不出）
+        const raw = snap.positions || snap.p || snap.ps || snap.pos || [];
+        const arr = Array.isArray(raw) ? raw : [];
+        // 先诊断一次 dump：便于核实 Perpl 实际字段名
+        if (!this._positionsDumped && arr.length) {
+          this._positionsDumped = true;
+          try { console.log('[Perpl] account snapshot positions 字段结构（诊断）：' + JSON.stringify(arr[0]).slice(0, 500)); } catch {}
+        }
+        const seen = new Set();
+        for (const pos of arr) {
+          const marketIdN = Number(pos.mkt ?? pos.marketId ?? pos.market_id ?? pos.market);
+          if (!Number.isFinite(marketIdN)) continue;
+          const rawSize = Number(pos.size ?? pos.sz ?? pos.s ?? pos.qty ?? pos.q);
+          if (!Number.isFinite(rawSize)) continue;
+          if (rawSize === 0) { this.positions.delete(marketIdN); continue; }
+          const sizeScale = this._sizeScales.get(marketIdN) || 1;
+          const priceScale = this._priceScales.get(marketIdN) || 1;
+          const rawEp = Number(pos.entryPrice ?? pos.avgPrice ?? pos.ep ?? pos.p ?? pos.avg);
+          this.positions.set(marketIdN, {
+            marketId: marketIdN,
+            sizeBase: rawSize / sizeScale,
+            entryPrice: Number.isFinite(rawEp) && rawEp > 0 ? rawEp / priceScale : 0,
+          });
+          seen.add(marketIdN);
+        }
+        // 若 snapshot 有持仓字段但某 market 不在里面，说明该市场持仓已归零；清掉
+        if (arr.length > 0) {
+          for (const mId of [...this.positions.keys()]) if (!seen.has(mId)) this.positions.delete(mId);
+        }
       }
     } catch { /* transient */ }
 
