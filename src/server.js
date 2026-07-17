@@ -489,8 +489,12 @@ const server = http.createServer(async (request, res) => {
       catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
     }
     if (p === '/api/ai/report' && request.method === 'POST') {
-      try { return send(res, 200, await aiService.makeReport()); }
-      catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+      // 异步生成——AI 调用 + prompt 加持完常常 20-60s，手机浏览器 30s 就会 "Load
+      // failed" 断开。改成立刻返 202 + jobId，客户端 poll /api/ai/status.report.t
+      // 变化就能拿到结果。
+      const startedAt = Date.now();
+      aiService.makeReport().catch(() => {});
+      return send(res, 202, { ok: true, startedAt, msg: '日报生成中，约 30-60 秒后自动出现' });
     }
     if (p === '/api/ai/analyze' && request.method === 'POST') {
       try {
