@@ -112,7 +112,7 @@ class AiService {
     try {
       const snap = this._snapshot();
       const text = await aiChat({
-        small: true, json: true, maxTokens: 1800, temperature: 0.1,
+        small: true, json: true, maxTokens: 4000, temperature: 0.1,
         system: [
           '你是五所网格交易机器人的风控值守 AI。根据状态快照，对每个交易所分别给出巡检结论，并给一句整体结论。',
           '重点关注：health.status 为 error/warn 及其 reason；trackedOrders 与 exchangeOpenOrders 明显不一致（挂单同步漂移）；',
@@ -192,7 +192,7 @@ class AiService {
       }
       const sinceHrs = base ? Math.round((Date.now() - base.t) / 3600_000 * 10) / 10 : null;
       const text = await aiChat({
-        json: false, maxTokens: 1200, temperature: 0.4,
+        json: false, maxTokens: 3000, temperature: 0.4,
         system: [
           '你是网格交易机器人的复盘分析师。用简洁的中文写一份运行日报（纯文本，不用 markdown 标题符号）。',
           '内容：1)五所各自的盈亏归因（网格已实现 vs 持仓浮动）；2)成交活跃度与网格参数是否匹配（完成格数、间距）；',
@@ -226,7 +226,7 @@ class AiService {
     if (!Object.keys(frames).length) throw new Error('拿不到足够的K线数据，无法分析。');
     const price = await ex.getPrice(marketId).catch(() => null);
     const text = await aiChat({
-      json: true, maxTokens: 900, temperature: 0.3,
+      json: true, maxTokens: 2500, temperature: 0.3,
       system: [
         '你是网格交易策略顾问。根据多周期技术指标判断当前市况，并给出网格参数建议。',
         '牢记网格策略的数学本质：震荡市赚钱、单边市亏钱（持仓积累+浮亏）。你的首要任务是判断"当前适不适合跑网格"。',
@@ -289,7 +289,7 @@ class AiService {
   async chatControl(message, history = []) {
     const snap = this._snapshot();
     const text = await aiChat({
-      json: true, maxTokens: 1000, temperature: 0.3,
+      json: true, maxTokens: 2500, temperature: 0.3,
       system: [
         '你是网格交易机器人的操作助手。用户会用中文和你对话，你可以直接回答（基于提供的实时状态快照），',
         '也可以在需要执行操作时提出一个 action 提议（由用户在界面上确认后才会执行，你自己无法执行任何操作）。',
@@ -336,7 +336,7 @@ class AiService {
       if (candles?.length >= 30) { const a = analyzeTrend(candles); frames = { trend: a.trend, slopePct: a.slopePct, atrPct: a.atrPct }; }
     } catch { /* ignore */ }
     const text = await aiChat({
-      json: true, maxTokens: 500, temperature: 0.2,
+      json: true, maxTokens: 1500, temperature: 0.2,
       system: [
         '网格价格刚冲出区间。根据趋势强度判断最优处置，回复 JSON：',
         '{"suggestion":"close|recover|extend|hold","suggestionText":"中文一句话","reasoning":"中文理由(100字内)"}',

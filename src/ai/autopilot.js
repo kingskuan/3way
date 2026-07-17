@@ -378,7 +378,7 @@ class Autopilot {
       const cfg = getAiConfig();
       if (cfg.apiKey) {
         const text = await aiChat({
-          small: true, json: true, maxTokens: 500, temperature: 0.2,
+          small: true, json: true, maxTokens: 1500, temperature: 0.2,
           system: [
             '你是自动网格交易的 AI 选币器。从候选市场里挑一个最适合网格的（震荡强、波动适中），',
             '返回 JSON：{"marketId":<数字>,"mode":"neutral|long|short","reason":"<20字内中文>"}',

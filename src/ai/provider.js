@@ -40,7 +40,7 @@ export function getAiConfig() {
  *   o.json     true=要求返回 JSON（openai 用 response_format，其余靠提示词约束）
  * @returns {Promise<string>} 模型回复文本
  */
-export async function aiChat({ system = '', messages, small = false, json = false, maxTokens = 1500, temperature = 0.3, timeoutMs = 120000 }) {
+export async function aiChat({ system = '', messages, small = false, json = false, maxTokens = 4000, temperature = 0.3, timeoutMs = 120000 }) {
   const cfg = getAiConfig();
   if (!cfg.apiKey) throw new Error('未配置 AI_API_KEY，请在「AI」页填写接入信息。');
   const model = small ? cfg.modelSmall : cfg.model;
@@ -106,7 +106,18 @@ export async function aiChat({ system = '', messages, small = false, json = fals
     const j = await res.json().catch(() => null);
     if (!res.ok) throw new Error(`AI 接口错误 HTTP ${res.status}: ${j?.error?.message || JSON.stringify(j || {}).slice(0, 200)}`);
     const text = j?.choices?.[0]?.message?.content;
-    if (!text) throw new Error(`AI 返回为空（服务商 ${cfg.provider} · ${cfg.baseUrl} · model ${model}）：${JSON.stringify(j || {}).slice(0, 200)}`);
+    const finishReason = j?.choices?.[0]?.finish_reason;
+    // finish_reason=length 说明 max_tokens 太小被截断，给用户人性化提示
+    if (!text) {
+      if (finishReason === 'length') {
+        throw new Error(`AI 输出被截断（finish_reason=length，maxTokens=${maxTokens}）。模型没写出任何内容就触顶了——说明该模型 tokenizer 里中文 prompt 占的 token 远大于预期。建议：换支持更长输出的模型（如 gpt-4o-mini），或到 AI 页缩短 prompt。服务商 ${cfg.provider} · model ${model}`);
+      }
+      throw new Error(`AI 返回为空（finish_reason=${finishReason || '?'}，服务商 ${cfg.provider} · ${cfg.baseUrl} · model ${model}）：${JSON.stringify(j || {}).slice(0, 300)}`);
+    }
+    // 有内容但仍被截断：给下游一个信号（extractJson 会尝试补齐右括号自愈）
+    if (finishReason === 'length') {
+      console.warn(`[AI] finish_reason=length，输出可能被截断（maxTokens=${maxTokens}，实际 ${text.length} 字）。若下游 JSON 解析失败请调高 maxTokens。`);
+    }
     return text;
   } catch (e) {
     // AbortError → 用我们上面 controller.abort(new Error(...)) 塞进去的中文原因
@@ -117,7 +128,8 @@ export async function aiChat({ system = '', messages, small = false, json = fals
   }
 }
 
-/** 从模型回复里稳健地抠出第一个 JSON 对象（容忍 ```json 包裹、前后废话）。 */
+/** 从模型回复里稳健地抠出第一个 JSON 对象（容忍 ```json 包裹、前后废话）。
+ *  截断自愈：finish_reason=length 时输出常缺右括号，尝试补齐再解析。 */
 export function extractJson(text) {
   if (!text) return null;
   const s = String(text);
@@ -133,6 +145,20 @@ export function extractJson(text) {
     if (inStr) continue;
     if (ch === '{') depth++;
     else if (ch === '}') { depth--; if (depth === 0) { try { return JSON.parse(s.slice(start, i + 1)); } catch { return null; } } }
+  }
+  // 截断自愈：JSON 没闭合就补齐尝试解析。断在字符串里 → 关字符串；断在末尾逗号 → 去掉；
+  // 剩余深度用 } 补齐。修好也就修好，修不好回退 null（下游有兜底路径）。
+  if (depth > 0) {
+    let repaired = s.slice(start);
+    if (inStr) repaired += '"';
+    // 尾部若有半截 key 或 value 逗号残尾，去到最后一个"完整"字符
+    repaired = repaired.replace(/,\s*$/, '');
+    // 尾部半截未闭合数字/true/false/null 不太好处理，简单粗暴：如果最后一个非空白
+    // 字符是 `:`（半截 key），去掉这个 key 再补齐；若是 `,` 已在上面处理。
+    repaired = repaired.replace(/,\s*"[^"]*"\s*:\s*$/, '');
+    repaired = repaired.replace(/,\s*"[^"]*"\s*$/, '');
+    repaired += '}'.repeat(depth);
+    try { return JSON.parse(repaired); } catch { return null; }
   }
   return null;
 }
