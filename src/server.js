@@ -256,39 +256,55 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
     if (subPath === '/emergency-cleanup' && req.method === 'POST') {
       try {
         const b = await readBody(req).catch(() => ({}));
-        // WS 重连一次 —— 触发 Perpl mt=23 OrdersSnapshot 全量到达，让适配器
-        // 的 this.orders map 一次性收养所有链上开放单（包括我们不知道 oid 的孤儿）。
-        // 用户之前点清理只撤 0 单，就是因为本地 map 空、REST 401、fetchOpenOrders
-        // 返 []，根本没 oid 可撤。重连拿到 mt=23 才是获取链上真单最可靠的路径。
-        if (typeof exchange.reconnect === 'function') {
-          await exchange.reconnect().catch(() => {});
-          await new Promise((r) => setTimeout(r, 3500));  // 等 mt=23 snapshot 到
-        }
-        const markets = await exchange.getMarkets().catch(() => []);
+
+        // === Phase 1: 采集所有已知 oid（在 reconnect 之前） ===
+        // Round 32 之前的 bug：先 reconnect + wait 3.5s，期间 bot reconcile 定时器
+        // 触发 massVanish clear（bot.active.clear() 把 20 个 oid 都清掉），我们
+        // 拿到空 map → 撤 0 单。改：先把 oid 都缓存下来，再 reconnect。
+        const markets0 = await exchange.getMarkets().catch(() => []);
         const targets = b?.marketId != null
-          ? [markets.find((m) => Number(m.marketId) === Number(b.marketId))].filter(Boolean)
-          : markets;
-        let totalCancelled = 0;
-        let totalClosed = 0;
-        const perMarket = [];
+          ? [markets0.find((m) => Number(m.marketId) === Number(b.marketId))].filter(Boolean)
+          : markets0;
+        const oidsByMkt = new Map();
         for (const m of targets) {
           const mktId = Number(m.marketId);
           const oids = new Set();
-          // 源 1：REST + 适配器本地 map fallback
           try {
             const ords = await exchange.fetchOpenOrders(mktId);
             for (const o of ords) if (o.orderId) oids.add(String(o.orderId));
           } catch { /* skip */ }
-          // 源 2：bot 内部的 active map（如果 bot 正跑同一 market）
           if (bot?.config?.marketId === mktId && bot.active) {
             for (const oid of bot.active.keys()) if (oid) oids.add(String(oid));
           }
-          // 源 3：适配器 orders map 直接读（防止 fetchOpenOrders 又漏）
           if (exchange.orders && typeof exchange.orders.values === 'function') {
             for (const o of exchange.orders.values()) {
               if (Number(o.marketId) === mktId && o.orderId) oids.add(String(o.orderId));
             }
           }
+          oidsByMkt.set(mktId, oids);
+        }
+
+        // === Phase 2: WS 重连让 mt=23 补充孤儿 oid ===
+        if (typeof exchange.reconnect === 'function') {
+          await exchange.reconnect().catch(() => {});
+          await new Promise((r) => setTimeout(r, 3500));  // 等 mt=23 snapshot 到
+        }
+        // Reconnect 后再从适配器 orders map 补一遍（这次可能包含 mt=23 收养的孤儿）
+        if (exchange.orders && typeof exchange.orders.values === 'function') {
+          for (const o of exchange.orders.values()) {
+            const mktId = Number(o.marketId);
+            const s = oidsByMkt.get(mktId);
+            if (s && o.orderId) s.add(String(o.orderId));
+          }
+        }
+
+        // === Phase 3: 撤 & 平 ===
+        let totalCancelled = 0;
+        let totalClosed = 0;
+        const perMarket = [];
+        for (const m of targets) {
+          const mktId = Number(m.marketId);
+          const oids = oidsByMkt.get(mktId) || new Set();
           // dedupe 完开撤
           let cancelledHere = 0;
           for (const oid of oids) {
