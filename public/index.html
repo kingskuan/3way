@@ -1278,6 +1278,32 @@ input:focus, select:focus {
       <div id="ov-pl-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
       <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="switchTab('pl')">进入 Perpl 控制台 →</button>
     </div>
+
+    <!-- StandX -->
+    <div class="ov-card sx">
+      <div class="ov-exname" style="color:var(--v2-mut)">
+        <span class="run-dot" id="ov-sx-dot"></span>
+        StandX · Perps (BSC)
+        <span id="ov-sx-badge" class="badge badge-paper" style="margin-left:auto">PAPER</span>
+      </div>
+      <div id="ov-sx-health" class="exhealth eh-idle">—</div>
+      <div class="ov-pnl" id="ov-sx-pnl">—</div>
+      <div class="ov-sub" id="ov-sx-ret">收益率 —</div>
+      <div style="margin-top:10px">
+        <div class="ov-stat"><span class="lbl">余额</span><span class="val" id="ov-sx-bal">—</span></div>
+        <div class="ov-stat"><span class="lbl">权益</span><span class="val" id="ov-sx-eq">—</span></div>
+        <div class="ov-stat"><span class="lbl">已实现</span><span class="val" id="ov-sx-rpnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">未实现</span><span class="val" id="ov-sx-upnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">交易量</span><span class="val" id="ov-sx-vol">—</span></div>
+        <div class="ov-stat"><span class="lbl">完成网格</span><span class="val" id="ov-sx-rungs">—</span></div>
+        <div class="ov-stat"><span class="lbl">最新价</span><span class="val" id="ov-sx-price">—</span></div>
+        <div class="ov-stat"><span class="lbl">当前市场</span><span class="val" id="ov-sx-mkt">—</span></div>
+      </div>
+      <div id="ov-sx-gridcfg" class="gridcfg" style="display:none"></div>
+      <div id="ov-sx-ai" class="ai-box muted" style="display:none;margin-top:8px;font-size:12px"></div>
+      <div id="ov-sx-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
+      <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" disabled title="Phase 2 才有详情 tab">进入 StandX 控制台（Phase 2）</button>
+    </div>
   </div>
 
   <!-- AI 市况分析（BTC，定时报告） -->
@@ -2646,7 +2672,7 @@ function updateConnStatus() {
   el.className = 'conn ' + cls;
   txt.textContent = label;
   el.title = '后端连接状态' + (lastBeat ? `（最后更新 ${Math.round(age / 1000)} 秒前）` : '');
-  if (lastBeat && age >= 10000) ['de','ex','rs','on','pl'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
+  if (lastBeat && age >= 10000) ['de','ex','rs','on','pl','sx'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
 }
 setInterval(updateConnStatus, 1000);
 updateConnStatus();
@@ -2689,7 +2715,7 @@ const MODE_LABEL = { neutral: '中性', long: '做多', short: '做空' };
 const TREND_LABEL = { up: '上升', down: '下降', range: '震荡' };
 
 async function scanTrends() {
-  for (const p of ['de', 'ex', 'rs', 'on', 'pl']) {
+  for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
     const box = $(`ov-${p}-trend`);
     if (!box) continue;
     const d = lastOverview[p];
@@ -2843,7 +2869,11 @@ function renderOverview(data) {
     if (d.running) running++;
 
     // Per-exchange overview
+    // Round 42：DOM 可能没那所（新加 sx 的过渡态、或 ov-xx-* 忘补）——
+    // 一路用 `?.` guard 掉，避免一个所缺就把整个 renderOverview 抛掉，
+    // 导致所有总额都停在 "—"。
     const dot = $(`ov-${p}-dot`);
+    if (!dot) return;   // 该所没有 overview slot，跳过整块细节渲染（不影响 tot 汇总）
     dot.className = 'run-dot' + (d.running ? ' on' : '');
     const badge = $(`ov-${p}-badge`);
     badge.textContent = d.mode?.toUpperCase() || 'PAPER';
@@ -3146,7 +3176,7 @@ async function aiRefreshStatus() {
       }
       if (document.activeElement !== $('ov-ai-mkt-min')) $('ov-ai-mkt-min').placeholder = s.marketMin;
       if (document.activeElement !== $('ov-ai-sent-min')) $('ov-ai-sent-min').placeholder = s.sentinelMin;
-      for (const p of ['de', 'ex', 'rs', 'on', 'pl']) {
+      for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
         const el = $(`ov-${p}-ai`);
         const per = s.sentinel && s.sentinel.per ? s.sentinel.per[p] : null;
         if (el && per) {
@@ -3645,7 +3675,7 @@ async function bulkReconnectAll(btn) {
   st.textContent = '';
 
   // 打开面板，先全部显示 loading
-  const keys = ['de','ex','rs','on','pl'];
+  const keys = ['de','ex','rs','on','pl','sx'];
   const statuses = {};
   for (const k of keys) statuses[k] = { state: 'loading', mode: lastOverview?.[k]?.mode };
   const paint = () => { body.innerHTML = keys.map((k) => renderReconnectRow(k, statuses[k])).join(''); };
@@ -3705,11 +3735,11 @@ async function bulkReconnectAll(btn) {
 }
 
 async function bulkResetDemo(btn) {
-  if (!confirm('确定重置所有 5 家 Demo？会：\n① 停止所有 running 网格\n② 撤销所有挂单\n③ 市价平掉持仓\n④ 统计清零（余额回到初始）\n\n实盘也会被平仓，慎按！')) return;
+  if (!confirm('确定重置所有 6 家 Demo？会：\n① 停止所有 running 网格\n② 撤销所有挂单\n③ 市价平掉持仓\n④ 统计清零（余额回到初始）\n\n实盘也会被平仓，慎按！')) return;
   const st = $('bulk-status');
   btn.disabled = true; const orig = btn.textContent;
   btn.textContent = '⏳ 重置中…'; st.textContent = '';
-  const keys = ['de','ex','rs','on','pl'];
+  const keys = ['de','ex','rs','on','pl','sx'];
   const results = await Promise.all(keys.map(async (k) => {
     try {
       // 先停网格 + 平仓
