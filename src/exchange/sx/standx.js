@@ -238,16 +238,32 @@ export class StandXExchange extends EventEmitter {
     const symbol = this._sym(marketId);
     if (!symbol) return [];
     // GET /api/kline/history — resolution 对应关系
-    const resMap = { 60: '1', 180: '3S', 300: '5', 900: '15', 3600: '60', 86400: '1D' };
-    const resolution = resMap[sec] || String(Math.round(sec / 60));
+    // StandX 支持: 1T/3S/1/5/15/60/1D/1W/1M（分钟数字形式；4h/30m 都不支持）
+    // 4h（14400s）没原生粒度 —— 回退用 1h（60）多取，但请求足够长时间窗口
+    const resMap = { 60: '1', 300: '5', 900: '15', 3600: '60', 14400: '60', 86400: '1D' };
+    const resolution = resMap[sec] || '60';
     const to = Math.floor(Date.now() / 1000);
-    const from = to - sec * n;
+    // 请求窗口按 sec × n 算（4h/1h 都能拿到 200 根足够）
+    const from = to - Math.max(sec * n, 3600 * 200);
     try {
+      // kline/history 是公开端点，不需要 auth 但发 Bearer 也没关系
       const j = await this._authGet(`/api/kline/history?symbol=${encodeURIComponent(symbol)}&from=${from}&to=${to}&resolution=${resolution}`);
-      if (j?.s !== 'ok') return [];
+      if (j?.s !== 'ok') {
+        if (!this._klineErrLogged) {
+          this._klineErrLogged = true;
+          try { console.log(`[StandX] getCandles ${symbol} sec=${sec} res=${resolution} → s=${j?.s}, keys=${Object.keys(j || {}).join(',')}`); } catch {}
+        }
+        return [];
+      }
       const { t = [], o = [], h = [], l = [], c = [], v = [] } = j;
       return t.map((tt, i) => ({ time: tt, open: o[i], high: h[i], low: l[i], close: c[i], volume: v[i] || 0 }));
-    } catch { return []; }
+    } catch (e) {
+      if (!this._klineErrLogged) {
+        this._klineErrLogged = true;
+        try { console.log(`[StandX] getCandles ${symbol} sec=${sec} 抛错: ${e?.message || e}`); } catch {}
+      }
+      return [];
+    }
   }
 
   async _refreshBalance() {
