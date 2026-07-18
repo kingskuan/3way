@@ -105,6 +105,8 @@ export class StandXExchange extends EventEmitter {
     if (!this._privateKey) throw new Error('StandX LIVE 需要 SX_PRIVATE_KEY env（BSC 钱包私钥）');
     await this._authenticate();
     await this._loadMarkets();
+    // 立刻拉一次余额，避免 restore 后 /api/sx/state 返 balance=0（poll 5s 才追上）
+    await this._refreshBalance().catch(() => {});
     this.dataSource = 'real';
     this.lastOkAt = Date.now();
     this.start();
@@ -280,6 +282,23 @@ export class StandXExchange extends EventEmitter {
         side: o.side === 'sell' ? 'sell' : 'buy',
       }));
     } catch { return []; }
+  }
+
+  /** 改杠杆：POST /api/change_leverage body-signed。 */
+  async setLeverage(marketId, leverage) {
+    const symbol = this._sym(marketId);
+    if (!symbol) return false;
+    const lev = Math.max(1, Math.round(Number(leverage) || 1));
+    try {
+      const r = await this._authPostSigned('/api/change_leverage', { symbol, leverage: lev }, 4000);
+      // code=0 OK；某些情况服务端会 code=0 但 msg 提示"leverage unchanged"，都算成功
+      return r?.code === 0;
+    } catch (e) {
+      // 部分接口"当前和目标一致"会返 400，视为已生效
+      if (/already|same|unchanged/i.test(e.message)) return true;
+      console.log('[StandX] setLeverage 失败：' + (e?.message || e));
+      return false;
+    }
   }
 
   // ── 写接口（Phase 2 联调） ──────────────────────────────────────
