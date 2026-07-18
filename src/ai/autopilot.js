@@ -259,6 +259,10 @@ class Autopilot {
     const st = this.state[key];
     const s = STYLES[this.cfg.riskStyle] || STYLES.conservative;
     const now = Date.now();
+    // Round 50: 每次 tick 都刷新 lastDecisionAt，让 UI"决策时间"反映最近一次评估
+    // 而不是最近一次 start（之前只在 start 分支更新，skip / stop / err 都不更→
+    // Extended 已经 skip 28h 没 start，UI 一直显示 7/17 起单时间）。
+    st.lastDecisionAt = now;
 
     // 1. 熔断中？
     if (st.pausedUntil && now < st.pausedUntil) {
@@ -510,7 +514,7 @@ class Autopilot {
       const rateNote = (actual < gridCount * 0.75)
         ? `（仅挂上 ${actual}/${gridCount}，成功率低）` : '';
       st.lastActionReason = `选 ${pick.name}（${mode}，${aiReasoning || '规则排序 top1'}），区间 ${lower}~${upper}，${gridCount} 格 x ${sizeBase}${rateNote}`;
-      st.lastDecisionAt = now;
+      // lastDecisionAt 已在函数入口刷新（Round 50），这里不再重复设置
       st.lastAppliedEquity = cur.equity;
       st.startedByAutopilot = true;
       this._log(key, 'start', st.lastActionReason);
