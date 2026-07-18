@@ -1108,10 +1108,11 @@ input:focus, select:focus {
       <div class="val" id="tot-pnl">—</div>
       <div class="sub">已实现 <span id="tot-realized">—</span> / 未实现 <span id="tot-unrealized">—</span></div>
     </div>
-    <div class="total-card">
-      <div class="lbl">累计交易量</div>
-      <div class="val" id="tot-volume">—</div>
+    <div class="total-card" style="position:relative;overflow:visible" onmouseover="volTipShow(true)" onmouseleave="volTipShow(false)" onclick="volTipToggle()">
+      <div class="lbl">总交易量 <span style="opacity:.5;font-size:9px;font-weight:400">悬停/点击看分所</span></div>
+      <div class="val" id="tot-volume" style="cursor:pointer">—</div>
       <div class="sub">完成网格 <span id="tot-rungs">—</span> 格</div>
+      <div id="tot-vol-tip" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:6px;background:var(--v2-panel,#111a2e);border:1px solid rgba(148,163,184,0.3);border-radius:8px;padding:10px 12px;font-size:12px;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,0.4);line-height:1.7"></div>
     </div>
     <div class="total-card">
       <div class="lbl">运行状态</div>
@@ -2758,6 +2759,21 @@ function setExHealth(p, h, connected) {
   }
 }
 
+// 总交易量 tooltip：桌面悬停显示、手机点击 toggle
+let _volTipStuck = false;
+function volTipShow(on) {
+  const tip = $('tot-vol-tip');
+  if (!tip) return;
+  if (_volTipStuck) return;   // click 锁住时不受 hover 影响
+  tip.style.display = on ? 'block' : 'none';
+}
+function volTipToggle() {
+  const tip = $('tot-vol-tip');
+  if (!tip) return;
+  _volTipStuck = !_volTipStuck;
+  tip.style.display = _volTipStuck ? 'block' : 'none';
+}
+
 function renderOverview(data) {
   lastOverview = data;
   // 五所汇总
@@ -2827,6 +2843,20 @@ function renderOverview(data) {
   $('tot-unrealized').innerHTML = `<span class="${cls(totUnrealized)}">${signed(totUnrealized)}</span>`;
   $('tot-volume').textContent = fmt(totVolume);
   $('tot-rungs').textContent = totRungs;
+  // 分所交易量存 dataset，tooltip 从这里读
+  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl' };
+  const perEx = ['de','ex','rs','on','pl'].map(p => {
+    const v = data[p]?.volume;
+    return { name: exNames[p], vol: Number.isFinite(v) ? v : 0 };
+  });
+  const tip = $('tot-vol-tip');
+  if (tip) {
+    tip.innerHTML = perEx
+      .sort((a,b) => b.vol - a.vol)
+      .map(x => `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-mut)">${x.name}</span><span style="font-variant-numeric:tabular-nums">${fmt(x.vol)}</span></div>`)
+      .join('')
+      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span>合计</span><span style="font-variant-numeric:tabular-nums">${fmt(totVolume)}</span></div>`;
+  }
   $('tot-running').innerHTML = running === 0
     ? '<span class="muted">全部停止</span>'
     : `<span class="up">${running}/5 运行中</span>`;
