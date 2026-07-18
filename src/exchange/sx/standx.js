@@ -202,13 +202,18 @@ export class StandXExchange extends EventEmitter {
       const price = Number(s.last_price) || Number(s.mark_price) || 0;
       let info = null;
       try { info = (await this._authGet(`/api/query_symbol_info?symbol=${encodeURIComponent(s.symbol)}`))?.[0]; } catch {}
+      const qtyDecimals = Number(info?.qty_tick_decimals ?? 4);
+      const priceDecimals = Number(info?.price_tick_decimals ?? 2);
       this.markets.set(marketId, {
         marketId, displayName: s.symbol, symbol: s.base,
         lastPrice: price,
         minOrderSize: Number(info?.min_order_qty) || 0.0001,
-        stepSize: Math.pow(10, -Number(info?.qty_tick_decimals ?? 4)),
-        stepPrice: Math.pow(10, -Number(info?.price_tick_decimals ?? 2)),
+        stepSize: Math.pow(10, -qtyDecimals),
+        stepPrice: Math.pow(10, -priceDecimals),
         maxLeverage: Number(info?.max_leverage) || 10,
+        // Round 48：Autopilot 可能给 0.00019999999999999998（float 残留），
+        // 存起来 placeLimitOrder 里用 toFixed 强制 snap
+        qtyDecimals, priceDecimals,
       });
       this.prices.set(marketId, price);
       this._priceScales.set(marketId, 1);
@@ -304,20 +309,26 @@ export class StandXExchange extends EventEmitter {
   // ── 写接口（Phase 2 联调） ──────────────────────────────────────
   /** 下限价单。POST /api/new_order body-signed。 */
   async placeLimitOrder(o) {
-    const symbol = this._sym(o.marketId);
+    const marketIdN = Number(o.marketId);
+    const symbol = this._sym(marketIdN);
     if (!symbol) throw new Error(`StandX 找不到 marketId=${o.marketId} 对应 symbol`);
-    // cl_ord_id 我们生成，24 位 base58 uuid。之后 cancel 用这个也能。
+    // Round 48：StandX 要求 qty/price 严格 snap 到 tick 小数位数——
+    // Autopilot 传 0.00019999999999999998（float 残留）会被拒
+    // "invalid order qty: not follow qty tick"。用 market.qtyDecimals/
+    // priceDecimals 强制 toFixed 后再 String。
+    const market = this.markets.get(marketIdN);
+    const qtyDp = market?.qtyDecimals ?? 4;
+    const priceDp = market?.priceDecimals ?? 2;
     const cl_ord_id = 'qnv-' + uuidv4().replace(/-/g, '').slice(0, 20);
     const payload = {
       symbol,
       side: o.side === 'sell' ? 'sell' : 'buy',
       order_type: 'limit',
-      qty: String(o.sizeBase),
-      price: String(o.price),
+      qty: Number(o.sizeBase).toFixed(qtyDp),
+      price: Number(o.price).toFixed(priceDp),
       time_in_force: 'gtc',                       // Good til canceled
       reduce_only: !!o.reduceOnly,
       cl_ord_id,
-      // margin_mode / leverage: 走账户默认；bot 起单前会调 change_leverage 设成 config.leverage
     };
     const r = await this._authPostSigned('/api/new_order', payload, 8000);
     if (r?.code !== 0) throw new Error(`StandX 下单失败 code=${r?.code} ${r?.message || ''}`);
