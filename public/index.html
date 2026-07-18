@@ -1432,7 +1432,7 @@ input:focus, select:focus {
       <button class="btn btn-ghost" id="de-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
-      <div class="panel-title">价格 / 网格</div>
+      <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
       <div id="de-range-warn"></div>
       <div class="chartbox"><canvas id="de-chart"></canvas></div>
     </div>
@@ -1555,7 +1555,7 @@ input:focus, select:focus {
       <button class="btn btn-ghost" id="ex-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
-      <div class="panel-title">价格 / 网格</div>
+      <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
       <div id="ex-range-warn"></div>
       <div class="chartbox"><canvas id="ex-chart"></canvas></div>
     </div>
@@ -1678,7 +1678,7 @@ input:focus, select:focus {
       <button class="btn btn-ghost" id="rs-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
-      <div class="panel-title">价格 / 网格</div>
+      <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
       <div id="rs-range-warn"></div>
       <div class="chartbox"><canvas id="rs-chart"></canvas></div>
     </div>
@@ -1806,7 +1806,7 @@ input:focus, select:focus {
       <button class="btn btn-ghost" id="on-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
-      <div class="panel-title">价格 / 网格</div>
+      <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
       <div id="on-range-warn"></div>
       <div class="chartbox"><canvas id="on-chart"></canvas></div>
     </div>
@@ -1939,7 +1939,7 @@ input:focus, select:focus {
         直接点 "Cancel All"（网页 UI 能看到全部单）。</div>
     </div>
     <div class="panel" style="margin-bottom:14px">
-      <div class="panel-title">价格 / 网格</div>
+      <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
       <div id="pl-range-warn"></div>
       <div class="chartbox"><canvas id="pl-chart"></canvas></div>
     </div>
@@ -2069,7 +2069,7 @@ input:focus, select:focus {
       <button class="btn btn-ghost" id="sx-debug-btn" style="margin-top:8px;font-size:12px">🔍 诊断 StandX 挂单（raw API 响应）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
-      <div class="panel-title">价格 / 网格</div>
+      <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
       <div id="sx-range-warn"></div>
       <div class="chartbox"><canvas id="sx-chart"></canvas></div>
     </div>
@@ -2436,9 +2436,23 @@ function makeExchangeCtrl(prefix, chartId) {
     // 之前 chart 就一直画 BTC 蜡烛，但 bot 跑的是 ETH——牛头不对马嘴。
     // 优先 lastState.config.marketId（bot 实际运行的 market），
     // 只有 bot 停着时才用下拉框。
-    const marketId = (lastState?.running && lastState?.config?.marketId != null)
+    const running = !!lastState?.running;
+    const marketId = (running && lastState?.config?.marketId != null)
       ? lastState.config.marketId
       : P('market').value;
+    // Round 53：panel title 加动态"市场 · 预览/运行中"标签，避免用户误以为
+    // "没起单为什么画着 BTC"（其实是画下拉框默认的 BTC 供参考）
+    const tag = document.querySelector('#tab-' + prefix + ' .chart-market-tag');
+    if (tag) {
+      const mObj = (markets || []).find((m) => String(m.marketId) === String(marketId));
+      const mName = mObj?.displayName || '';
+      if (mName) {
+        tag.textContent = running ? `${mName} · 运行中` : `${mName} · 预览（未启动网格）`;
+        tag.style.color = running ? 'var(--grn)' : 'var(--mut2)';
+      } else {
+        tag.textContent = '';
+      }
+    }
     P('rec-tag').textContent = '分析中…';
     try {
       const r = await fetch(`/api/${prefix}/trend?marketId=${marketId}&intervalSec=${P('interval').value}`);
