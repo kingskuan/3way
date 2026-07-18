@@ -2260,7 +2260,14 @@ function makeExchangeCtrl(prefix, chartId) {
   }
 
   async function refreshTrend() {
-    const marketId = P('market').value;
+    // Round 38：网格图应该跟"正在跑的市场"而不是"下拉框的默认值"。
+    // Autopilot 起单时不改下拉框（用户可能同时手动选着 BTC），
+    // 之前 chart 就一直画 BTC 蜡烛，但 bot 跑的是 ETH——牛头不对马嘴。
+    // 优先 lastState.config.marketId（bot 实际运行的 market），
+    // 只有 bot 停着时才用下拉框。
+    const marketId = (lastState?.running && lastState?.config?.marketId != null)
+      ? lastState.config.marketId
+      : P('market').value;
     P('rec-tag').textContent = '分析中…';
     try {
       const r = await fetch(`/api/${prefix}/trend?marketId=${marketId}&intervalSec=${P('interval').value}`);
