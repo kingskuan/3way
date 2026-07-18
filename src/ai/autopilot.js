@@ -50,7 +50,10 @@ const STYLES = {
     rangePct: 0.03,
     gridCount: 24,
     sizeFractionOfBalance: 0.04,
-    maxLeverage: 8,
+    maxLeverage: 10,   // Round 37：用户要 10x（原 8x）。3% 区间 + 24 格下每格约
+                       // 0.125% profit——覆盖手续费足够；同时 10x lev 意味着 3%
+                       // 反向跑到区间边缘时 = 30% 亏损，仍在 dailyLossPctLimit=5%
+                       // 熔断上限内（护栏能拦住，但边界 case 有 slippage 风险）。
     dailyLossPctLimit: 5,
     consecutiveLossLimit: 4,
     outOfRangeAction: 'recover',
