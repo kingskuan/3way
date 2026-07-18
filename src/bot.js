@@ -339,12 +339,21 @@ export class GridBot {
     this._stopReconcileTimer();
     this.ex.off('fill', this._onFill);
     this.ex.off('price', this._onPrice);
-    await this.ex.cancelAll(this.config.marketId).catch((e) => this._alert('撤单失败: ' + (e?.message || e)));
+    // Round 52：不再 .catch 静默；让 cancelAll 的 error propagate 到 UI
+    // 用户之前看不到"6 轮后链上仍剩 48 单"这种关键消息，以为撤单成功了。
+    let cancelErr = null;
+    try {
+      await this.ex.cancelAll(this.config.marketId);
+    } catch (e) {
+      cancelErr = e;
+      this._alert('撤单失败: ' + (e?.message || e));
+    }
     this.active.clear();
     this.running = false;
     this._refillPausedUntil = 0; this._cancelTimes = []; this._retryQueue = [];
-    this._alert('已一键撤销该市场全部挂单（持仓保留、未平仓）。网格已停止，如需继续请重新启动。');
     this._changed();
+    if (cancelErr) throw cancelErr;   // 关键：让 server /cancel-orders 返 400 + error 消息给 UI
+    this._alert('已一键撤销该市场全部挂单（持仓保留、未平仓）。网格已停止，如需继续请重新启动。');
     return this.getState();
   }
 

@@ -426,46 +426,98 @@ export class StandXExchange extends EventEmitter {
   }
 
   /**
-   * 撤该市场所有单：循环 fetchOpenOrders → 撤 → 再拉 直到 exchange 真的空。
-   * Round 51：以前只跑一轮，如果 fetchOpenOrders 拉不全（分页/字段名错）就
-   * 静默返回，链上剩几十单 QnV 不知道；autopilot 再起一轮就翻倍。
-   * 现在最多 6 轮，每轮撤完 sleep 700ms 让 backend 索引同步。
+   * 尝试批量撤单端点。StandX 可能有以下几种命名：
+   *   /api/cancel_all_orders     (Bybit-style)
+   *   /api/cancel_all             (Backpack-style)
+   *   /api/cancel_orders          (无 order_id 参数 = 批量)
+   * 依次尝试，第一个返 code=0 就用。都 404/400 就走 fallback loop。
+   * Round 52：新增。
+   */
+  async _tryBatchCancel(symbol) {
+    const attempts = [
+      { path: '/api/cancel_all_orders', body: { symbol } },
+      { path: '/api/cancel_all', body: { symbol } },
+      { path: '/api/cancel_orders', body: { symbol } },
+      { path: '/api/mass_cancel', body: { symbol } },
+    ];
+    for (const { path, body } of attempts) {
+      try {
+        const r = await this._authPostSigned(path, body, 6000);
+        if (r?.code === 0) {
+          if (!this._batchCancelLogged) {
+            this._batchCancelLogged = true;
+            console.log(`[StandX] batch cancel 命中端点：${path}`);
+          }
+          return { ok: true, path };
+        }
+      } catch (e) {
+        // 404 = 端点不存在；跳过。其他错误也跳过（下一个端点也许行）
+      }
+    }
+    return { ok: false };
+  }
+
+  /**
+   * 撤该市场所有单。Round 52 策略：
+   *   1. 先试 batch cancel（一次搞定几十单，避免签名节流）
+   *   2. Fallback: 循环 6 轮 fetchOpenOrders → 撤 → sleep 700ms
+   *   3. 兼容 fetchOpenOrders 拉不到的场景：拿本地 map 逐个 cancel
+   *   4. 最后 finalCheck，还有残留 throw（让上层 UI 看到）
    */
   async cancelAll(marketId) {
     const marketIdN = Number(marketId);
     const symbol = this._sym(marketIdN);
     if (!symbol) return true;
-    let cleanRound = 0;
+
+    // Step 1: batch cancel
+    const batch = await this._tryBatchCancel(symbol).catch(() => ({ ok: false }));
+    if (batch.ok) {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+
+    // Step 2: fallback loop
     let lastLen = -1;
     for (let round = 0; round < 6; round++) {
       const exchangeOrders = await this.fetchOpenOrders(marketIdN).catch(() => []);
-      if (exchangeOrders.length === 0) { cleanRound = round; break; }
-      if (round === 0 || exchangeOrders.length !== lastLen) {
-        console.log(`[StandX] cancelAll ${symbol} round ${round + 1}: 链上剩 ${exchangeOrders.length} 单`);
+      // Round 52：即使 fetchOpenOrders 返 []，也把本地 map 里未撤的单尝试撤
+      // 防止 API 分页/字段名不对拉不全时"看着干净其实链上还有"
+      const localOnly = [...this.orders.values()]
+        .filter((o) => Number(o.marketId) === marketIdN)
+        .filter((o) => !exchangeOrders.find((e) => String(e.orderId) === String(o.orderId)))
+        .map((o) => ({ orderId: o.orderId, price: o.price, side: o.side }));
+      const combined = [...exchangeOrders, ...localOnly];
+      if (combined.length === 0) break;
+
+      if (round === 0 || combined.length !== lastLen) {
+        console.log(`[StandX] cancelAll ${symbol} round ${round + 1}: 链上 ${exchangeOrders.length} + 本地 ${localOnly.length} = ${combined.length} 单待撤`);
       }
-      lastLen = exchangeOrders.length;
-      // 并发撤（一批最多 20，避免签名节流），失败也继续
+      lastLen = combined.length;
+
       const results = await Promise.allSettled(
-        exchangeOrders.slice(0, 20).map((o) => {
+        combined.slice(0, 24).map((o) => {
           const oid = String(o.orderId ?? '');
           if (!oid || oid === '0' || oid === 'undefined' || oid === 'null') return Promise.resolve();
           return this.cancelOrder(marketIdN, oid);
         })
       );
-      const failed = results.filter((r) => r.status === 'rejected').length;
-      if (failed > 0 && round === 0) {
-        console.log(`[StandX] cancelAll ${symbol}: ${failed}/${results.length} 撤单失败`);
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length > 0 && round === 0) {
+        // 只 log 第 1 个 error message（其他大概率一样），别刷屏
+        const errMsg = failed[0].reason?.message || String(failed[0].reason);
+        console.log(`[StandX] cancelAll ${symbol}: ${failed.length}/${results.length} 撤单失败，首条错误：${errMsg}`);
       }
       await new Promise((r) => setTimeout(r, 700));
     }
-    // 本地 map 兜底：exchange 端已空但本地还有引用 → 清掉
+
+    // 本地 map 兜底
     for (const [id, o] of [...this.orders]) {
       if (Number(o.marketId) === marketIdN) this.orders.delete(id);
     }
-    // 最后再拉一次真的验证
+
+    // 最后 finalCheck
     const finalCheck = await this.fetchOpenOrders(marketIdN).catch(() => []);
     if (finalCheck.length > 0) {
-      throw new Error(`StandX cancelAll ${symbol}：6 轮后链上仍剩 ${finalCheck.length} 单未撤`);
+      throw new Error(`StandX cancelAll ${symbol}：6 轮 + batch 后链上仍剩 ${finalCheck.length} 单未撤（请到 standx.com Cancel All，或用 UI 上"诊断 StandX 挂单"看 API 字段名）`);
     }
     return true;
   }
@@ -549,5 +601,46 @@ export class StandXExchange extends EventEmitter {
     this._token = null;
     await this.init();
     return true;
+  }
+
+  /**
+   * Round 52：暴露 raw API 响应给 /api/sx/debug 端点，让用户在 UI 上直接
+   * 看链上真实数据（不用 tail Railway 日志）。用于诊断 fetchOpenOrders /
+   * cancel_order 字段名不对导致的假死。
+   */
+  async getDebugSnapshot() {
+    const symbol = this._sym(1) || 'BTC-USD';
+    const snap = {
+      symbol,
+      chain: this.chain,
+      dataSource: this.dataSource,
+      hasToken: !!this._token,
+      localOrders: [...this.orders.values()].map((o) => ({
+        orderId: o.orderId, marketId: o.marketId, price: o.price, side: o.side,
+      })),
+      localOrdersCount: this.orders.size,
+    };
+    // openOrders raw
+    try {
+      const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(symbol)}`);
+      snap.openOrdersRaw = j;
+      snap.openOrdersRawType = Array.isArray(j) ? 'array' : typeof j;
+      snap.openOrdersRawKeys = j && typeof j === 'object' && !Array.isArray(j) ? Object.keys(j) : null;
+      snap.openOrdersRawLen = Array.isArray(j) ? j.length
+        : (Array.isArray(j?.result) ? j.result.length
+        : (Array.isArray(j?.orders) ? j.orders.length
+        : (Array.isArray(j?.data) ? j.data.length : null)));
+    } catch (e) { snap.openOrdersRaw = { error: e.message }; }
+    // positions raw
+    try {
+      const j = await this._authGet('/api/query_positions');
+      snap.positionsRaw = j;
+    } catch (e) { snap.positionsRaw = { error: e.message }; }
+    // balance raw
+    try {
+      const j = await this._authGet('/api/query_balance');
+      snap.balanceRaw = j;
+    } catch (e) { snap.balanceRaw = { error: e.message }; }
+    return snap;
   }
 }
