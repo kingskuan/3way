@@ -185,12 +185,19 @@ export class StandXExchange extends EventEmitter {
   }
 
   async _loadMarkets() {
-    // GET /api/query_market_overview 公开接口
+    // Round 45：StandX 原生用 symbol 字符串（BTC-USD/ETH-USD/XAU-USD/XAG-USD）
+    // 但 bot.js 用 Number(marketId) 比对，Number("BTC-USD") = NaN 匹配不上。
+    // 内部映射 symbol → 数字 id（1-N），公共接口一律用数字 id，走 API 时
+    // 从 _idToSymbol 反查回来。跟其他所（Perpl/Ondo）marketId 类型一致。
+    this._idToSymbol = new Map();
+    this._symbolToId = new Map();
     const j = await this._authGet('/api/query_market_overview');
+    let nextId = 1;
     for (const s of (j.symbols || [])) {
-      const marketId = s.symbol;   // StandX 用 symbol 字符串当 id
+      const marketId = nextId++;
+      this._idToSymbol.set(marketId, s.symbol);
+      this._symbolToId.set(s.symbol, marketId);
       const price = Number(s.last_price) || Number(s.mark_price) || 0;
-      // 需要单独查 symbol info 拿 tick / lev
       let info = null;
       try { info = (await this._authGet(`/api/query_symbol_info?symbol=${encodeURIComponent(s.symbol)}`))?.[0]; } catch {}
       this.markets.set(marketId, {
@@ -207,15 +214,22 @@ export class StandXExchange extends EventEmitter {
     }
   }
 
+  /** 内部：数字 marketId → StandX symbol 字符串。 */
+  _sym(marketId) {
+    return this._idToSymbol?.get(Number(marketId)) || null;
+  }
+
   async getMarkets() {
     return [...this.markets.values()];
   }
 
   async getPrice(marketId) {
-    return this.prices.get(marketId) ?? null;
+    return this.prices.get(Number(marketId)) ?? null;
   }
 
-  async getCandles(symbol, sec, n = 200) {
+  async getCandles(marketId, sec, n = 200) {
+    const symbol = this._sym(marketId);
+    if (!symbol) return [];
     // GET /api/kline/history — resolution 对应关系
     const resMap = { 60: '1', 180: '3S', 300: '5', 900: '15', 3600: '60', 86400: '1D' };
     const resolution = resMap[sec] || String(Math.round(sec / 60));
@@ -241,22 +255,26 @@ export class StandXExchange extends EventEmitter {
     try {
       const arr = await this._authGet('/api/query_positions');
       return (arr || []).map((p) => ({
-        marketId: p.symbol, sizeBase: Number(p.qty), entryPrice: Number(p.entry_price),
+        marketId: this._symbolToId?.get(p.symbol) ?? null,
+        sizeBase: Number(p.qty), entryPrice: Number(p.entry_price),
       }));
     } catch { return []; }
   }
 
   getPosition(marketId) {
-    return this.positions.get(marketId) || null;
+    return this.positions.get(Number(marketId)) || null;
   }
 
   getOpenOrders(marketId) {
-    return [...this.orders.values()].filter((o) => o.marketId === marketId);
+    const mId = Number(marketId);
+    return [...this.orders.values()].filter((o) => Number(o.marketId) === mId);
   }
 
   async fetchOpenOrders(marketId) {
+    const symbol = this._sym(marketId);
+    if (!symbol) return [];
     try {
-      const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(marketId)}`);
+      const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(symbol)}`);
       return (j?.result || []).map((o) => ({
         orderId: String(o.id ?? o.cl_ord_id), price: Number(o.price),
         side: o.side === 'sell' ? 'sell' : 'buy',
@@ -287,14 +305,15 @@ export class StandXExchange extends EventEmitter {
 
   async _poll() {
     this.lastOkAt = Date.now();
-    // 刷价格
-    for (const [id] of this.markets) {
+    // 刷价格：poll REST 用 symbol 字符串查
+    for (const [id, market] of this.markets) {
+      const symbol = market.displayName;   // 比如 "BTC-USD"
       try {
-        const j = await this._authGet(`/api/query_symbol_price?symbol=${encodeURIComponent(id)}`);
+        const j = await this._authGet(`/api/query_symbol_price?symbol=${encodeURIComponent(symbol)}`);
         const p = Number(j?.last_price ?? j?.mark_price);
         if (Number.isFinite(p) && p > 0) {
           this.prices.set(id, p);
-          const m = this.markets.get(id); if (m) m.lastPrice = p;
+          market.lastPrice = p;
           this.emit('price', { marketId: id, price: p });
         }
       } catch { /* transient */ }
