@@ -3100,11 +3100,35 @@ async function aiSentinelRun(btn) {
 async function aiReport(btn) {
   if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
   try {
+    // 服务端立刻返 202 startedAt，然后异步做 AI 调用（20-60s）。手机浏览器
+    // 30s 就会断请求丢 "Load failed"，所以走 poll status 拿结果。
     const r = await fetch('/api/ai/report', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
     const j = await r.json();
-    if (j.error) alert('生成失败：' + j.error); else aiRefreshStatus();
-  } catch (e) { alert('生成失败：' + e.message); }
-  if (btn) { btn.disabled = false; btn.textContent = '立即生成日报'; }
+    if (j.error) { alert('生成失败：' + j.error); return; }
+    const startedAt = j.startedAt || Date.now();
+    let tries = 0;
+    const iv = setInterval(async () => {
+      tries++;
+      try {
+        const s = await fetch('/api/ai/status').then(x => x.json());
+        // 新报告：t > startedAt 说明这次触发的报告已出
+        if (s?.report?.t && s.report.t >= startedAt) {
+          clearInterval(iv);
+          if (btn) { btn.disabled = false; btn.textContent = '立即生成日报'; }
+          aiRefreshStatus();
+          return;
+        }
+      } catch { /* transient */ }
+      if (tries >= 40) {  // ~2 分钟兜底
+        clearInterval(iv);
+        if (btn) { btn.disabled = false; btn.textContent = '立即生成日报'; }
+        alert('等待日报超时（>2min），请稍后手动刷新页面。可能 AI 服务商响应慢，也可能 maxTokens 不够被截断。');
+      }
+    }, 3000);
+  } catch (e) {
+    alert('生成失败：' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '立即生成日报'; }
+  }
 }
 
 async function aiAnalyze(p, btn) {

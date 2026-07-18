@@ -449,11 +449,24 @@ class Autopilot {
       pickedLower = lower; pickedUpper = upper;
       pickedSizeBase = sizeBase; pickedGridCount = gridCount;
       pickedLeverage = leverage;
+      // Round 36：强趋势自动跟方向。用户观察到弱下降趋势（strength=0.26）时
+      // autopilot 仍选中性网格，走一段行情后单向库存越拉越多；反过来强单边
+      // 也不应硬扛 neutral。规则：
+      //   strength >= 0.5 且 recommended != neutral → 用 recommended（跟趋势）
+      //   否则           → AI 挑的 mode 或规则 recommended，最后兜底 neutral
+      // 0.5 阈值大约对应"EMA 差 1.5%+、斜率 ≥0.3%/根"这种肉眼可见的单边。
+      const strongTrend = Number(c.strength) >= 0.5 && c.recommended && c.recommended !== 'neutral';
+      const chosenMode = strongTrend
+        ? c.recommended
+        : (c._aiMode || c.recommended || 'neutral');
       params = {
-        marketId: c.marketId, mode: c._aiMode || c.recommended || 'neutral',
+        marketId: c.marketId, mode: chosenMode,
         lower, upper, gridCount, sizeBase, leverage,
         outOfRangeAction: s.outOfRangeAction,
       };
+      if (strongTrend) {
+        this._log(key, 'trend-follow', `${c.name} 强趋势 (强度 ${c.strength})，覆盖 AI/规则默认，改为跟趋势 ${c.recommended}`);
+      }
       if (gridCount !== s.gridCount) {
         this._log(key, 'adjusted', `${c.name} 保证金压力：格数 ${s.gridCount}→${gridCount}（约需 $${required.toFixed(0)} / 可用 $${capitalUsdc.toFixed(0)}）`);
       }
