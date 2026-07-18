@@ -1990,9 +1990,9 @@ input:focus, select:focus {
         <button class="btn btn-ghost" style="margin-top:8px;padding:6px;font-size:12px" id="sx-apply-rec">采用推荐策略 + 自动区间</button>
       </div>
       <div class="muted" style="margin-top:10px;font-size:11px;line-height:1.6">
-        💡 StandX 是 BSC 上的 perp DEX（BTC / ETH / XAU / XAG）。
+        💡 StandX 是 BSC 上的 perp DEX（BTC / ETH / XAU / XAG），结算币是 <code>DUSD</code>。
         ⚠️ 实盘 <code>SX_MODE=live</code> 需要 <code>SX_PRIVATE_KEY</code>（BSC 钱包私钥）+ <code>SX_CHAIN=bsc</code>。<br>
-        ⚠️ Phase 1：读接口已通（余额/价格/K线），下单接口 Phase 2 联调（<code>placeLimitOrder</code> 会 throw）。
+        ✅ Phase 2：读+写接口都已联调（下单/撤单/平仓）。Autopilot 也能真起。
       </div>
     </div>
 
@@ -3191,7 +3191,7 @@ function aiVendorChange() {
   for (const m of v.models) { const o = document.createElement('option'); o.value = m; dl.appendChild(o); }
   $('ai-cfg-status').textContent = `已按 ${v.name} 预填接口地址和推荐模型（模型可下拉换或手动输入），填好 API Key 后点「保存配置」。`;
 }
-const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl' };
+const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX' };
 const AI_ACTION_LABEL = {
   adjust_range:'调整网格区间', stop_grid:'停止网格', cancel_orders:'撤销全部挂单（保留持仓）',
   close_position:'市价平仓', reconnect:'重连交易所', start_recovery:'启动只减仓回收阶梯', start_grid:'启动网格',
