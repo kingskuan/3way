@@ -74,6 +74,8 @@ export class StandXPaper extends EventEmitter {
     return out;
   }
 
+  async setLeverage(_marketId, _leverage) { return true; }
+
   async placeLimitOrder(o) {
     const marketId = Number(o.marketId);
     const orderId = 'sx-paper-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
