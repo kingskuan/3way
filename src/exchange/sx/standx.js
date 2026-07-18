@@ -282,16 +282,106 @@ export class StandXExchange extends EventEmitter {
     } catch { return []; }
   }
 
-  // ── 写接口：Phase 1 全部 stub ───────────────────────────────────
-  async placeLimitOrder(_o) {
-    throw new Error('StandX Phase 1 只支持读接口，placeLimitOrder 待 Phase 2 联调。请先跑 paper 模式。');
+  // ── 写接口（Phase 2 联调） ──────────────────────────────────────
+  /** 下限价单。POST /api/new_order body-signed。 */
+  async placeLimitOrder(o) {
+    const symbol = this._sym(o.marketId);
+    if (!symbol) throw new Error(`StandX 找不到 marketId=${o.marketId} 对应 symbol`);
+    // cl_ord_id 我们生成，24 位 base58 uuid。之后 cancel 用这个也能。
+    const cl_ord_id = 'qnv-' + uuidv4().replace(/-/g, '').slice(0, 20);
+    const payload = {
+      symbol,
+      side: o.side === 'sell' ? 'sell' : 'buy',
+      order_type: 'limit',
+      qty: String(o.sizeBase),
+      price: String(o.price),
+      time_in_force: 'gtc',                       // Good til canceled
+      reduce_only: !!o.reduceOnly,
+      cl_ord_id,
+      // margin_mode / leverage: 走账户默认；bot 起单前会调 change_leverage 设成 config.leverage
+    };
+    const r = await this._authPostSigned('/api/new_order', payload, 8000);
+    if (r?.code !== 0) throw new Error(`StandX 下单失败 code=${r?.code} ${r?.message || ''}`);
+    // Perpl/Ondo 返回真单号；StandX new_order 是异步的，返回只有 request_id。
+    // 用 cl_ord_id 当 orderId 存本地——cancel 也能用 cl_ord_id 撤。
+    this.orders.set(cl_ord_id, {
+      orderId: cl_ord_id, marketId: Number(o.marketId), side: payload.side,
+      price: Number(o.price), sizeBase: Number(o.sizeBase),
+      levelIndex: o.levelIndex, clientOrderId: cl_ord_id,
+      reduceOnly: payload.reduce_only,
+    });
+    return { orderId: cl_ord_id };
   }
-  async cancelOrder(_marketId, _orderId) {
-    throw new Error('StandX Phase 1 只支持读接口，cancelOrder 待 Phase 2。');
+
+  /** 撤一单：POST /api/cancel_order { cl_ord_id }。 */
+  async cancelOrder(marketId, orderId) {
+    const clOrdId = String(orderId);
+    try {
+      // 优先 cl_ord_id（我们下单时生成的）；REST 应该两种都认，出错就 fallback 尝试 order_id 数字
+      const r = await this._authPostSigned('/api/cancel_order', { cl_ord_id: clOrdId }, 4000);
+      if (r?.code !== 0 && Number.isFinite(Number(orderId))) {
+        // 有可能这是收养的真单号，用 order_id 数字再试一次
+        await this._authPostSigned('/api/cancel_order', { order_id: Number(orderId) }, 4000);
+      }
+    } catch (e) {
+      if (!/not\s?found|already/i.test(e.message)) throw e;
+    }
+    this.orders.delete(String(orderId));
+    return true;
   }
-  async cancelAll(_marketId) { return true; }
-  async closePosition(_marketId) { return null; }
-  async reconcileOpenOrders() { return true; }
+
+  /** 撤该市场所有单：先 fetchOpenOrders 拉真实、逐个 cancel。 */
+  async cancelAll(marketId) {
+    const marketIdN = Number(marketId);
+    const symbol = this._sym(marketIdN);
+    if (!symbol) return true;
+    // 先从 REST 拉真单
+    const exchangeOrders = await this.fetchOpenOrders(marketIdN).catch(() => []);
+    for (const o of exchangeOrders) {
+      const oid = String(o.orderId ?? '');
+      if (oid && oid !== '0') await this.cancelOrder(marketIdN, oid).catch(() => {});
+    }
+    // 兜底：本地跟踪但 exchange 没返回的（时序错开）
+    for (const [id, o] of [...this.orders]) {
+      if (Number(o.marketId) === marketIdN) {
+        await this.cancelOrder(marketIdN, id).catch(() => {});
+      }
+    }
+    return true;
+  }
+
+  /** 市价平仓：先 fetchPositions 拉真持仓，再反向 IOC 市价单收掉。 */
+  async closePosition(marketId) {
+    const symbol = this._sym(marketId);
+    if (!symbol) return null;
+    const positions = await this.fetchPositions().catch(() => []);
+    const p = positions.find((x) => Number(x.marketId) === Number(marketId));
+    if (!p || !p.sizeBase) return null;
+    const side = p.sizeBase > 0 ? 'sell' : 'buy';   // 反手关
+    const cl_ord_id = 'qnv-cls-' + uuidv4().replace(/-/g, '').slice(0, 18);
+    return await this._authPostSigned('/api/new_order', {
+      symbol, side, order_type: 'market',
+      qty: String(Math.abs(p.sizeBase)),
+      time_in_force: 'ioc', reduce_only: true,
+      cl_ord_id,
+    }, 8000);
+  }
+
+  async reconcileOpenOrders() {
+    if (!this.orders.size) return true;
+    // 收集本地跟踪的市场
+    const marketIds = new Set();
+    for (const o of this.orders.values()) marketIds.add(Number(o.marketId));
+    for (const mid of marketIds) {
+      const real = await this.fetchOpenOrders(mid).catch(() => []);
+      const stillOpen = new Set(real.map((o) => String(o.orderId)));
+      for (const [id, o] of [...this.orders]) {
+        if (Number(o.marketId) !== mid) continue;
+        if (!stillOpen.has(id)) this.orders.delete(id);
+      }
+    }
+    return true;
+  }
 
   start() {
     if (this._pollTimer) return;
