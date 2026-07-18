@@ -298,11 +298,35 @@ export class StandXExchange extends EventEmitter {
     if (!symbol) return [];
     try {
       const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(symbol)}`);
-      return (j?.result || []).map((o) => ({
-        orderId: String(o.id ?? o.cl_ord_id), price: Number(o.price),
+      // Round 51：不同版本 API 响应结构可能不同（{result:[]} / {orders:[]} /
+      // {data:[]} / 直接 []）——用户报告链上 48 单但 QnV 只见 24 单，很可能
+      // 就是 fetchOpenOrders 拉不全。兼容多形 + 首次日志诊断结构。
+      const raw = Array.isArray(j) ? j
+        : (Array.isArray(j?.result) ? j.result
+        : (Array.isArray(j?.orders) ? j.orders
+        : (Array.isArray(j?.data) ? j.data
+        : [])));
+      if (!this._openOrdersLogged) {
+        this._openOrdersLogged = true;
+        try {
+          const shape = Array.isArray(j) ? 'array' : `obj{${Object.keys(j || {}).join(',')}}`;
+          const sample = raw[0] ? JSON.stringify(raw[0]).slice(0, 240) : '(empty)';
+          console.log(`[StandX] fetchOpenOrders ${symbol} 首次响应: shape=${shape}, len=${raw.length}, sample=${sample}`);
+        } catch {}
+      }
+      return raw.map((o) => ({
+        orderId: String(o.id ?? o.order_id ?? o.cl_ord_id ?? o.client_id ?? o.orderId ?? ''),
+        price: Number(o.price),
         side: o.side === 'sell' ? 'sell' : 'buy',
+        raw: o,   // Round 51：保留原始字段供 cancelOrder 找对参数名
       }));
-    } catch { return []; }
+    } catch (e) {
+      if (!this._openOrdersErrLogged) {
+        this._openOrdersErrLogged = true;
+        try { console.log(`[StandX] fetchOpenOrders ${symbol} 抛错: ${e?.message || e}`); } catch {}
+      }
+      return [];
+    }
   }
 
   /** 改杠杆：POST /api/change_leverage body-signed。 */
@@ -359,58 +383,120 @@ export class StandXExchange extends EventEmitter {
     return { orderId: cl_ord_id };
   }
 
-  /** 撤一单：POST /api/cancel_order { cl_ord_id }。 */
+  /**
+   * 撤一单：POST /api/cancel_order。
+   * Round 51：以前不管 API 返啥都本地 delete → 假死。链上 48 单 QnV 只见
+   * 24 单就是这里"每个都当撤成功"造成的。现在严格看 code：
+   *   - code=0 或 msg 匹配 not found/already/filled → 真的撤了 → 本地 delete
+   *   - 其他情况 throw → 让 cancelAll 循环重试到真的清干净
+   */
   async cancelOrder(marketId, orderId) {
     const clOrdId = String(orderId);
-    try {
-      // 优先 cl_ord_id（我们下单时生成的）；REST 应该两种都认，出错就 fallback 尝试 order_id 数字
-      const r = await this._authPostSigned('/api/cancel_order', { cl_ord_id: clOrdId }, 4000);
-      if (r?.code !== 0 && Number.isFinite(Number(orderId))) {
-        // 有可能这是收养的真单号，用 order_id 数字再试一次
-        await this._authPostSigned('/api/cancel_order', { order_id: Number(orderId) }, 4000);
-      }
-    } catch (e) {
-      if (!/not\s?found|already/i.test(e.message)) throw e;
+    let cancelled = false;
+    let lastErr = null;
+    // 尝试字段名候选：QnV 下的 cl_ord_id 用 cl_ord_id；收养的真单号用 order_id/id
+    const attempts = [];
+    attempts.push({ cl_ord_id: clOrdId });
+    if (/^\d+$/.test(clOrdId)) {
+      attempts.push({ order_id: Number(clOrdId) });
+      attempts.push({ id: Number(clOrdId) });
+    } else {
+      // 有些 API 用 client_id
+      attempts.push({ client_id: clOrdId });
     }
-    this.orders.delete(String(orderId));
-    return true;
+    for (const body of attempts) {
+      try {
+        const r = await this._authPostSigned('/api/cancel_order', body, 4000);
+        if (r?.code === 0) { cancelled = true; break; }
+        const msg = String(r?.message || r?.msg || '');
+        if (/not\s?found|already|filled|closed|cancel/i.test(msg)) {
+          cancelled = true; break;   // 已经不在链上（可能上一轮撤成了/已成交）→ 也算撤了
+        }
+        lastErr = `code=${r?.code} ${msg}`.trim();
+      } catch (e) {
+        if (/not\s?found|already|filled|closed/i.test(e.message)) { cancelled = true; break; }
+        lastErr = e?.message || String(e);
+      }
+    }
+    if (cancelled) {
+      this.orders.delete(String(orderId));
+      return true;
+    }
+    throw new Error(`StandX cancelOrder ${orderId} 全部字段名尝试失败: ${lastErr || '未知'}`);
   }
 
-  /** 撤该市场所有单：先 fetchOpenOrders 拉真实、逐个 cancel。 */
+  /**
+   * 撤该市场所有单：循环 fetchOpenOrders → 撤 → 再拉 直到 exchange 真的空。
+   * Round 51：以前只跑一轮，如果 fetchOpenOrders 拉不全（分页/字段名错）就
+   * 静默返回，链上剩几十单 QnV 不知道；autopilot 再起一轮就翻倍。
+   * 现在最多 6 轮，每轮撤完 sleep 700ms 让 backend 索引同步。
+   */
   async cancelAll(marketId) {
     const marketIdN = Number(marketId);
     const symbol = this._sym(marketIdN);
     if (!symbol) return true;
-    // 先从 REST 拉真单
-    const exchangeOrders = await this.fetchOpenOrders(marketIdN).catch(() => []);
-    for (const o of exchangeOrders) {
-      const oid = String(o.orderId ?? '');
-      if (oid && oid !== '0') await this.cancelOrder(marketIdN, oid).catch(() => {});
-    }
-    // 兜底：本地跟踪但 exchange 没返回的（时序错开）
-    for (const [id, o] of [...this.orders]) {
-      if (Number(o.marketId) === marketIdN) {
-        await this.cancelOrder(marketIdN, id).catch(() => {});
+    let cleanRound = 0;
+    let lastLen = -1;
+    for (let round = 0; round < 6; round++) {
+      const exchangeOrders = await this.fetchOpenOrders(marketIdN).catch(() => []);
+      if (exchangeOrders.length === 0) { cleanRound = round; break; }
+      if (round === 0 || exchangeOrders.length !== lastLen) {
+        console.log(`[StandX] cancelAll ${symbol} round ${round + 1}: 链上剩 ${exchangeOrders.length} 单`);
       }
+      lastLen = exchangeOrders.length;
+      // 并发撤（一批最多 20，避免签名节流），失败也继续
+      const results = await Promise.allSettled(
+        exchangeOrders.slice(0, 20).map((o) => {
+          const oid = String(o.orderId ?? '');
+          if (!oid || oid === '0' || oid === 'undefined' || oid === 'null') return Promise.resolve();
+          return this.cancelOrder(marketIdN, oid);
+        })
+      );
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0 && round === 0) {
+        console.log(`[StandX] cancelAll ${symbol}: ${failed}/${results.length} 撤单失败`);
+      }
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    // 本地 map 兜底：exchange 端已空但本地还有引用 → 清掉
+    for (const [id, o] of [...this.orders]) {
+      if (Number(o.marketId) === marketIdN) this.orders.delete(id);
+    }
+    // 最后再拉一次真的验证
+    const finalCheck = await this.fetchOpenOrders(marketIdN).catch(() => []);
+    if (finalCheck.length > 0) {
+      throw new Error(`StandX cancelAll ${symbol}：6 轮后链上仍剩 ${finalCheck.length} 单未撤`);
     }
     return true;
   }
 
-  /** 市价平仓：先 fetchPositions 拉真持仓，再反向 IOC 市价单收掉。 */
+  /**
+   * 市价平仓：先 fetchPositions 拉真持仓，再反向 IOC 市价单收掉。
+   * Round 51：qty 必须 toFixed 到 qtyDecimals（Round 48 教训——float 残留
+   * 会被 "not follow qty tick" 拒），返回前 check code=0（之前不看，下失败
+   * 也返成功假象）。
+   */
   async closePosition(marketId) {
-    const symbol = this._sym(marketId);
+    const marketIdN = Number(marketId);
+    const symbol = this._sym(marketIdN);
     if (!symbol) return null;
     const positions = await this.fetchPositions().catch(() => []);
-    const p = positions.find((x) => Number(x.marketId) === Number(marketId));
-    if (!p || !p.sizeBase) return null;
-    const side = p.sizeBase > 0 ? 'sell' : 'buy';   // 反手关
+    const p = positions.find((x) => Number(x.marketId) === marketIdN);
+    if (!p || !p.sizeBase) return { closed: true, size: 0 };   // 没仓 = 已经平了
+    const market = this.markets.get(marketIdN);
+    const qtyDp = market?.qtyDecimals ?? 4;
+    const side = p.sizeBase > 0 ? 'sell' : 'buy';    // 反手关
     const cl_ord_id = 'qnv-cls-' + uuidv4().replace(/-/g, '').slice(0, 18);
-    return await this._authPostSigned('/api/new_order', {
+    const r = await this._authPostSigned('/api/new_order', {
       symbol, side, order_type: 'market',
-      qty: String(Math.abs(p.sizeBase)),
+      qty: Math.abs(p.sizeBase).toFixed(qtyDp),
       time_in_force: 'ioc', reduce_only: true,
       cl_ord_id,
     }, 8000);
+    if (r?.code !== 0) {
+      throw new Error(`StandX 平仓下单失败 code=${r?.code} ${r?.message || r?.msg || ''}`);
+    }
+    return { closed: true, size: p.sizeBase, cl_ord_id, result: r };
   }
 
   async reconcileOpenOrders() {

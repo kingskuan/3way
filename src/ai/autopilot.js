@@ -505,6 +505,16 @@ class Autopilot {
     } catch { /* 拿不到 K 线不阻塞起单，Autopilot 之前的 fallback 已处理 */ }
 
     try {
+      // Round 51 pre-flight：起单前显式 cancelAll 清链上残留。用户报告 StandX
+      // 一键停止后本地 map 清了但链上还挂着 24 单，autopilot 再起 24 单 =
+      // 链上 48 单越来越多。这里做 belt-and-suspenders：不信本地状态，直接问
+      // exchange 清干净。cancelAll 内部会自己 loop 直到真的空。
+      try {
+        await ex.cancelAll(pick.marketId);
+      } catch (e) {
+        this._log(key, 'skip', `${pick.name} 起单前清残留失败：${e?.message || e}，跳过本轮避免叠加挂单`);
+        return;
+      }
       const res = await bot.start(params);
       // 起单后 3s 让适配器同步 place 结果，再读实际挂上多少
       await new Promise((r) => setTimeout(r, 3000));
