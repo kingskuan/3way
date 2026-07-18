@@ -2065,6 +2065,8 @@ input:focus, select:focus {
       <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="sx-st-orders">—</span></div>
       <button class="btn btn-ghost" id="sx-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
       <button class="btn btn-ghost" id="sx-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="sx-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
+      <button class="btn btn-ghost" id="sx-debug-btn" style="margin-top:8px;font-size:12px">🔍 诊断 StandX 挂单（raw API 响应）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
       <div class="panel-title">价格 / 网格</div>
@@ -2556,7 +2558,19 @@ function makeExchangeCtrl(prefix, chartId) {
   };
 
   P('stop-btn').onclick = async () => {
-    await fetch(`/api/${prefix}/stop`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({closePosition:true}) });
+    // Round 52：以前 stop 静默完成——用户看不到 exchange 层撤单是否真的成功
+    // 现在读 response，如果有 error 弹窗显示 + 指向紧急清链上残留按钮
+    const btn = P('stop-btn'); const oldText = btn.textContent;
+    btn.disabled = true; btn.textContent = '停止中…';
+    try {
+      const r = await fetch(`/api/${prefix}/stop`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({closePosition:true}) });
+      const j = await r.json();
+      if (j?.error) alert('停止时出错：\n\n' + j.error + '\n\n（如是 StandX 链上残留，请点"🚨 紧急清链上残留"）');
+    } catch (e) {
+      alert('停止请求异常：' + (e?.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = oldText;
+    }
   };
 
   P('adjust-btn').onclick = async () => {
@@ -2600,9 +2614,49 @@ function makeExchangeCtrl(prefix, chartId) {
 
   P('cancel-orders-btn').onclick = async () => {
     if (!confirm('确认一键撤销该交易所的全部挂单？\n持仓不受影响（不会平仓）。网格将停止，需要时可重新启动。')) return;
-    const r = await fetch(`/api/${prefix}/cancel-orders`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
-    const j = await r.json();
-    if (j.error) alert('撤单失败：' + j.error);
+    const btn = P('cancel-orders-btn'); const oldText = btn.textContent;
+    btn.disabled = true; btn.textContent = '撤单中…';
+    try {
+      const r = await fetch(`/api/${prefix}/cancel-orders`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+      const j = await r.json();
+      if (j.error) alert('撤单失败：\n\n' + j.error + '\n\n（如是 StandX 链上残留问题，请点"🚨 紧急清链上残留"绕开 bot 直接调用交易所）');
+      else alert('✅ 已撤销该市场全部挂单。');
+    } catch (e) {
+      alert('撤单请求异常：' + (e?.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = oldText;
+    }
+  };
+
+  // Round 52：诊断按钮——调 /api/{prefix}/debug 返 raw API 响应，方便定位
+  // fetchOpenOrders / cancel_order 字段名对不上导致的假死。目前只 sx 实现。
+  if (P('debug-btn')) P('debug-btn').onclick = async () => {
+    const btn = P('debug-btn'); const oldText = btn.textContent;
+    btn.disabled = true; btn.textContent = '诊断中…';
+    try {
+      const r = await fetch(`/api/${prefix}/debug`);
+      const j = await r.json();
+      const text = JSON.stringify(j, null, 2);
+      const w = window.open('', 'qnv-debug', 'width=720,height=800,scrollbars=yes');
+      if (!w) {
+        // 弹窗被拦：写到 log
+        const logDiv = P('alerts');
+        if (logDiv) {
+          const it = document.createElement('div');
+          it.className = 'log-item'; it.style.cssText = 'font-family:monospace;font-size:10px;white-space:pre-wrap;max-height:400px;overflow:auto';
+          it.textContent = text; logDiv.prepend(it);
+        }
+        alert('弹窗被拦，诊断结果已写到运行日志顶部。');
+        return;
+      }
+      w.document.title = `${prefix.toUpperCase()} · 诊断`;
+      const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+      w.document.write(`<style>body{font-family:ui-monospace,monospace;font-size:11px;padding:12px;line-height:1.5;background:#0b0e14;color:#e6e6e6}h3{color:#7dd3fc;margin:12px 0 4px}pre{background:#12172a;padding:10px;border-radius:6px;overflow:auto;margin:0}</style><h3>${prefix.toUpperCase()} raw diagnostic</h3><pre>${esc(text)}</pre>`);
+    } catch (e) {
+      alert('诊断请求异常：' + (e?.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = oldText;
+    }
   };
 
   // ── 未托管持仓处置（开机扫描后手动选择）──
