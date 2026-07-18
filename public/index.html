@@ -1061,11 +1061,20 @@ input:focus, select:focus {
     <span class="header-logo-txt">QnV</span>
   </div>
   <div class="header-sep"></div>
-  <span class="hdot idle" id="hdr-de-dot" title=""></span><span id="hdr-de" class="badge badge-paper">DE: PAPER</span>
-  <span class="hdot idle" id="hdr-ex-dot" title=""></span><span id="hdr-ex" class="badge badge-paper">EX: PAPER</span>
-  <span class="hdot idle" id="hdr-rs-dot" title=""></span><span id="hdr-rs" class="badge badge-paper">RS: PAPER</span>
-  <span class="hdot idle" id="hdr-on-dot" title=""></span><span id="hdr-on" class="badge badge-paper">ON: PAPER</span>
-  <span class="hdot idle" id="hdr-pl-dot" title=""></span><span id="hdr-pl" class="badge badge-paper">PL: PAPER</span>
+  <!-- Round 40 方案 A：5 个 DE/EX/RS/ON/PL badge 合并成一个可展开的 X/5 药丸 -->
+  <div id="hdr-summary-wrap" style="position:relative;display:inline-block">
+    <span id="hdr-summary" class="badge" onmouseover="hdrDetailsShow(true)" onmouseleave="hdrDetailsShow(false)" onclick="hdrDetailsToggle()" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:3px 10px">
+      <span class="hdot on" id="hdr-summary-dot"></span>
+      <span id="hdr-summary-txt">5/5 LIVE</span>
+    </span>
+    <div id="hdr-details" style="display:none;position:absolute;top:calc(100% + 6px);left:0;min-width:130px;background:var(--v2-panel,#111a2e);border:1px solid rgba(148,163,184,0.3);border-radius:8px;padding:8px;font-size:11px;z-index:100;box-shadow:0 6px 20px rgba(0,0,0,0.4)">
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-de-dot"></span><span id="hdr-de" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">DE: PAPER</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-ex-dot"></span><span id="hdr-ex" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">EX: PAPER</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-rs-dot"></span><span id="hdr-rs" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">RS: PAPER</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-on-dot"></span><span id="hdr-on" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">ON: PAPER</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-pl-dot"></span><span id="hdr-pl" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">PL: PAPER</span></div>
+    </div>
+  </div>
   <div class="header-right">
     <span id="hdr-proxy" class="conn" title="全局代理状态"><span class="cdot"></span><span id="hdr-proxy-txt">代理检测中…</span></span>
     <span id="hdr-conn" class="conn warn" title="后端连接状态"><span class="cdot"></span><span id="hdr-conn-txt">连接中…</span></span>
@@ -2251,6 +2260,8 @@ function makeExchangeCtrl(prefix, chartId) {
       const hdrBadge = $('hdr-' + prefix);
       hdrBadge.textContent = prefix.toUpperCase() + ': ' + j.mode.toUpperCase();
       hdrBadge.className = 'badge ' + (j.mode === 'live' ? 'badge-live' : 'badge-paper');
+      // Round 40：更新 header 药丸汇总
+      updateHdrSummary();
 
       P('market').innerHTML = markets.map(m => `<option value="${m.marketId}">${m.displayName}</option>`).join('');
       if (markets[0]) P('size-base').value = markets[0].minOrderSize || 0.001;
@@ -2756,6 +2767,44 @@ function setExHealth(p, h, connected) {
     const icon = status === 'ok' ? '🟢' : status === 'warn' ? '🟡' : status === 'error' ? '🔴' : '⚪';
     line.className = 'exhealth eh-' + status;
     line.textContent = `${icon} ${reason}`;
+  }
+}
+
+// Header 汇总药丸的悬停/点击控制（Round 40 方案 A）
+let _hdrDetailsStuck = false;
+function hdrDetailsShow(on) {
+  const el = $('hdr-details');
+  if (!el) return;
+  if (_hdrDetailsStuck) return;
+  el.style.display = on ? 'block' : 'none';
+}
+function hdrDetailsToggle() {
+  const el = $('hdr-details');
+  if (!el) return;
+  _hdrDetailsStuck = !_hdrDetailsStuck;
+  el.style.display = _hdrDetailsStuck ? 'block' : 'none';
+}
+// 从 5 个个体 badge 的 mode（live/paper）+ dot 状态汇总出药丸
+function updateHdrSummary() {
+  const keys = ['de','ex','rs','on','pl'];
+  const items = keys.map(k => {
+    const b = $('hdr-' + k);
+    return { k, live: b && b.className.includes('badge-live') };
+  });
+  const liveN = items.filter(i => i.live).length;
+  const total = keys.length;
+  const txt = $('hdr-summary-txt');
+  const dot = $('hdr-summary-dot');
+  if (!txt || !dot) return;
+  if (liveN === 0) {
+    txt.textContent = `${total} PAPER`;
+    dot.className = 'hdot idle';
+  } else if (liveN === total) {
+    txt.textContent = `${total}/${total} LIVE`;
+    dot.className = 'hdot on';
+  } else {
+    txt.textContent = `${liveN}/${total} LIVE`;
+    dot.className = 'hdot on';
   }
 }
 
