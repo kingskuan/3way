@@ -521,14 +521,32 @@ class Autopilot {
       const finalState = bot.getState();
       const actual = Number(finalState.openOrders) || 0;
       st.lastAction = 'started';
+      // Round 54：成功率低时，从 bot alerts 里 filter"下单失败"消息附到
+      // 决策日志——用户在 Autopilot 页看得到 Extended "仅挂上 0/20"背后
+      // 的真实原因（Insufficient margin / tick 对不上 / API 返错等），
+      // 不用切到 Extended tab 翻 alerts。
+      let failReason = '';
+      if (actual < gridCount * 0.75) {
+        const recentAlerts = (finalState.alerts || [])
+          .filter((a) => /下单失败|挂单失败|order.*fail|reject/i.test(a.message))
+          .slice(0, 3);
+        if (recentAlerts.length > 0) {
+          const uniq = new Set();
+          for (const a of recentAlerts) {
+            const m = String(a.message).replace(/^.*?下单失败:\s*/i, '').slice(0, 150);
+            uniq.add(m);
+          }
+          failReason = ` · 失败原因：${[...uniq].join(' | ')}`;
+        }
+      }
       const rateNote = (actual < gridCount * 0.75)
-        ? `（仅挂上 ${actual}/${gridCount}，成功率低）` : '';
+        ? `（仅挂上 ${actual}/${gridCount}，成功率低${failReason}）` : '';
       st.lastActionReason = `选 ${pick.name}（${mode}，${aiReasoning || '规则排序 top1'}），区间 ${lower}~${upper}，${gridCount} 格 x ${sizeBase}${rateNote}`;
       // lastDecisionAt 已在函数入口刷新（Round 50），这里不再重复设置
       st.lastAppliedEquity = cur.equity;
       st.startedByAutopilot = true;
       this._log(key, 'start', st.lastActionReason);
-      const successHint = (actual < gridCount * 0.75) ? `⚠ 起单成功率低：${actual}/${gridCount}\n` : '';
+      const successHint = (actual < gridCount * 0.75) ? `⚠ 起单成功率低：${actual}/${gridCount}${failReason}\n` : '';
       notify(`【网格 Autopilot·${EXNAMES[key]}】已启动：${pick.name}\n${successHint}模式：${_modeLabel(mode)} · 区间 ${lower} ~ ${upper}\n${gridCount} 格 × ${sizeBase} · ${leverage}x 杠杆\nAI：${aiReasoning || '规则排序'}`).catch(() => {});
       this._save();
     } catch (e) {
