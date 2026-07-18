@@ -9,7 +9,7 @@ import { aiChat, extractJson, notify, getAiConfig } from './provider.js';
 import { analyzeTrend } from '../trend.js';
 import { loadSnapshot, saveSnapshot } from '../persist.js';
 
-const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl' };
+const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX' };
 
 export function createAiService({ bots, exchanges }) {
   return new AiService(bots, exchanges);
@@ -81,7 +81,7 @@ class AiService {
   // ---------- 状态快照（喂给 AI 的紧凑上下文） ----------
   _snapshot() {
     const out = {};
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl']) {
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
       const s = this.bots[key].getState();
       out[key] = {
         exchange: EXNAMES[key], tradeMode: s.mode,
@@ -165,7 +165,7 @@ class AiService {
   // ---------- 2) 每日复盘 ----------
   _rebaseline() {
     const per = {};
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl']) {
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
       const s = this.bots[key].getState();
       per[key] = { equity: s.equity, realizedPnl: s.realizedPnl, completedRungs: s.stats?.completedRungs || 0, volume: s.volume || 0 };
     }
@@ -180,7 +180,7 @@ class AiService {
       const snap = this._snapshot();
       const base = this._baseline;
       const diff = {};
-      for (const key of ['de', 'ex', 'rs', 'on', 'pl']) {
+      for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
         const b = base?.per?.[key] || {};
         const s = snap[key];
         diff[key] = {
@@ -310,14 +310,14 @@ class AiService {
     // 白名单过滤：任何未知 action 一律置为 none
     const ALLOWED = ['adjust_range', 'stop_grid', 'cancel_orders', 'close_position', 'reconnect', 'start_recovery', 'start_grid', 'none'];
     if (!j.action || !ALLOWED.includes(j.action.type)) j.action = { type: 'none' };
-    if (j.action.type !== 'none' && !['de', 'ex', 'rs', 'on', 'pl'].includes(j.action.exchange)) j.action = { type: 'none' };
+    if (j.action.type !== 'none' && !['de', 'ex', 'rs', 'on', 'pl', 'sx'].includes(j.action.exchange)) j.action = { type: 'none' };
     return { reply: j.reply || '', action: j.action };
   }
 
   // ---------- 5) 出区间建议（跳变触发） ----------
   async _checkOutOfRange() {
     const cfg = getAiConfig();
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl']) {
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
       const bot = this.bots[key];
       const cur = !!(bot.running && bot.outOfRange);
       const prev = !!this._prevOor[key];

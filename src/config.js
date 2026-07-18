@@ -110,6 +110,15 @@ export function getConfig() {
     proxy: process.env.PERPL_PROXY || globalProxy,
   };
 
+  // ── StandX Perps (perps.standx.com, BSC/Solana) ───────────────────────────
+  const sx = {
+    mode: (process.env.SX_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
+    chain: (process.env.SX_CHAIN || 'bsc').toLowerCase(),
+    privateKey: process.env.SX_PRIVATE_KEY || '',   // BSC 钱包私钥（0x... hex）
+    startBalance: Number(process.env.PAPER_BALANCE || 10000),
+    proxy: process.env.SX_PROXY || globalProxy,
+  };
+
   // ── Ondo Perps ────────────────────────────────────────────────────────────
   const onNet = (process.env.ON_NETWORK || 'mainnet').toLowerCase();
   const onDefaults = onNet === 'testnet'
@@ -151,6 +160,7 @@ export function getConfig() {
     rs,
     on,
     pl,
+    sx,
   };
 }
 

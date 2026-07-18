@@ -15,6 +15,7 @@ import { createExchange as createExExchange } from './exchange/ex/index.js';
 import { createExchange as createRsExchange } from './exchange/rs/index.js';
 import { createExchange as createOnExchange } from './exchange/on/index.js';
 import { createExchange as createPlExchange } from './exchange/pl/index.js';
+import { createExchange as createSxExchange } from './exchange/sx/index.js';
 import { GridBot } from './bot.js';
 import { analyzeTrend } from './trend.js';
 import { setupProxies, checkProxy } from './proxy.js';
@@ -102,12 +103,14 @@ const exExchange = createExExchange(cfg.ex);
 const rsExchange = createRsExchange(cfg.rs);
 const onExchange = createOnExchange(cfg.on);
 const plExchange = createPlExchange(cfg.pl);
+const sxExchange = createSxExchange(cfg.sx);
 
 const deBot = new GridBot(deExchange, { onChange: (s) => saveSnapshot('de', s) });
 const exBot = new GridBot(exExchange, { onChange: (s) => saveSnapshot('ex', s) });
 const rsBot = new GridBot(rsExchange, { onChange: (s) => saveSnapshot('rs', s) });
 const onBot = new GridBot(onExchange, { onChange: (s) => saveSnapshot('on', s) });
 const plBot = new GridBot(plExchange, { onChange: (s) => saveSnapshot('pl', s) });
+const sxBot = new GridBot(sxExchange, { onChange: (s) => saveSnapshot('sx', s) });
 
 // Restore cumulative stats / config from the previous run (display continuity).
 // Trading does NOT auto-resume; stray-order cleanup happens after each exchange
@@ -117,24 +120,25 @@ exBot.restore(loadSnapshot('ex'));
 rsBot.restore(loadSnapshot('rs'));
 onBot.restore(loadSnapshot('on'));
 plBot.restore(loadSnapshot('pl'));
+sxBot.restore(loadSnapshot('sx'));
 
 // Belt-and-suspenders: ensure every exchange always has an 'error' listener so a
 // stray emit can never crash the process (the GridBot also attaches one).
-for (const ex of [deExchange, exExchange, rsExchange, onExchange, plExchange]) {
+for (const ex of [deExchange, exExchange, rsExchange, onExchange, plExchange, sxExchange]) {
   ex.on('error', (e) => { try { console.error('[交易所错误] ' + (e?.message || e)); } catch {} });
 }
 
 // ── AI 服务（哨兵/日报/分析/对话/出区间建议）────────────────────────────────
 const aiService = createAiService({
-  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot },
-  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange },
+  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot },
+  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange },
 });
 aiService.start();
 
 // ── AI Autopilot（无脑一键：AI 自动选币 + 起网格 + 熔断护栏 + Telegram 复盘）
 const autopilot = createAutopilot({
-  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot },
-  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange },
+  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot },
+  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange },
 });
 autopilot.start();
 
@@ -144,6 +148,7 @@ const exClients = new Set();
 const rsClients = new Set();
 const onClients = new Set();
 const plClients = new Set();
+const sxClients = new Set();
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
 const MIME = {
@@ -392,6 +397,7 @@ const exHandler = makeExchangeHandler('/api/ex', exBot, exExchange, cfg.ex, exCl
 const rsHandler = makeExchangeHandler('/api/rs', rsBot, rsExchange, cfg.rs, rsClients, 'RISEx');
 const onHandler = makeExchangeHandler('/api/on', onBot, onExchange, cfg.on, onClients, 'Ondo');
 const plHandler = makeExchangeHandler('/api/pl', plBot, plExchange, cfg.pl, plClients, 'Perpl');
+const sxHandler = makeExchangeHandler('/api/sx', sxBot, sxExchange, cfg.sx, sxClients, 'StandX');
 
 // ── HTTP Basic Auth 中间件（有 DASHBOARD_PASSWORD 才启用） ──────────────────
 // 时间常量比较，避免旁路时间攻击。
@@ -444,6 +450,7 @@ const server = http.createServer(async (request, res) => {
         rs: pick(rsBot.getState(), cfg.rs.mode),
         on: pick(onBot.getState(), cfg.on.mode),
         pl: pick(plBot.getState(), cfg.pl.mode),
+        sx: pick(sxBot.getState(), cfg.sx.mode),
       });
     }
 
@@ -462,6 +469,7 @@ const server = http.createServer(async (request, res) => {
         rs: pick(rsBot.getState(), cfg.rs.mode),
         on: pick(onBot.getState(), cfg.on.mode),
         pl: pick(plBot.getState(), cfg.pl.mode),
+        sx: pick(sxBot.getState(), cfg.sx.mode),
       };
       res.write(`data: ${JSON.stringify(initial, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))}\n\n`);
       const overviewClients = server._overviewClients;
@@ -612,6 +620,9 @@ const server = http.createServer(async (request, res) => {
     if (p.startsWith('/api/pl/')) {
       return await plHandler(request, res, p.slice('/api/pl'.length), url);
     }
+    if (p.startsWith('/api/sx/')) {
+      return await sxHandler(request, res, p.slice('/api/sx'.length), url);
+    }
 
     // ── 静态文件 ──────────────────────────────────────────────────────────
     let file = p === '/' ? '/index.html' : p;
@@ -654,18 +665,24 @@ setInterval(() => {
     const data = `data: ${stringify(plBot.getState())}\n\n`;
     for (const r of plClients) { try { r.write(data); } catch { plClients.delete(r); } }
   }
+  if (sxClients.size > 0) {
+    const data = `data: ${stringify(sxBot.getState())}\n\n`;
+    for (const r of sxClients) { try { r.write(data); } catch { sxClients.delete(r); } }
+  }
   if (server._overviewClients.size > 0) {
     const deState = deBot.getState();
     const exState = exBot.getState();
     const rsState = rsBot.getState();
     const onState = onBot.getState();
     const plState = plBot.getState();
+    const sxState = sxBot.getState();
     const overview = {
       de: pick(deState, cfg.de.mode),
       ex: pick(exState, cfg.ex.mode),
       rs: pick(rsState, cfg.rs.mode),
       on: pick(onState, cfg.on.mode),
       pl: pick(plState, cfg.pl.mode),
+      sx: pick(sxState, cfg.sx.mode),
     };
     const data = `data: ${stringify(overview)}\n\n`;
     for (const r of server._overviewClients) { try { r.write(data); } catch { server._overviewClients.delete(r); } }
@@ -732,6 +749,7 @@ await Promise.all([
   initExchange(rsExchange, 'RISEx', cfg.rs),
   initExchange(onExchange, 'Ondo', cfg.on),
   initExchange(plExchange, 'Perpl', cfg.pl),
+  initExchange(sxExchange, 'StandX', { mode: cfg.sx.mode, apiUrl: 'https://perps.standx.com', network: cfg.sx.chain || 'bsc' }),
 ]);
 
 // ── 崩溃恢复 / 续跑 ────────────────────────────────────────────────────────────
@@ -761,6 +779,7 @@ await Promise.all([
   resumeIfWasRunning(rsBot, rsExchange, 'rs'),
   resumeIfWasRunning(onBot, onExchange, 'on'),
   resumeIfWasRunning(plBot, plExchange, 'pl'),
+  resumeIfWasRunning(sxBot, sxExchange, 'sx'),
 ]);
 // Autopilot 迁移补丁：resume 完之后再认领在跑的托管 bot（构造函数里做为时过早，
 // 那时 bot.running 都还是 false）

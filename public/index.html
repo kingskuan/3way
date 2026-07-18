@@ -1073,6 +1073,7 @@ input:focus, select:focus {
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-rs-dot"></span><span id="hdr-rs" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">RS: PAPER</span></div>
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-on-dot"></span><span id="hdr-on" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">ON: PAPER</span></div>
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-pl-dot"></span><span id="hdr-pl" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">PL: PAPER</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-sx-dot"></span><span id="hdr-sx" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">SX: PAPER</span></div>
     </div>
   </div>
   <div class="header-right">
@@ -2786,7 +2787,7 @@ function hdrDetailsToggle() {
 }
 // 从 5 个个体 badge 的 mode（live/paper）+ dot 状态汇总出药丸
 function updateHdrSummary() {
-  const keys = ['de','ex','rs','on','pl'];
+  const keys = ['de','ex','rs','on','pl','sx'];
   const items = keys.map(k => {
     const b = $('hdr-' + k);
     return { k, live: b && b.className.includes('badge-live') };
@@ -2829,7 +2830,7 @@ function renderOverview(data) {
   let totEquity = 0, totBalance = 0, totPnl = 0, totRealized = 0, totUnrealized = 0, totVolume = 0, totRungs = 0;
   let running = 0;
 
-  ['de','ex','rs','on','pl'].forEach(p => {
+  ['de','ex','rs','on','pl','sx'].forEach(p => {
     const d = data[p];
     if (!d) return;
     if (d.balance != null) totBalance += d.balance;
@@ -2893,8 +2894,8 @@ function renderOverview(data) {
   $('tot-volume').textContent = fmt(totVolume);
   $('tot-rungs').textContent = totRungs;
   // 分所交易量存 dataset，tooltip 从这里读
-  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl' };
-  const perEx = ['de','ex','rs','on','pl'].map(p => {
+  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX' };
+  const perEx = ['de','ex','rs','on','pl','sx'].map(p => {
     const v = data[p]?.volume;
     return { name: exNames[p], vol: Number.isFinite(v) ? v : 0 };
   });
@@ -2909,11 +2910,11 @@ function renderOverview(data) {
   $('tot-running').innerHTML = running === 0
     ? '<span class="muted">全部停止</span>'
     : `<span class="up">${running}/5 运行中</span>`;
-  const modes = ['de','ex','rs','on','pl'].map(p => data[p]?.mode?.toUpperCase() || 'PAPER').join(' / ');
-  $('tot-modes').textContent = `DE / EX / RS / ON / PL : ${modes}`;
+  const modes = ['de','ex','rs','on','pl','sx'].map(p => data[p]?.mode?.toUpperCase() || 'PAPER').join(' / ');
+  $('tot-modes').textContent = `DE / EX / RS / ON / PL / SX : ${modes}`;
 
   // Hero 卡的 demo/live 计数（就算 Live 是 0 也照样显示）
-  const modesArr = ['de','ex','rs','on','pl'].map(p => (data[p]?.mode || 'paper').toLowerCase());
+  const modesArr = ['de','ex','rs','on','pl','sx'].map(p => (data[p]?.mode || 'paper').toLowerCase());
   const demoN = modesArr.filter((m) => m === 'paper').length;
   const liveN = modesArr.filter((m) => m === 'live').length;
   const el = $('tot-mode-summary');
