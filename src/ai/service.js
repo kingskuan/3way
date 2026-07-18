@@ -167,7 +167,15 @@ class AiService {
     const per = {};
     for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
       const s = this.bots[key].getState();
-      per[key] = { equity: s.equity, realizedPnl: s.realizedPnl, completedRungs: s.stats?.completedRungs || 0, volume: s.volume || 0 };
+      const ex = this.exchanges[key];
+      per[key] = {
+        equity: s.equity,
+        realizedPnl: s.realizedPnl,
+        completedRungs: s.stats?.completedRungs || 0,
+        volume: s.volume || 0,
+        mode: ex?.mode || null,               // Round 50: paper/live
+        dataSource: ex?.dataSource || null,   // Round 50: real/synthetic
+      };
     }
     this._baseline = { t: Date.now(), per };
     this._save();
@@ -183,7 +191,18 @@ class AiService {
       for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
         const b = base?.per?.[key] || {};
         const s = snap[key];
-        diff[key] = {
+        const ex = this.exchanges[key];
+        // Round 50: baseline 打时是 paper（equity=10000 默认值），期间切到 LIVE
+        // （equity=$285）→ diff=-$9714 → AI 误判"疑为出金"。检出环境切换后
+        // 把该所 diff 全清 null，让 AI 只看当前快照不算增量。
+        const modeChanged = b.mode && ex?.mode && b.mode !== ex.mode;
+        const dsChanged = b.dataSource && ex?.dataSource && b.dataSource !== ex.dataSource;
+        const envChanged = modeChanged || dsChanged;
+        diff[key] = envChanged ? {
+          equityChange: null, realizedChange: null,
+          rungsDone: null, volumeDone: null,
+          envChangeNote: `本期内环境从 ${b.mode || '?'}/${b.dataSource || '?'} 切到 ${ex?.mode || '?'}/${ex?.dataSource || '?'}，baseline 作废（勿评论权益变动）`,
+        } : {
           equityChange: (s.equity != null && b.equity != null) ? Math.round((s.equity - b.equity) * 100) / 100 : null,
           realizedChange: (s.realizedPnl != null && b.realizedPnl != null) ? Math.round((s.realizedPnl - b.realizedPnl) * 100) / 100 : null,
           rungsDone: (s.completedRungs || 0) - (b.completedRungs || 0),
@@ -194,10 +213,11 @@ class AiService {
       const text = await aiChat({
         json: false, maxTokens: 3000, temperature: 0.4,
         system: [
-          '你是网格交易机器人的复盘分析师。用简洁的中文写一份运行日报（纯文本，不用 markdown 标题符号）。',
+          '你是网格交易机器人的复盘分析师。用简洁的中文写一份运行日报（纯文本,不用 markdown 标题符号）。',
           '内容：1)五所各自的盈亏归因（网格已实现 vs 持仓浮动）；2)成交活跃度与网格参数是否匹配（完成格数、间距）；',
           '3)风险点（保证金、区间边缘、挂单异常）；4)下一步的 1-3 条可执行建议。',
           '数字保留两位小数；paper 为模拟盘要注明；没跑的交易所一句话带过。总长 300 字以内。',
+          '如果某所 diff 里带 envChangeNote，说明期内 paper↔live 切换过，baseline 已作废——只报当前快照的状态，绝对不要评论其权益/浮盈"变动"（那是切换假象、不是真出入金）。',
         ].join('\n'),
         messages: [{ role: 'user', content: `统计周期：${sinceHrs != null ? '近 ' + sinceHrs + ' 小时' : '本期'}\n当前快照：${JSON.stringify(snap)}\n周期增量：${JSON.stringify(diff)}` }],
       });
