@@ -187,12 +187,35 @@ export class OndoExchange extends EventEmitter {
                      : intervalSec === 3600 ? '60'
                      : intervalSec === 86400 ? '1D'
                      : '60';
+    const now = Math.floor(Date.now() / 1000);
+    const from = now - Math.max(intervalSec * n, 3600 * 24 * 2);
+
+    // Round 56: 优先走 auth 端点 /v1/perps/candles（param=market, returns
+    // [{startTime:"ISO", open:"str"...}]）。/v1/perps/history 是 TradingView UDF
+    // 版本，但 Ondo 服务端当前返 t=[] 空数组——AI 市况分析/Autopilot 选币都
+    // 拉不到。auth 端点数据是全的。
     try {
-      const now = Math.floor(Date.now() / 1000);
+      const path = `/v1/perps/candles?market=${encodeURIComponent(symbol)}&resolution=${resolution}&from=${from}&to=${now}`;
+      const raw = await this._req('GET', path);
+      const arr = Array.isArray(raw?.result) ? raw.result
+                : Array.isArray(raw) ? raw
+                : Array.isArray(raw?.data) ? raw.data
+                : [];
+      if (arr.length > 0) {
+        const out = arr.map((c) => ({
+          time: c.startTime ? new Date(c.startTime).getTime() : Number(c.time) * 1000,
+          open: Number(c.open), high: Number(c.high),
+          low: Number(c.low), close: Number(c.close),
+          volume: Number(c.volume ?? 0),
+        })).filter((c) => Number.isFinite(c.close));
+        if (out.length > 0) return out;
+      }
+    } catch { /* auth 端点失败，走 fallback */ }
+
+    // Fallback: 老的 TradingView UDF /v1/perps/history 端点
+    try {
       const url = `/v1/perps/history?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&to=${now}&countback=${n}`;
       const raw = await this._pubGet(url, 8000);
-      // Ondo 公开端点也用 { success:true, result:{t,o,h,l,c,v} } 包装。_pubGet
-      // 不 unwrap，需要在这里手动剥。之前一直返回空 → Autopilot「拉不到 K 线」
       const j = (raw && raw.success === true && raw.result) ? raw.result : raw;
       if (!j?.t?.length) return [];
       const out = [];
