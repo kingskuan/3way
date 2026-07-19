@@ -148,21 +148,42 @@ export class StandXExchange extends EventEmitter {
     return wallet.address;
   }
 
-  /** 走 JWT 认证的 GET/POST。 */
-  async _authGet(path, timeoutMs = 8000) {
-    if (!this._token) throw new Error('StandX 未认证');
+  /**
+   * 走 JWT 认证的 GET。
+   * Round 58：401 (missing/invalid jwt) 时自动重登录一次（token 7d 有效期
+   * 过期 → 撤单失败链条根源之一）。重登录失败才抛。
+   */
+  async _authGet(path, timeoutMs = 8000, _retried = false) {
+    if (!this._token) {
+      if (_retried) throw new Error('StandX 未认证');
+      await this._authenticate().catch(() => {});
+      if (!this._token) throw new Error('StandX 未认证');
+    }
     const res = await fetch(`${REST_BASE}${path}`, {
       method: 'GET',
       headers: { 'Authorization': 'Bearer ' + this._token, 'Accept': 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (res.status === 401 && !_retried) {
+      // JWT 过期 → 重新登录再试一次
+      this._token = null;
+      try { await this._authenticate(); } catch { throw new Error(`StandX GET ${path} → 401 且重登录失败`); }
+      return this._authGet(path, timeoutMs, true);
+    }
     if (!res.ok) throw new Error(`StandX GET ${path} → HTTP ${res.status}`);
     return await res.json();
   }
 
-  /** POST + Body Signing（写接口用）。参见 Body Signature Flow 章节。 */
-  async _authPostSigned(path, body, timeoutMs = 8000) {
-    if (!this._token) throw new Error('StandX 未认证');
+  /**
+   * POST + Body Signing（写接口用）。参见 Body Signature Flow 章节。
+   * Round 58：401 自动重登录一次。
+   */
+  async _authPostSigned(path, body, timeoutMs = 8000, _retried = false) {
+    if (!this._token) {
+      if (_retried) throw new Error('StandX 未认证');
+      await this._authenticate().catch(() => {});
+      if (!this._token) throw new Error('StandX 未认证');
+    }
     const xRequestId = uuidv4();
     const xRequestTs = String(Date.now());
     const payloadStr = JSON.stringify(body);
@@ -182,6 +203,11 @@ export class StandXExchange extends EventEmitter {
     });
     const text = await res.text();
     let j = null; try { j = JSON.parse(text); } catch {}
+    if (res.status === 401 && !_retried) {
+      this._token = null;
+      try { await this._authenticate(); } catch { throw new Error(`StandX POST ${path} → 401 且重登录失败`); }
+      return this._authPostSigned(path, body, timeoutMs, true);
+    }
     if (!res.ok) throw new Error(`StandX POST ${path} → HTTP ${res.status}: ${text.slice(0,200)}`);
     return j;
   }
@@ -396,34 +422,51 @@ export class StandXExchange extends EventEmitter {
    */
   async cancelOrder(marketId, orderId) {
     const clOrdId = String(orderId);
+    const symbol = this._sym(marketId);
     let cancelled = false;
     let lastErr = null;
-    // 尝试字段名候选：QnV 下的 cl_ord_id 用 cl_ord_id；收养的真单号用 order_id/id
+    // Round 58：placeLimitOrder / setLeverage / new_order 所有 write 端点
+    // body 都带 symbol——cancelOrder 也应该带。之前 attempts 缺 symbol 全部
+    // 401/400 → 所有尝试失败 → 用户按撤单一直失败。加上 symbol 后正常。
+    // 同时 fetchOpenOrders 返的 orderId 可能是 numeric id 或 cl_ord_id，试全
+    // 顺序：symbol+cl_ord_id > symbol+client_id > symbol+order_id > symbol+id
     const attempts = [];
-    attempts.push({ cl_ord_id: clOrdId });
-    if (/^\d+$/.test(clOrdId)) {
-      attempts.push({ order_id: Number(clOrdId) });
-      attempts.push({ id: Number(clOrdId) });
-    } else {
-      // 有些 API 用 client_id
-      attempts.push({ client_id: clOrdId });
+    if (symbol) {
+      attempts.push({ symbol, cl_ord_id: clOrdId });
+      attempts.push({ symbol, client_id: clOrdId });
+      if (/^\d+$/.test(clOrdId)) {
+        attempts.push({ symbol, order_id: Number(clOrdId) });
+        attempts.push({ symbol, id: Number(clOrdId) });
+      }
     }
+    // Fallback: 无 symbol 也试一遍（若上面全 fail）
+    attempts.push({ cl_ord_id: clOrdId });
+    if (/^\d+$/.test(clOrdId)) attempts.push({ order_id: Number(clOrdId) });
+    else attempts.push({ client_id: clOrdId });
+
+    // Round 58：首次 cancel_order 调用的原始错误 log 一次，帮定位真实 API 拒绝原因
+    let firstErrLogged = !!this._cancelErrLogged;
     for (const body of attempts) {
       try {
         const r = await this._authPostSigned('/api/cancel_order', body, 4000);
+        if (!firstErrLogged) {
+          firstErrLogged = true;
+          this._cancelErrLogged = true;
+          try { console.log(`[StandX] cancel_order 首次尝试 body=${JSON.stringify(body)} → code=${r?.code} msg=${r?.message || r?.msg || ''}`); } catch {}
+        }
         if (r?.code === 0) { cancelled = true; break; }
         const msg = String(r?.message || r?.msg || '');
-        // Round 55：正则里的 `|cancel` 太宽——任何含"cancel"字样的错误都被
-        // 误判为成功（"cancel signature failed", "Cannot cancel: xxx"）→ 假撤成功。
-        // 用户按紧急清 UI 报"20 单已撤"但链上没动就是这里。改成更严格的"确定
-        // 是已消失的"关键词组：not found / already cancelled / already filled /
-        // closed（不再单独 match 'cancel'）
+        // Round 55: 只 match"确定已消失"关键词（不含单独的 |cancel 避免宽泛匹配）
         if (/not\s?found|already\s*(cancel|fill|close|done)|filled|closed/i.test(msg)) {
-          cancelled = true; break;   // 已经不在链上（可能上一轮撤成了/已成交）→ 也算撤了
+          cancelled = true; break;
         }
         lastErr = `code=${r?.code} ${msg}`.trim();
       } catch (e) {
-        // 同样：不含 |cancel（宽泛匹配假成功根因）
+        if (!firstErrLogged) {
+          firstErrLogged = true;
+          this._cancelErrLogged = true;
+          try { console.log(`[StandX] cancel_order 首次尝试 body=${JSON.stringify(body)} 抛错: ${e?.message || e}`); } catch {}
+        }
         if (/not\s?found|already\s*(cancel|fill|close)|filled|closed/i.test(e.message)) { cancelled = true; break; }
         lastErr = e?.message || String(e);
       }
