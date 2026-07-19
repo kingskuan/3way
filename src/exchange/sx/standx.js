@@ -245,9 +245,13 @@ export class StandXExchange extends EventEmitter {
     const to = Math.floor(Date.now() / 1000);
     // 请求窗口按 sec × n 算（4h/1h 都能拿到 200 根足够）
     const from = to - Math.max(sec * n, 3600 * 200);
+    // Round 57：Round 49 的 URL 少了 countback 参数 → StandX 默认只返 5 根
+    // K 线 → analyzeTrend 需要 >=51 根走 fallback 分支。加 countback=n 就
+    // 拿到 200 根。curl 验证：不加 countback 返 5，加了 countback=200 返 201。
+    const countback = Math.max(60, Number(n) || 200);
     try {
       // kline/history 是公开端点，不需要 auth 但发 Bearer 也没关系
-      const j = await this._authGet(`/api/kline/history?symbol=${encodeURIComponent(symbol)}&from=${from}&to=${to}&resolution=${resolution}`);
+      const j = await this._authGet(`/api/kline/history?symbol=${encodeURIComponent(symbol)}&from=${from}&to=${to}&resolution=${resolution}&countback=${countback}`);
       if (j?.s !== 'ok') {
         if (!this._klineErrLogged) {
           this._klineErrLogged = true;
