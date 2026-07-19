@@ -409,12 +409,18 @@ export class StandXExchange extends EventEmitter {
         const r = await this._authPostSigned('/api/cancel_order', body, 4000);
         if (r?.code === 0) { cancelled = true; break; }
         const msg = String(r?.message || r?.msg || '');
-        if (/not\s?found|already|filled|closed|cancel/i.test(msg)) {
+        // Round 55：正则里的 `|cancel` 太宽——任何含"cancel"字样的错误都被
+        // 误判为成功（"cancel signature failed", "Cannot cancel: xxx"）→ 假撤成功。
+        // 用户按紧急清 UI 报"20 单已撤"但链上没动就是这里。改成更严格的"确定
+        // 是已消失的"关键词组：not found / already cancelled / already filled /
+        // closed（不再单独 match 'cancel'）
+        if (/not\s?found|already\s*(cancel|fill|close|done)|filled|closed/i.test(msg)) {
           cancelled = true; break;   // 已经不在链上（可能上一轮撤成了/已成交）→ 也算撤了
         }
         lastErr = `code=${r?.code} ${msg}`.trim();
       } catch (e) {
-        if (/not\s?found|already|filled|closed/i.test(e.message)) { cancelled = true; break; }
+        // 同样：不含 |cancel（宽泛匹配假成功根因）
+        if (/not\s?found|already\s*(cancel|fill|close)|filled|closed/i.test(e.message)) { cancelled = true; break; }
         lastErr = e?.message || String(e);
       }
     }
@@ -534,7 +540,9 @@ export class StandXExchange extends EventEmitter {
     if (!symbol) return null;
     const positions = await this.fetchPositions().catch(() => []);
     const p = positions.find((x) => Number(x.marketId) === marketIdN);
-    if (!p || !p.sizeBase) return { closed: true, size: 0 };   // 没仓 = 已经平了
+    // Round 55：empty:true 让 server 区分"本来就空"vs"真平仓"，避免"11 个市场
+    // 已平仓"的假象（只有 BTC-USD 有仓，其他 10 个市场从没开过）
+    if (!p || !p.sizeBase) return { closed: true, size: 0, empty: true };
     const market = this.markets.get(marketIdN);
     const qtyDp = market?.qtyDecimals ?? 4;
     const side = p.sizeBase > 0 ? 'sell' : 'buy';    // 反手关

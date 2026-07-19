@@ -2617,8 +2617,23 @@ function makeExchangeCtrl(prefix, chartId) {
       const r = await fetch(`/api/${prefix}/emergency-cleanup`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
       const j = await r.json();
       if (j.error) { alert('清理失败：' + j.error); return; }
-      const per = (j.perMarket || []).map(x => `${x.market}: 撤 ${x.cancelled} 单${x.closed ? '，已平仓' : ''}`).join('\n');
-      alert(`✅ 清理完成\n\n共撤单 ${j.totalCancelled} 个，平仓 ${j.totalClosed} 个市场${per ? '\n\n' + per : ''}`);
+      // Round 55：新 response 格式 —— 只列有单/仓/失败的市场，empty 不列
+      const rows = (j.perMarket || []).filter(x => x.cancelled > 0 || x.failed > 0 || x.closed);
+      const per = rows.map(x => {
+        let line = `${x.market}: `;
+        const parts = [];
+        if (x.cancelled > 0) parts.push(`撤 ${x.cancelled} 单`);
+        if (x.failed > 0) parts.push(`⚠ 失败 ${x.failed} 单`);
+        if (x.closed) parts.push('已平仓');
+        line += parts.join('，');
+        if (x.cleanupErr) line += `\n     ⚠ cancelAll 错：${x.cleanupErr}`;
+        return line;
+      }).join('\n');
+      const totalFail = j.totalFailed || 0;
+      const status = totalFail > 0 ? '⚠ 部分失败' : '✅ 清理完成';
+      const summary = `共撤单 ${j.totalCancelled}${totalFail > 0 ? `，失败 ${totalFail}` : ''}，真平仓 ${j.totalClosed} 个市场`;
+      const failMsgs = (j.failMessages && j.failMessages.length) ? '\n\n失败详情：\n' + j.failMessages.join('\n') : '';
+      alert(`${status}\n\n${summary}${per ? '\n\n' + per : ''}${failMsgs}`);
     } catch (e) {
       alert('清理请求失败：' + (e?.message || e));
     } finally {
