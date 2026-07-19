@@ -304,31 +304,61 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
         }
 
         // === Phase 3: 撤 & 平 ===
+        // Round 55：以前 `r === undefined` 也算 cancel 成功——但适配器没实现
+        // cancelOrder 就会返 undefined → 报"20 单已撤"实际 0 单动。
+        // 现在严格：cancelOrder 必须明确返 true 或非 null 对象才算成功。
+        // closePosition 空仓返 `{closed:true, size:0, empty:true}`（Round 55），
+        // 用 .empty 区分"真平仓"vs"本来就空"。
         let totalCancelled = 0;
         let totalClosed = 0;
+        let totalFailed = 0;   // Round 55：撤单失败的单数
         const perMarket = [];
+        const failMessages = [];
         for (const m of targets) {
           const mktId = Number(m.marketId);
           const oids = oidsByMkt.get(mktId) || new Set();
-          // dedupe 完开撤
           let cancelledHere = 0;
+          let failedHere = 0;
           for (const oid of oids) {
-            const r = await exchange.cancelOrder?.(mktId, oid).catch(() => null);
-            if (r || r === true || r === undefined) cancelledHere++;
+            try {
+              const r = await exchange.cancelOrder?.(mktId, oid);
+              // 严格：true 或 truthy 对象才算撤成功；undefined/null 一律算失败
+              if (r === true || (typeof r === 'object' && r !== null)) cancelledHere++;
+              else failedHere++;
+            } catch (e) {
+              failedHere++;
+              if (failMessages.length < 5) failMessages.push(`${m.displayName}: ${(e?.message || e).slice(0, 100)}`);
+            }
           }
-          // 再跑一次 cancelAll 兜底（会重新 fetch + cancel 剩下的）
-          await exchange.cancelAll?.(mktId).catch(() => {});
+          // 再跑一次 cancelAll 兜底
+          let cleanupErr = null;
+          try { await exchange.cancelAll?.(mktId); }
+          catch (e) { cleanupErr = e?.message || String(e); }
           totalCancelled += cancelledHere;
+          totalFailed += failedHere;
           let closedHere = false;
+          let wasEmpty = false;
           if (typeof exchange.closePosition === 'function') {
-            const r = await exchange.closePosition(mktId).catch(() => null);
-            if (r) { totalClosed++; closedHere = true; }
+            try {
+              const r = await exchange.closePosition(mktId);
+              if (r && r.empty === true) wasEmpty = true;
+              else if (r) { totalClosed++; closedHere = true; }
+            } catch (e) {
+              if (failMessages.length < 5) failMessages.push(`${m.displayName} closePosition: ${(e?.message || e).slice(0, 100)}`);
+            }
           }
-          if (cancelledHere > 0 || closedHere) {
-            perMarket.push({ market: m.displayName, cancelled: cancelledHere, closed: closedHere });
+          if (cancelledHere > 0 || failedHere > 0 || closedHere) {
+            perMarket.push({
+              market: m.displayName,
+              cancelled: cancelledHere,
+              failed: failedHere,
+              closed: closedHere,
+              empty: wasEmpty,
+              cleanupErr: cleanupErr || undefined,
+            });
           }
         }
-        return send(res, 200, { ok: true, totalCancelled, totalClosed, perMarket });
+        return send(res, 200, { ok: true, totalCancelled, totalClosed, totalFailed, perMarket, failMessages });
       } catch (e) { return send(res, 500, { error: e.message }); }
     }
 
