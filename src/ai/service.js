@@ -243,8 +243,29 @@ class AiService {
         }
       } catch { /* 单周期失败可容忍 */ }
     }
-    if (!Object.keys(frames).length) throw new Error('拿不到足够的K线数据，无法分析。');
     const price = await ex.getPrice(marketId).catch(() => null);
+    // Round 56：K 线全空时不 throw ——用 price + market metadata 出简易分析。
+    // Ondo 曾遇 `/v1/perps/history` 端点返 t=[] 空（Round 56 已加 fallback），
+    // StandX 也可能因 auth token 过期 / 4h 分辨率不支持导致 3 个周期都空。
+    // 与其 UI 弹"拿不到 K 线无法分析"，不如告诉用户"K 线不可用，基于当前价的
+    // 通用建议"，仍然有用。
+    if (!Object.keys(frames).length) {
+      if (!Number.isFinite(price) || !(price > 0)) {
+        throw new Error('拿不到足够的K线数据，也拿不到当前价，无法分析。');
+      }
+      const rangePct = 0.03;
+      const lower = Math.round(price * (1 - rangePct) * 100) / 100;
+      const upper = Math.round(price * (1 + rangePct) * 100) / 100;
+      return {
+        t: Date.now(), source: EXNAMES[key], market: market?.displayName, price,
+        frames: {},
+        regime: '无法判断', suitable: true, recommendMode: 'neutral', confidence: 0.3,
+        suggestedRange: { lower, upper }, suggestedGridCount: 20, suggestedSpacingPct: 0.3,
+        reasoning: `⚠ 交易所 K 线接口暂时拉不到数据（Ondo/StandX 常见），基于当前价 ${price} 给出通用中性网格建议：区间 ±3%、20 格。请人工核实当前市况是否适合跑网格（震荡好、单边坏）。`,
+        caution: 'K 线数据源不可用，无法用指标做严格判断——参数仅供参考，建议等 K 线恢复再决定。',
+        fallback: true,
+      };
+    }
     const text = await aiChat({
       json: true, maxTokens: 2500, temperature: 0.3,
       system: [
