@@ -210,6 +210,19 @@ export class GridBot {
     const market = (await this.ex.getMarkets()).find((m) => m.marketId === Number(cfg.marketId));
     if (!market) throw new Error('找不到该市场 marketId=' + cfg.marketId);
 
+    // Round 71：切换 marketId 时先清老市场的挂单 + 平老仓位。
+    // 之前 bot.start(newMarket) 只对 newMarket cancelAll（0 单），老市场
+    // 的挂单和仓位全留下。StandX 用户切 BTC→ETH→SOL 三次留 60 单 + 2 仓
+    // 就是这。Ondo 不出问题因为一直只跑 BTC-USD.P，没换过市场。
+    if (this.config && Number(this.config.marketId) !== Number(market.marketId)) {
+      const oldName = this.config.displayName || `marketId=${this.config.marketId}`;
+      try { await this.ex.cancelAll(this.config.marketId); } catch { /* best effort */ }
+      if (typeof this.ex.closePosition === 'function') {
+        try { await this.ex.closePosition(this.config.marketId); } catch { /* best effort */ }
+      }
+      this._alert(`切换市场：先清老市场 ${oldName} 挂单+平仓，再起 ${market.displayName}`);
+    }
+
     const leverage = Math.min(Number(cfg.leverage || 3), market.maxLeverage || 50);
     const sizeBase = Math.max(Number(cfg.sizeBase), market.minOrderSize || 0);
     this.config = {
