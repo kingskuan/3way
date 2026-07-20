@@ -368,12 +368,13 @@ class Autopilot {
     }
 
     // 4b. 简单规则打分（不需要 AI 也能跑：震荡 + 波动率适中 = 高分）
+    // Round 80：去掉 neutral +1 加分——之前 long/short 候选被系统性压低分数，
+    // AI 几乎永远选 neutral。现在 3 种模式在打分层面权重一致，交给趋势强度决定。
     for (const c of candidates) {
       c.score = 0;
       if (c.trend === 'range') c.score += 3;            // 震荡最适合网格
       else c.score += 1;
       if (c.atrPct != null && c.atrPct >= 0.5 && c.atrPct <= 3.0) c.score += 2;  // 波动率适中
-      if (c.recommended === 'neutral') c.score += 1;
     }
     candidates.sort((a, b) => b.score - a.score);
     const shortlist = candidates.slice(0, 5);
@@ -472,13 +473,14 @@ class Autopilot {
       pickedLower = lower; pickedUpper = upper;
       pickedSizeBase = sizeBase; pickedGridCount = gridCount;
       pickedLeverage = leverage;
-      // Round 36：强趋势自动跟方向。用户观察到弱下降趋势（strength=0.26）时
-      // autopilot 仍选中性网格，走一段行情后单向库存越拉越多；反过来强单边
-      // 也不应硬扛 neutral。规则：
-      //   strength >= 0.5 且 recommended != neutral → 用 recommended（跟趋势）
+      // Round 36 引入 → Round 80 放宽：strongTrend 门槛 0.5 → 0.3。
+      // 用户反馈 AI 几乎永远出 neutral（4 层偏 neutral 叠加：trend 阈值严 +
+      // 打分偏 range + prompt 强推 neutral + 覆盖门槛太高）。0.3 大约对应
+      // "EMA 差 0.9%+、斜率 ≥0.2%/根"这种中等单边——已经足够让神经元网格
+      // 单向库存开始堆积，跟着方向做 long/short 更合理。
+      //   strength >= 0.3 且 recommended != neutral → 用 recommended（跟趋势）
       //   否则           → AI 挑的 mode 或规则 recommended，最后兜底 neutral
-      // 0.5 阈值大约对应"EMA 差 1.5%+、斜率 ≥0.3%/根"这种肉眼可见的单边。
-      const strongTrend = Number(c.strength) >= 0.5 && c.recommended && c.recommended !== 'neutral';
+      const strongTrend = Number(c.strength) >= 0.3 && c.recommended && c.recommended !== 'neutral';
       const chosenMode = strongTrend
         ? c.recommended
         : (c._aiMode || c.recommended || 'neutral');
