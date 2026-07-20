@@ -3279,7 +3279,7 @@ const AI_ENV_MAP = {
 const AI_VENDORS = {
   deepseek:   { name:'DeepSeek 深度求索', proto:'openai', base:'https://api.deepseek.com/v1', models:['deepseek-chat','deepseek-reasoner'], main:'deepseek-chat', small:'deepseek-chat' },
   kimi:       { name:'Kimi（月之暗面）', proto:'openai', base:'https://api.moonshot.cn/v1', models:['kimi-latest','moonshot-v1-8k','moonshot-v1-32k','moonshot-v1-128k'], main:'kimi-latest', small:'moonshot-v1-8k' },
-  apikeyfun:  { name:'apikey.fun（聚合 · kimi-k3/claude/codex）', proto:'openai', base:'https://apikey.fun/v1', models:['kimi-k3','claude-sonnet-4-5','claude-haiku-4-5','claude-opus-4-8','codex-pro','fable-5','gpt-5'], main:'kimi-k3', small:'kimi-k3' },
+  apikeyfun:  { name:'apikey.fun（聚合 · 中转到 kimi/claude/codex）', proto:'openai', base:'https://apikey.fun/v1', models:['kimi-k3','kimi-k2-turbo-preview','kimi-latest','moonshot-v1-128k','claude-sonnet-4-5','claude-haiku-4-5','claude-opus-4-8','codex-pro','fable-5','gpt-5','gpt-4o'], main:'kimi-k3', small:'kimi-k3' },
   qwen:       { name:'通义千问（阿里）', proto:'openai', base:'https://dashscope.aliyuncs.com/compatible-mode/v1', models:['qwen-plus','qwen-turbo','qwen-max','qwen-long'], main:'qwen-plus', small:'qwen-turbo' },
   glm:        { name:'智谱 GLM', proto:'openai', base:'https://open.bigmodel.cn/api/paas/v4', models:['glm-4-plus','glm-4-air','glm-4-flash'], main:'glm-4-plus', small:'glm-4-flash' },
   siliconflow:{ name:'硅基流动 SiliconFlow', proto:'openai', base:'https://api.siliconflow.cn/v1', models:['deepseek-ai/DeepSeek-V3','deepseek-ai/DeepSeek-R1','Qwen/Qwen2.5-72B-Instruct'], main:'deepseek-ai/DeepSeek-V3', small:'Qwen/Qwen2.5-72B-Instruct' },

@@ -411,8 +411,46 @@ class AiService {
   // ---------- 状态/测试 ----------
   async test() {
     const t0 = Date.now();
-    const text = await aiChat({ small: false, maxTokens: 50, temperature: 0, messages: [{ role: 'user', content: '回复"连接正常"四个字。' }] });
-    return { ok: true, ms: Date.now() - t0, model: getAiConfig().model, provider: getAiConfig().provider, reply: text.slice(0, 50) };
+    const cfg = getAiConfig();
+    try {
+      const text = await aiChat({ small: false, maxTokens: 50, temperature: 0, messages: [{ role: 'user', content: '回复"连接正常"四个字。' }] });
+      return { ok: true, ms: Date.now() - t0, model: cfg.model, provider: cfg.provider, reply: text.slice(0, 50) };
+    } catch (e) {
+      // Round 64：失败时尝试拉 /v1/models（OpenAI 兼容）列出实际可用 model 名。
+      // 用户常见问题："apikey.fun 填了 kimi-k3 报 Upstream request failed"——
+      // 大概率是聚合服务的 model id 是 kimi-k2-turbo-preview / moonshot-v1-128k
+      // 之类，用户猜的 kimi-k3 不对。返回可用 model 名让用户对照修正。
+      let availableModels = null;
+      if (cfg.provider === 'openai' && cfg.apiKey) {
+        try {
+          const r = await fetch(cfg.baseUrl + '/models', {
+            headers: { Authorization: 'Bearer ' + cfg.apiKey },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (r.ok) {
+            const j = await r.json();
+            const ids = (j?.data || []).map((m) => m.id).filter(Boolean);
+            if (ids.length > 0) availableModels = ids;
+          }
+        } catch { /* skip */ }
+      }
+      const err = new Error(e?.message || String(e));
+      if (availableModels) {
+        // 优先展示跟当前 model 相关的候选（同前缀 / 同关键词）
+        const kw = String(cfg.model || '').toLowerCase().split(/[-_./]/).filter((s) => s.length >= 2);
+        const scored = availableModels.map((id) => {
+          const low = id.toLowerCase();
+          const score = kw.reduce((n, k) => n + (low.includes(k) ? 1 : 0), 0);
+          return { id, score };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        const top = scored.slice(0, 15).map((x) => x.id);
+        err.availableModels = top;
+        err.allModelsCount = availableModels.length;
+        err.message += `\n\n此服务商实际可用 model 名（Top 15，全部 ${availableModels.length} 个）：\n${top.join('\n')}\n\n若当前配置的 model="${cfg.model}" 不在其中，改成上面某个再测试连接。`;
+      }
+      throw err;
+    }
   }
 
   status() {
