@@ -1135,7 +1135,7 @@ input:focus, select:focus {
   <!-- 一键动作条 -->
   <div style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 4px">
     <button class="btn btn-ghost" style="margin:0;padding:8px 14px;font-size:12px;width:auto" onclick="bulkReconnectAll(this)">🔌 一键重连所有交易所</button>
-    <button class="btn btn-ghost" style="margin:0;padding:8px 14px;font-size:12px;width:auto;border-color:var(--red);color:var(--red)" onclick="bulkResetDemo(this)">🔄 Demo 重置（停网格+撤单+平仓+清零）</button>
+<!-- Round 74：Demo 重置按钮删除——用户全 LIVE 用不上，只清 paper 模式 -->
     <span id="bulk-status" class="muted" style="font-size:12px;align-self:center"></span>
   </div>
   <!-- 一键重连结果面板：清晰显示每家实时状态 -->
@@ -3175,13 +3175,17 @@ function renderOverview(data) {
   const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX' };
   const perEx = ['de','ex','rs','on','pl','sx'].map(p => {
     const v = data[p]?.volume;
-    return { name: exNames[p], vol: Number.isFinite(v) ? v : 0 };
+    return { name: exNames[p], vol: Number.isFinite(v) ? v : 0, running: !!data[p]?.running };
   });
   const tip = $('tot-vol-tip');
   if (tip) {
+    // Round 74：区分"未运行"（灰色标签）与"运行中 0 成交"（无标签）
     tip.innerHTML = perEx
       .sort((a,b) => b.vol - a.vol)
-      .map(x => `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-mut)">${x.name}</span><span style="font-variant-numeric:tabular-nums">${fmt(x.vol)}</span></div>`)
+      .map(x => {
+        const tag = x.running ? '' : ' <span style="color:var(--v2-mut);font-size:10px">(未运行)</span>';
+        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-mut)">${x.name}${tag}</span><span style="font-variant-numeric:tabular-nums">${fmt(x.vol)}</span></div>`;
+      })
       .join('')
       + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span>合计</span><span style="font-variant-numeric:tabular-nums">${fmt(totVolume)}</span></div>`;
   }
