@@ -1051,6 +1051,70 @@ input:focus, select:focus {
   .btn { box-shadow: 3px 3px 0 var(--v3-outline) !important; }
   .panel:hover, .ov-card:hover, .total-card:hover { transform: none !important; }
 }
+
+/* ── 宠物动画（Round 78）─────────────────────────────────────────── */
+/* 待机呼吸：轻微上下浮 + 呼吸缩放，2.6s 一次循环 */
+@keyframes petBreathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-3px) scale(1.045); }
+}
+.pet-icon {
+  display: inline-block;
+  font-size: 56px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.35));
+  animation: petBreathe 2.6s ease-in-out infinite;
+  will-change: transform;
+  transform-origin: center bottom;
+  cursor: pointer;
+}
+/* 进化时闪光：放大 + 摆头 + 金光 + 亮度爆一下 */
+@keyframes petLevelUp {
+  0%   { transform: scale(1)   rotate(0);    filter: brightness(1)   drop-shadow(0 2px 6px rgba(0,0,0,.35)); }
+  15%  { transform: scale(1.5) rotate(-14deg); filter: brightness(2.2) drop-shadow(0 0 22px #fbbf24); }
+  30%  { transform: scale(1.5) rotate( 14deg); filter: brightness(2.2) drop-shadow(0 0 22px #fbbf24); }
+  45%  { transform: scale(1.4) rotate(-10deg); filter: brightness(1.9) drop-shadow(0 0 18px #fbbf24); }
+  60%  { transform: scale(1.3) rotate(  6deg); filter: brightness(1.6) drop-shadow(0 0 14px #fbbf24); }
+  80%  { transform: scale(1.1) rotate(  0);    filter: brightness(1.2) drop-shadow(0 0  8px #fbbf24); }
+  100% { transform: scale(1)   rotate(0);    filter: brightness(1)   drop-shadow(0 2px 6px rgba(0,0,0,.35)); }
+}
+.pet-icon.pet-level-up {
+  animation: petLevelUp 2.2s ease-out;
+}
+/* 点击宠物：小跳一下（reward feedback） */
+@keyframes petPoke {
+  0%,100% { transform: translateY(0) scale(1); }
+  30%     { transform: translateY(-10px) scale(1.15) rotate(-8deg); }
+  60%     { transform: translateY(0) scale(0.95); }
+}
+.pet-icon.pet-poke { animation: petPoke .5s ease-out; }
+/* 进化恭喜条：宠物卡右上角贴金色 ribbon */
+.pet-toast {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: linear-gradient(135deg, #fde68a, #f59e0b);
+  color: #1e293b;
+  font-weight: 800;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  box-shadow: 0 8px 24px rgba(251, 191, 36, 0.55), 0 0 0 2px rgba(255,255,255,.3) inset;
+  opacity: 0;
+  transform: translateY(-10px) scale(.9);
+  transition: opacity .35s ease, transform .35s ease;
+  pointer-events: none;
+  z-index: 5;
+  letter-spacing: .02em;
+}
+.pet-toast.show { opacity: 1; transform: translateY(0) scale(1); }
+.pet-toast.hide { opacity: 0; transform: translateY(-6px) scale(.95); }
+/* prefers-reduced-motion: 尊重系统偏好，动画关掉 */
+@media (prefers-reduced-motion: reduce) {
+  .pet-icon { animation: none !important; }
+  .pet-icon.pet-level-up, .pet-icon.pet-poke { animation: none !important; }
+  .pet-toast { transition: none !important; }
+}
 </style>
 </head>
 <body>
@@ -3880,6 +3944,7 @@ function petFmtNum(n) {
   if (n >= 1e3) return (n/1e3).toFixed(1) + 'k';
   return Math.round(n).toLocaleString();
 }
+const _petPrevLevel = {};   // key → 上次渲染时的 level，用来侦测进化事件
 function petRenderCard(k, entry, species, thresholds) {
   const card = document.getElementById(`${k}-pet-card`);
   if (!card) return;
@@ -3894,9 +3959,15 @@ function petRenderCard(k, entry, species, thresholds) {
     const need = Math.max(0, entry.nextThreshold - entry.feed);
     tipText = `再吃 ${petFmtNum(need)} 进化到 Lv ${entry.level + 2} · ${stages[entry.level + 1] || '?'}`;
   }
+  // 检测进化：第一次渲染 (_petPrevLevel[k] undefined) 不算，之后 level 涨了才 flash
+  const prevLv = _petPrevLevel[k];
+  const isLevelUp = prevLv != null && entry.level > prevLv;
+  _petPrevLevel[k] = entry.level;
+
+  card.style.position = 'relative';
   card.innerHTML = `
     <div style="display:flex;align-items:center;gap:14px">
-      <div style="font-size:56px;line-height:1;filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))">${icon}</div>
+      <div class="pet-icon" data-k="${k}" title="点我戳一下">${icon}</div>
       <div style="flex:1;min-width:0">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:2px">
           <div style="font-size:15px;font-weight:700;color:${color}">${species.name} · ${lvLabel}</div>
@@ -3910,6 +3981,35 @@ function petRenderCard(k, entry, species, thresholds) {
       </div>
     </div>
   `;
+  const iconEl = card.querySelector('.pet-icon');
+  // 点击宠物 → 小跳一下（reward feedback，无副作用）
+  if (iconEl) {
+    iconEl.addEventListener('click', () => {
+      iconEl.classList.remove('pet-poke');
+      // 强制 reflow 才能重新触发同一动画
+      void iconEl.offsetWidth;
+      iconEl.classList.add('pet-poke');
+      setTimeout(() => iconEl.classList.remove('pet-poke'), 550);
+    });
+  }
+  // 进化了：闪光 + 贴金色 ribbon 恭喜条 4 秒
+  if (isLevelUp && iconEl) {
+    void iconEl.offsetWidth;
+    iconEl.classList.add('pet-level-up');
+    setTimeout(() => iconEl.classList.remove('pet-level-up'), 2400);
+
+    const toast = document.createElement('div');
+    toast.className = 'pet-toast';
+    toast.textContent = `🎉 进化！Lv ${prevLv + 1} → Lv ${entry.level + 1} · ${icon}`;
+    card.appendChild(toast);
+    // 双 rAF 触发 transition
+    requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add('show')));
+    setTimeout(() => {
+      toast.classList.remove('show');
+      toast.classList.add('hide');
+      setTimeout(() => toast.remove(), 400);
+    }, 4000);
+  }
 }
 async function petsRefresh() {
   try {
