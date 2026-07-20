@@ -663,6 +663,37 @@ export class StandXExchange extends EventEmitter {
    * 看链上真实数据（不用 tail Railway 日志）。用于诊断 fetchOpenOrders /
    * cancel_order 字段名不对导致的假死。
    */
+  /**
+   * Round 75：探测 volume endpoint。StandX gateway 对所有路径返 401 无法预探测，
+   * 只能试常见命名。任一命中就返 volume；全 miss 返 null 让 bot fallback 到
+   * 本地 fill 累加（StandX 目前没 WS fill event，本地累加会 0）。
+   */
+  async getStats() {
+    const attempts = [
+      '/api/query_portfolio',
+      '/api/query_account_stats',
+      '/api/query_trading_summary',
+      '/api/query_user_stats',
+    ];
+    for (const path of attempts) {
+      try {
+        const j = await this._authGet(path, 4000);
+        if (j?.code === 0 || (j && !j.code)) {
+          const d = j?.data || j?.result || j;
+          const v = Number(d?.volume30d || d?.total_volume || d?.volume || d?.trading_volume);
+          if (Number.isFinite(v) && v > 0) {
+            if (!this._statsPathLogged) {
+              this._statsPathLogged = true;
+              try { console.log(`[StandX] getStats 命中 ${path}, volume=${v}`); } catch {}
+            }
+            return { volume: v };
+          }
+        }
+      } catch { /* 换下一个 */ }
+    }
+    return null;
+  }
+
   async getDebugSnapshot() {
     const symbol = this._sym(1) || 'BTC-USD';
     const snap = {
