@@ -91,17 +91,34 @@ export async function aiChat({ system = '', messages, small = false, json = fals
     }
 
     // openai 兼容协议（默认）
+    // Round 67：Kimi 系列 model（kimi-*, moonshot-*）对 response_format /
+    // max_tokens 挑剔——apikey.fun 上游转发时会返 "Upstream request failed"。
+    // Round 66 test() 用最裸 payload {model,messages} 就通，所以哨兵/日报/
+    // 分析走 aiChat 全参数 payload 一律 fail。
+    // 检测到 kimi/moonshot → 用最简 payload，靠 system prompt 约束 JSON 格式。
+    const isKimi = /^(kimi|moonshot|k[23])[-.\/_]?/i.test(model);
+    const body = isKimi
+      ? {
+          model,
+          messages: [
+            ...(system ? [{ role: 'system', content: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] : []),
+            ...messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+          ],
+          temperature,
+          // 无 max_tokens / response_format —— Kimi 上游会拒
+        }
+      : {
+          model, max_tokens: maxTokens, temperature,
+          messages: [
+            ...(system ? [{ role: 'system', content: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] : []),
+            ...messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+          ],
+          ...(json ? { response_format: { type: 'json_object' } } : {}),
+        };
     const res = await fetch(cfg.baseUrl + '/chat/completions', {
       method: 'POST', signal,
       headers: { Authorization: 'Bearer ' + cfg.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model, max_tokens: maxTokens, temperature,
-        messages: [
-          ...(system ? [{ role: 'system', content: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] : []),
-          ...messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
-        ],
-        ...(json ? { response_format: { type: 'json_object' } } : {}),
-      }),
+      body: JSON.stringify(body),
     });
     const j = await res.json().catch(() => null);
     if (!res.ok) throw new Error(`AI 接口错误 HTTP ${res.status}: ${j?.error?.message || JSON.stringify(j || {}).slice(0, 200)}`);
