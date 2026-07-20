@@ -8,7 +8,7 @@
 //   4. 状态持久化在 .state.json 的 'pets' key 下，重启不掉
 import { loadSnapshot, saveSnapshot } from './persist.js';
 
-const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx'];
+const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg'];
 
 // 6 阶阈值（USDC 累积交易量）——指数递增，越到后期越难升
 export const LEVEL_THRESHOLDS = [0, 100, 1000, 5000, 25000, 100000];
@@ -53,6 +53,12 @@ export const PET_SPECIES = {
     stageNames: ['麟卵', '幼麟', '花麟', '独角麟', '火麒', '麒麟神'],
     fallback: ['🥚', '🐐', '🦌', '🦄', '🔥', '👑'],
     color: '#eab308',
+  },
+  bg: {
+    name: '饕餮', theme: '四凶之首 · 贪食万宝',
+    stageNames: ['凶卵', '饕餮幼', '兽面纹', '青铜饕', '万宝食', '饕餮神'],
+    fallback: ['🥚', '👺', '👹', '🗿', '💰', '👑'],
+    color: '#f97316',
   },
 };
 

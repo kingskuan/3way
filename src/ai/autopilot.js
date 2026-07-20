@@ -23,8 +23,8 @@ import { aiChat, extractJson, notify, getAiConfig } from './provider.js';
 import { analyzeTrend } from '../trend.js';
 import { loadSnapshot, saveSnapshot } from '../persist.js';
 
-const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX' };
-const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx'];
+const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget' };
+const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg'];
 
 // 风格参数：越保守区间越宽（成交少但安全）、格距/单量越小、日亏熔断越紧。
 const STYLES = {

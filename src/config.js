@@ -119,6 +119,18 @@ export function getConfig() {
     proxy: process.env.SX_PROXY || globalProxy,
   };
 
+  // ── Bitget Perps (bitget.com, USDT-M futures) ─────────────────────────────
+  // Round 82 Phase 1：paper only。LIVE 需 api key + secret + passphrase（Bitget
+  // 官方要求 3 段凭证），去 bitget.com → API Management → Create API 创建。
+  const bg = {
+    mode: (process.env.BG_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
+    apiKey: process.env.BG_API_KEY || '',
+    secretKey: process.env.BG_SECRET_KEY || '',
+    passphrase: process.env.BG_PASSPHRASE || '',
+    startBalance: Number(process.env.PAPER_BALANCE || 10000),
+    proxy: process.env.BG_PROXY || globalProxy,
+  };
+
   // ── Ondo Perps ────────────────────────────────────────────────────────────
   const onNet = (process.env.ON_NETWORK || 'mainnet').toLowerCase();
   const onDefaults = onNet === 'testnet'
@@ -161,6 +173,7 @@ export function getConfig() {
     on,
     pl,
     sx,
+    bg,
   };
 }
 
