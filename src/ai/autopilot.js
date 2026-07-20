@@ -50,11 +50,14 @@ const STYLES = {
     rangePct: 0.03,
     gridCount: 24,
     sizeFractionOfBalance: 0.04,
-    maxLeverage: 10,   // Round 37：用户要 10x（原 8x）。3% 区间 + 24 格下每格约
-                       // 0.125% profit——覆盖手续费足够；同时 10x lev 意味着 3%
-                       // 反向跑到区间边缘时 = 30% 亏损，仍在 dailyLossPctLimit=5%
-                       // 熔断上限内（护栏能拦住，但边界 case 有 slippage 风险）。
-    dailyLossPctLimit: 5,
+    maxLeverage: 15,   // Round 81：用户要 15x（Round 37 是 10x, 更早 8x）。
+                       // 15x × 3% 区间边缘 = 45% 亏损，护栏 dailyLossPctLimit 必须
+                       // 相应放宽到 8%（原 5%）才能给网格留出跑动空间——否则
+                       // 45%/5% = 网格走到 1/9 区间就熔断锁死，等于永远起不来。
+                       // 8% dailyLoss 触发大约对应网格走到 1/5.6 区间——仍在
+                       // 早期就能拦住雪崩，同时给正常震荡足够呼吸空间。
+                       // 单币 maxLeverage 上限仍由 exchange 决定（很多币 <=20x）。
+    dailyLossPctLimit: 8,
     consecutiveLossLimit: 4,
     outOfRangeAction: 'recover',
   },
