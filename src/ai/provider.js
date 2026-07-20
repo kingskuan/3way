@@ -98,9 +98,14 @@ export async function aiChat({ system = '', messages, small = false, json = fals
     //   - 大概率也拒 role='system'（Round 67 保留 system 仍 fail）
     // Round 68：kimi 分支彻底最简——system 融合到第一条 user message 里，
     // 不发 role='system'。json 模式靠 prompt 约束。
+    // Round 72：apikey.fun 中转平台无论啥 model 都对参数极严格（Console Go
+    // 代理会拒 response_format/max_tokens/role=system 等）——user 切到 GLM/
+    // Claude 走 apikey.fun 也 Upstream failed，跟 kimi 同样对待。
     const isKimi = /^(kimi|moonshot|k[23])[-.\/_]?/i.test(model);
+    const isApiKeyFun = /apikey\.fun/i.test(cfg.baseUrl || '');
+    const useMinimal = isKimi || isApiKeyFun;
     let body;
-    if (isKimi) {
+    if (useMinimal) {
       const jsonHint = json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '';
       const systemPrefix = system ? system + jsonHint + '\n\n---\n\n' : jsonHint ? jsonHint + '\n\n' : '';
       const mergedMessages = messages.map((m, i) => ({
@@ -136,7 +141,7 @@ export async function aiChat({ system = '', messages, small = false, json = fals
       // Round 69：kimi 上游拒绝时把完整 raw body 拼进 error，方便下轮定位。
       // 之前只显示 j.error.message = "Upstream request failed"，不知道上游具体拒啥
       const errDetail = j?.error?.message || rawText.slice(0, 400) || `HTTP ${res.status}`;
-      throw new Error(`AI 接口错误 HTTP ${res.status}: ${errDetail}${isKimi ? ` [kimi payload: model=${model}, msgs=${body.messages?.length || 0}, sysLen=${(system || '').length}, firstUserLen=${(body.messages?.[0]?.content || '').length}]` : ''}`);
+      throw new Error(`AI 接口错误 HTTP ${res.status}: ${errDetail}${useMinimal ? ` [minimal payload: model=${model}, msgs=${body.messages?.length || 0}, firstMsgLen=${(body.messages?.[0]?.content || '').length}]` : ''}`);
     }
     const text = j?.choices?.[0]?.message?.content;
     const finishReason = j?.choices?.[0]?.finish_reason;
