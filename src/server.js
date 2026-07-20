@@ -709,7 +709,19 @@ const server = http.createServer(async (request, res) => {
     let file = p === '/' ? '/index.html' : p;
     const full = path.join(ROOT, 'public', path.normalize(file).replace(/^(\.\.[/\\])+/, ''));
     if (fs.existsSync(full) && fs.statSync(full).isFile()) {
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream' });
+      const ext = path.extname(full);
+      // Round 87：cache 策略——HTML 每次强制 revalidate（否则用户升级后 iOS
+      // Safari 一直看老 JS 缓存的 UI，报"undefined"/"无 Bitget 按钮"其实
+      // 代码早修好了）。PNG/font/等 asset 可长期缓存。
+      const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+      if (ext === '.html' || full.endsWith('/index.html')) {
+        headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+        headers['Pragma'] = 'no-cache';
+        headers['Expires'] = '0';
+      } else if (['.png', '.woff2', '.ico', '.svg'].includes(ext)) {
+        headers['Cache-Control'] = 'public, max-age=86400';   // 1 天
+      }
+      res.writeHead(200, headers);
       return fs.createReadStream(full).pipe(res);
     }
 
