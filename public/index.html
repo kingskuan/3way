@@ -2797,6 +2797,15 @@ function makeExchangeCtrl(prefix, chartId) {
       id: 'gridLines',
       afterDraw(c) {
         const s = lastState; if (!s?.grid?.levels || !s.config) return;
+        // Round 61：grid.levels 若与 lastPrice 数量级差 3x+，视为陈旧，不画。
+        // 场景：切市场后 SSE 推送里 grid.levels 还是老市场的。
+        if (Number.isFinite(s.lastPrice) && s.lastPrice > 0) {
+          const gridMid = (s.grid.levels[0] + s.grid.levels[s.grid.levels.length - 1]) / 2;
+          if (gridMid > 0) {
+            const drift = Math.max(gridMid, s.lastPrice) / Math.min(gridMid, s.lastPrice);
+            if (drift > 3) return;   // 陈旧 grid，跳过绘制
+          }
+        }
         const { ctx, chartArea: {left,right}, scales: {y} } = c;
         ctx.save();
         s.grid.levels.forEach((lvl, i) => {
@@ -2824,11 +2833,27 @@ function makeExchangeCtrl(prefix, chartId) {
     // K 线只有 lastPrice 一个值时 y 自动缩得很紧，网格档位全部落在可视区外。
     let yMin, yMax;
     if (lastState?.config?.lower != null && lastState?.config?.upper != null) {
-      const pad = (lastState.config.upper - lastState.config.lower) * 0.05;
       const dataMin = data.length ? Math.min(...data) : lastState.lastPrice ?? lastState.config.lower;
       const dataMax = data.length ? Math.max(...data) : lastState.lastPrice ?? lastState.config.upper;
-      yMin = Math.min(lastState.config.lower, dataMin) - pad;
-      yMax = Math.max(lastState.config.upper, dataMax) + pad;
+      // Round 61：检测老 config 与新 candle 数量级差 3x 以上→视为陈旧不 union
+      // 场景：Extended 从 BTC (60000) 切到 ETH (1869)，config.upper 仍老值 → yMax
+      // 变成 65349、网格线画在 60-65k、跟 ETH 蜡烛混在一起。检测到就只用 candles.
+      const configMid = (lastState.config.lower + lastState.config.upper) / 2;
+      const dataMid = (dataMin + dataMax) / 2;
+      const configDataDrift = dataMid > 0 && configMid > 0
+        ? Math.max(configMid, dataMid) / Math.min(configMid, dataMid)
+        : 1;
+      if (configDataDrift <= 3) {
+        // config 与 candle 数量级一致 → union
+        const pad = (lastState.config.upper - lastState.config.lower) * 0.05;
+        yMin = Math.min(lastState.config.lower, dataMin) - pad;
+        yMax = Math.max(lastState.config.upper, dataMax) + pad;
+      } else {
+        // 陈旧 config → 只用 candle 范围（防"BTC 老网格 + ETH 新蜡烛"y 轴爆炸）
+        const pad = (dataMax - dataMin) * 0.15 || dataMax * 0.02;
+        yMin = dataMin - pad;
+        yMax = dataMax + pad;
+      }
     }
     const config = {
       type: 'line',
