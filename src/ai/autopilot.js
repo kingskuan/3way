@@ -426,11 +426,27 @@ class Autopilot {
       // lower/upper 必须对齐 stepPrice！之前用 stepSize 对齐，Ondo 报
       // "doesn't snap to min price increment 0.1" 就是这个原因。
       const priceTick = c.stepPrice || c.stepSize || 0;
+      // Round 59：如果 stepPrice 相对 price 太粗（e.g. LIT-USD price=2.21
+      // stepPrice=1，一个 tick 就是 45% price），网格根本没法跑。之前 fallback
+      // 会强撑 `upper = lower + tick * gridCount` = [2, 26]，价格 2.21 永远
+      // 贴下轨。直接 skip 这类候选。
+      if (priceTick > 0 && priceTick > price * rangePct * 0.5) {
+        rejections.push(`${c.name}:tick 太粗(${priceTick} vs price ${price} * ${(rangePct*100).toFixed(1)}%)`);
+        continue;
+      }
       let lower = _stepAlign(price * (1 - rangePct), priceTick);
       let upper = _stepAlign(price * (1 + rangePct), priceTick);
       if (!(upper > lower)) {
-        if (priceTick > 0) upper = lower + priceTick * s.gridCount;
-        if (!(upper > lower)) { rejections.push(`${c.name}:step 太大`); continue; }
+        rejections.push(`${c.name}:step 太大`);
+        continue;
+      }
+      // Round 59：兜底 sanity check——若对齐后的范围明显偏离 intended（比如
+      // ±10% 以上偏差），也 skip（防 stepPrice 极端小/大导致的浮点异常）
+      const intendedWidth = price * rangePct * 2;
+      const actualWidth = upper - lower;
+      if (actualWidth > intendedWidth * 3 || actualWidth < intendedWidth * 0.3) {
+        rejections.push(`${c.name}:range 异常(实际 ${actualWidth.toFixed(4)} vs 期望 ${intendedWidth.toFixed(4)})`);
+        continue;
       }
       const leverage = Math.min(s.maxLeverage, c.maxLeverage || s.maxLeverage);
       const stepUnit = c.stepSize || c.minOrderSize || 1e-6;
