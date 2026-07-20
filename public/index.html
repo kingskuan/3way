@@ -3418,7 +3418,7 @@ function renderOverview(data) {
   $('tot-volume').textContent = fmt(totVolume);
   $('tot-rungs').textContent = totRungs;
   // 分所交易量存 dataset，tooltip 从这里读
-  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX' };
+  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget' };
   const perEx = ['de','ex','rs','on','pl','sx','bg'].map(p => {
     const v = data[p]?.volume;
     return { name: exNames[p], vol: Number.isFinite(v) ? v : 0, running: !!data[p]?.running };
@@ -3435,11 +3435,11 @@ function renderOverview(data) {
       .join('')
       + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span>合计</span><span style="font-variant-numeric:tabular-nums">${fmt(totVolume)}</span></div>`;
   }
+  // Round 84：简化——只显示 X 运行中（不再拼 DE / EX / RS / ON / PL / SX : LIVE...）
   $('tot-running').innerHTML = running === 0
     ? '<span class="muted">全部停止</span>'
-    : `<span class="up">${running}/5 运行中</span>`;
-  const modes = ['de','ex','rs','on','pl','sx','bg'].map(p => data[p]?.mode?.toUpperCase() || 'PAPER').join(' / ');
-  $('tot-modes').textContent = `DE / EX / RS / ON / PL / SX : ${modes}`;
+    : `<span class="up">${running} 运行中</span>`;
+  const totMode = $('tot-modes'); if (totMode) totMode.textContent = '';
 
   // Hero 卡的 demo/live 计数（就算 Live 是 0 也照样显示）
   const modesArr = ['de','ex','rs','on','pl','sx','bg'].map(p => (data[p]?.mode || 'paper').toLowerCase());
