@@ -13,37 +13,46 @@ const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx'];
 // 6 阶阈值（USDC 累积交易量）——指数递增，越到后期越难升
 export const LEVEL_THRESHOLDS = [0, 100, 1000, 5000, 25000, 100000];
 
-// 每所专属宠物：6 阶 emoji 序列 + 主题名 + 颜色（跟 DEX 主色对应）
+// 每所专属宠物：中国古代神兽 · 6 阶进化 · gpt-image-1 手绘立绘
+//   stageNames: 每阶专名（UI 显示）
+//   fallback: 图片加载失败时的 emoji 兜底
+//   image path 惯例：/pets/{key}-lv{1..6}.png
 export const PET_SPECIES = {
   de: {
-    name: '声波幼鸟', theme: 'Decibel · 声之息',
-    stages: ['🥚', '🐣', '🐥', '🦜', '🦉', '🦅'],
-    color: '#f59e0b',
+    name: '朱雀', theme: '南方火神 · 声鸣震天',
+    stageNames: ['灵卵', '雏雀', '鸣禽', '赤翎', '焚天雀', '朱雀神'],
+    fallback: ['🥚', '🐣', '🐦', '🦜', '🔥', '🦅'],
+    color: '#dc2626',
   },
   ex: {
-    name: '延展链龙', theme: 'Extended · 链之延',
-    stages: ['🥚', '🐛', '🐍', '🦎', '🐊', '🐉'],
-    color: '#3b82f6',
+    name: '青龙', theme: '东方木神 · 千里游延',
+    stageNames: ['龙卵', '虺', '蛟', '应龙', '蟠龙', '青龙神'],
+    fallback: ['🥚', '🐛', '🐍', '🦎', '🐊', '🐉'],
+    color: '#0ea5e9',
   },
   rs: {
-    name: '崛起火凤', theme: 'RISEx · 上升之翼',
-    stages: ['🥚', '🐣', '🕊️', '🦩', '🦚', '🔥'],
+    name: '鲲鹏', theme: '化鲲为鹏 · 扶摇直上',
+    stageNames: ['鱼卵', '幼鲲', '大鲲', '巨鲲', '化鹏', '鲲鹏神'],
+    fallback: ['🥚', '🐟', '🐠', '🦈', '🐋', '🦅'],
     color: '#10b981',
   },
   on: {
-    name: '深潮巨兽', theme: 'Ondo · 波动之海',
-    stages: ['🥚', '🐚', '🐟', '🐡', '🐙', '🐋'],
-    color: '#06b6d4',
+    name: '玄武', theme: '北方水神 · 龟蛇合体',
+    stageNames: ['神卵', '灵龟', '玄龟', '蛇龟合', '千岁玄', '玄武神'],
+    fallback: ['🥚', '🐚', '🐢', '🐍', '🌊', '🐉'],
+    color: '#0284c7',
   },
   pl: {
-    name: '永劫影狼', theme: 'Perpl · 永续之影',
-    stages: ['🥚', '🐺', '🦊', '🐆', '🦁', '🐯'],
-    color: '#ec4899',
+    name: '白虎', theme: '西方金神 · 永镇长存',
+    stageNames: ['虎卵', '幼虎', '猛虎', '金虎', '山君', '白虎神'],
+    fallback: ['🥚', '🐈', '🐅', '🐆', '🐯', '👑'],
+    color: '#e2e8f0',
   },
   sx: {
-    name: '战星魔兽', theme: 'StandX · 立地之魂',
-    stages: ['🥚', '🦎', '🦂', '🦖', '🐲', '👑'],
-    color: '#8b5cf6',
+    name: '麒麟', theme: '仁兽至圣 · 现世太平',
+    stageNames: ['麟卵', '幼麟', '花麟', '独角麟', '火麒', '麒麟神'],
+    fallback: ['🥚', '🐐', '🦌', '🦄', '🔥', '👑'],
+    color: '#eab308',
   },
 };
 
