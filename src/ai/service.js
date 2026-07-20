@@ -117,6 +117,10 @@ class AiService {
    */
   _isSlowModel() {
     const cfg = getAiConfig();
+    // Round 72：apikey.fun 中转平台无论啥 model 都对大 payload 慢+挑剔——
+    // 用 compact snapshot 让请求快，避免 iOS 30s Load failed 和 400 Upstream
+    // failed。GLM/Claude 走 apikey.fun 也一样。
+    if (/apikey\.fun/i.test(cfg.baseUrl || '')) return true;
     return /^(kimi|moonshot|k[23])[-.\/_]?/i.test(cfg.model);
   }
 
@@ -436,12 +440,18 @@ class AiService {
       ],
     });
     const j = extractJson(text);
-    if (!j) return { reply: text.slice(0, 1000), action: { type: 'none' } };
+    if (!j) {
+      // Round 72：extractJson 失败 → AI 返自然语言。返自然语言而不是空回复
+      const reply = text?.trim() || '（AI 返回为空，可能上游超时或被拒。换一句话或稍后再试）';
+      return { reply: reply.slice(0, 1000), action: { type: 'none' } };
+    }
     // 白名单过滤：任何未知 action 一律置为 none
     const ALLOWED = ['adjust_range', 'stop_grid', 'cancel_orders', 'close_position', 'reconnect', 'start_recovery', 'start_grid', 'none'];
     if (!j.action || !ALLOWED.includes(j.action.type)) j.action = { type: 'none' };
     if (j.action.type !== 'none' && !['de', 'ex', 'rs', 'on', 'pl', 'sx'].includes(j.action.exchange)) j.action = { type: 'none' };
-    return { reply: j.reply || '', action: j.action };
+    // Round 72：空 reply 兜底 —— 不返空，返 AI 原文或提示
+    const finalReply = (j.reply && j.reply.trim()) || text?.trim() || '（AI 无有效回复，请换一句话或稍后重试）';
+    return { reply: finalReply.slice(0, 1000), action: j.action };
   }
 
   // ---------- 5) 出区间建议（跳变触发） ----------
