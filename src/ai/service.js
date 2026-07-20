@@ -122,7 +122,11 @@ class AiService {
 
   // ---------- 1) 风控哨兵 ----------
   async runSentinel() {
-    if (this._busy.sentinel) return this.sentinel;
+    if (this._busy.sentinel) {
+      // Round 70：busy 分支之前不设 sentinelError，服务端 fallback 出现"巡检失败: 巡检失败"
+      this.sentinelError = '另一巡检正在运行中（可能上一次未完成或 AI 响应慢），请稍等 30 秒再点。';
+      return this.sentinel;
+    }
     this._busy.sentinel = true;
     try {
       const snap = await this._snapshot();
@@ -135,16 +139,21 @@ class AiService {
           '告警里的关键词（保证金不足、频繁取消、未确认成交、接口异常、暂停补单）；数据长时间未更新。',
           '注意：paper 是模拟盘，问题降级处理；未运行的交易所 level 用 ok、summary 写"未运行"即可。',
           '严格控制字数：整体 summary ≤30 字，每所 summary ≤25 字，advice ≤25 字（无则空串）。JSON 必须完整闭合。',
-          '回复 JSON：{"overall":{"level":"ok|warn|critical","summary":"..."},',
-          '"per":{"de":{"level":"ok|warn|critical","summary":"...","advice":"..."},"ex":{...},"rs":{...},"on":{...},"pl":{...}}}',
+          // Round 70：Kimi 不支持 response_format=json_object，需要 prompt 强约束
+          '⚠ 极其重要：直接从 { 字符开始输出，不要有任何前置文字、不要 markdown 代码块、不要解释。整个响应必须是且仅是一个 JSON 对象。',
+          '示例格式：{"overall":{"level":"ok","summary":"..."},',
+          '"per":{"de":{"level":"ok|warn|critical","summary":"...","advice":"..."},"ex":{...},"rs":{...},"on":{...},"pl":{...},"sx":{...}}}',
         ].join('\n'),
-        messages: [{ role: 'user', content: '状态快照：\n' + JSON.stringify(snap) }],
+        messages: [{ role: 'user', content: '状态快照：\n' + JSON.stringify(snap) + '\n\n直接返回 JSON 对象（{ 开始，} 结束），不要任何其他文字。' }],
       });
       const j = extractJson(text);
       // 解析失败（模型截断/格式跑偏）不是"风险事件"，别推 Telegram 假警报。
       // 落到 sentinelError 让 UI 能看到；本轮 sentinel 保留上次结果不覆盖。
       if (!j || !j.overall) {
-        this.sentinelError = 'AI 返回无法解析（可能超 maxTokens 被截断）：' + (text || '').slice(0, 200);
+        // Round 70：把 raw text 前 300 字符 return 给用户看，方便定位是 kimi
+        // 返自然语言 / 被截断 / 空返回
+        const preview = (text || '').slice(0, 300).replace(/\s+/g, ' ');
+        this.sentinelError = `AI 返回无法解析为 JSON（${text ? text.length + '字' : '空返回'}）：${preview || '(无内容)'}`;
         return this.sentinel;
       }
       const overall = j.overall;
