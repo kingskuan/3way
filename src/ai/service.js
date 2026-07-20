@@ -413,7 +413,9 @@ class AiService {
     const t0 = Date.now();
     const cfg = getAiConfig();
     try {
-      const text = await aiChat({ small: false, maxTokens: 50, temperature: 0, messages: [{ role: 'user', content: '回复"连接正常"四个字。' }] });
+      // Round 65：temperature=0 部分上游（Moonshot Kimi 官方要求 ≥ 0.1，默认 0.3）
+      // 会拒绝→ apikey.fun 转"Upstream request failed"。用 0.3 兼容所有主流上游。
+      const text = await aiChat({ small: false, maxTokens: 50, temperature: 0.3, messages: [{ role: 'user', content: '回复"连接正常"四个字。' }] });
       return { ok: true, ms: Date.now() - t0, model: cfg.model, provider: cfg.provider, reply: text.slice(0, 50) };
     } catch (e) {
       // Round 64：失败时尝试拉 /v1/models（OpenAI 兼容）列出实际可用 model 名。
