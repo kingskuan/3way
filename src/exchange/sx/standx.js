@@ -664,34 +664,44 @@ export class StandXExchange extends EventEmitter {
    * cancel_order 字段名不对导致的假死。
    */
   /**
-   * Round 75：探测 volume endpoint。StandX gateway 对所有路径返 401 无法预探测，
-   * 只能试常见命名。任一命中就返 volume；全 miss 返 null 让 bot fallback 到
-   * 本地 fill 累加（StandX 目前没 WS fill event，本地累加会 0）。
+   * Round 76：从 StandX web bundle JS 里扒到真实的用户交易端点是
+   * /api/query_trades (auth)——这是用户自己的 fill 历史。sum qty*price 就是 volume。
+   * 我 curl standx.com 的 next.js chunks 抓的完整 endpoint list 里没有专门
+   * 的 volume/portfolio_summary 端点，只能靠 trade history 累加。
    */
   async getStats() {
-    const attempts = [
-      '/api/query_portfolio',
-      '/api/query_account_stats',
-      '/api/query_trading_summary',
-      '/api/query_user_stats',
-    ];
-    for (const path of attempts) {
-      try {
-        const j = await this._authGet(path, 4000);
-        if (j?.code === 0 || (j && !j.code)) {
-          const d = j?.data || j?.result || j;
-          const v = Number(d?.volume30d || d?.total_volume || d?.volume || d?.trading_volume);
-          if (Number.isFinite(v) && v > 0) {
-            if (!this._statsPathLogged) {
-              this._statsPathLogged = true;
-              try { console.log(`[StandX] getStats 命中 ${path}, volume=${v}`); } catch {}
-            }
-            return { volume: v };
-          }
+    try {
+      const j = await this._authGet('/api/query_trades?limit=500', 6000);
+      // 响应结构猜测：{code:0, data|result: [{symbol, qty, price, side, ts, ...}]}
+      const raw = Array.isArray(j) ? j
+        : (Array.isArray(j?.data) ? j.data
+        : (Array.isArray(j?.result) ? j.result
+        : (Array.isArray(j?.trades) ? j.trades : null)));
+      if (!raw) {
+        if (!this._statsShapeLogged) {
+          this._statsShapeLogged = true;
+          try { console.log(`[StandX] query_trades 响应结构未识别: keys=${Object.keys(j || {}).join(',')}, first item=${JSON.stringify((j && (j.data || j.result || j.trades || [])[0]) || j).slice(0, 200)}`); } catch {}
         }
-      } catch { /* 换下一个 */ }
+        return null;
+      }
+      let volume = 0;
+      for (const t of raw) {
+        const qty = Number(t.qty ?? t.size ?? t.amount ?? t.filled_qty ?? 0);
+        const price = Number(t.price ?? t.avg_price ?? t.fill_price ?? 0);
+        if (qty > 0 && price > 0) volume += qty * price;
+      }
+      if (!this._statsSampleLogged && raw.length > 0) {
+        this._statsSampleLogged = true;
+        try { console.log(`[StandX] query_trades ${raw.length} 单，累计 volume=${volume.toFixed(2)}, first sample: ${JSON.stringify(raw[0]).slice(0, 200)}`); } catch {}
+      }
+      return { volume: Math.round(volume * 100) / 100 };
+    } catch (e) {
+      if (!this._statsErrLogged) {
+        this._statsErrLogged = true;
+        try { console.log(`[StandX] getStats 抛错: ${e?.message || e}`); } catch {}
+      }
+      return null;
     }
-    return null;
   }
 
   async getDebugSnapshot() {
