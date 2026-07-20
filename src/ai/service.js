@@ -324,10 +324,13 @@ class AiService {
   // ---------- 3) 市况分析 ----------
   /** 核心分析：给定交易所+市场，多周期指标 -> AI 市况判断（analyze 与定时 BTC 报告共用）。 */
   async _regime(key, marketId, ctx = {}) {
+    const _t0 = Date.now();
     const ex = this.exchanges[key];
     const market = (await ex.getMarkets()).find((m) => m.marketId === Number(marketId));
+    // Round 73：3 个周期 K 线并发拉（原本 sequential 24s，parallel 8s）
     const frames = {};
-    for (const [label, sec] of [['4小时', 14400], ['1小时', 3600], ['15分钟', 900]]) {
+    const framePairs = [['4小时', 14400], ['1小时', 3600], ['15分钟', 900]];
+    await Promise.all(framePairs.map(async ([label, sec]) => {
       try {
         const candles = await ex.getCandles(marketId, sec, 200);
         if (candles?.length >= 30) {
@@ -335,7 +338,8 @@ class AiService {
           frames[label] = { trend: a.trend, slopePct: a.slopePct, atrPct: a.atrPct, emaGap: a.emaFast && a.emaSlow ? Math.round((a.emaFast - a.emaSlow) / a.emaSlow * 10000) / 100 : null };
         }
       } catch { /* 单周期失败可容忍 */ }
-    }
+    }));
+    try { console.log(`[AI] _regime ${key}/${marketId} K 线并发拉完 ${Date.now() - _t0}ms, frames=${Object.keys(frames).length}`); } catch {}
     const price = await ex.getPrice(marketId).catch(() => null);
     // Round 56：K 线全空时不 throw ——用 price + market metadata 出简易分析。
     // Ondo 曾遇 `/v1/perps/history` 端点返 t=[] 空（Round 56 已加 fallback），
