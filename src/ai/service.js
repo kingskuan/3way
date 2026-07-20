@@ -79,10 +79,25 @@ class AiService {
   }
 
   // ---------- 状态快照（喂给 AI 的紧凑上下文） ----------
-  _snapshot() {
+  async _snapshot() {
     const out = {};
     for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
-      const s = this.bots[key].getState();
+      const bot = this.bots[key];
+      const ex = this.exchanges[key];
+      const s = bot.getState();
+      // Round 60: bot 停止后 reconcile 定时器停，s.exchangeOpenOrders 保留旧值
+      // → sentinel 报"已停止但仍剩 23 单"陈旧信息，用户手动清了也不知道。
+      // 停止时若 config 还在（有 marketId 可查），主动 fetchOpenOrders 拉真值。
+      let exchOO = s.exchangeOpenOrders;
+      if (!s.running && s.config?.marketId != null && typeof ex?.fetchOpenOrders === 'function') {
+        try {
+          const arr = await Promise.race([
+            ex.fetchOpenOrders(s.config.marketId),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+          ]);
+          if (Array.isArray(arr)) exchOO = arr.length;
+        } catch { /* keep stale value */ }
+      }
       out[key] = {
         exchange: EXNAMES[key], tradeMode: s.mode,
         running: s.running, recovery: s.recovery,
@@ -92,7 +107,7 @@ class AiService {
         equity: s.equity, balance: s.balance,
         realizedPnl: s.realizedPnl, unrealizedPnl: s.unrealizedPnl, returnPct: s.returnPct,
         position: s.position,
-        trackedOrders: s.openOrders, exchangeOpenOrders: s.exchangeOpenOrders,
+        trackedOrders: s.openOrders, exchangeOpenOrders: exchOO,
         completedRungs: s.stats?.completedRungs, volume: s.volume,
         gridConfig: s.config ? {
           mode: s.config.mode, lower: s.config.lower, upper: s.config.upper,
@@ -110,7 +125,7 @@ class AiService {
     if (this._busy.sentinel) return this.sentinel;
     this._busy.sentinel = true;
     try {
-      const snap = this._snapshot();
+      const snap = await this._snapshot();
       const text = await aiChat({
         small: true, json: true, maxTokens: 4000, temperature: 0.1,
         system: [
@@ -185,7 +200,7 @@ class AiService {
     if (this._busy.report) return this.report;
     this._busy.report = true;
     try {
-      const snap = this._snapshot();
+      const snap = await this._snapshot();
       const base = this._baseline;
       const diff = {};
       for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
@@ -328,7 +343,7 @@ class AiService {
 
   // ---------- 4) 对话操控（AI 只提议，前端确认后走现有 REST 执行） ----------
   async chatControl(message, history = []) {
-    const snap = this._snapshot();
+    const snap = await this._snapshot();
     const text = await aiChat({
       json: true, maxTokens: 2500, temperature: 0.3,
       system: [
