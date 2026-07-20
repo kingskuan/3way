@@ -65,6 +65,11 @@ if ((cfg.host === '0.0.0.0' || cfg.isCloud) && !cfg.dashboardPassword) {
     if (!cfg.pl.apiKey) missing.push(['perpl   ', 'PERPL_API_KEY', 'app.perpl.xyz/apikeys → 创建 API Key']);
     if (!cfg.pl.privateKey) missing.push(['perpl   ', 'PERPL_PRIVATE_KEY', '同上（Ed25519 私钥，只显示一次）']);
   }
+  if (cfg.bg.mode === 'live') {
+    if (!cfg.bg.apiKey) missing.push(['Bitget  ', 'BG_API_KEY', 'bitget.com → API Management → Create API']);
+    if (!cfg.bg.secretKey) missing.push(['Bitget  ', 'BG_SECRET_KEY', '同上（创建时一并显示）']);
+    if (!cfg.bg.passphrase) missing.push(['Bitget  ', 'BG_PASSPHRASE', '同上（自己设的口令，创建时和 secret 一起给）']);
+  }
   if (missing.length) {
     console.error('\n[启动失败] 有交易所被设为 live 实盘模式，但 .env 里还缺以下凭据：\n');
     for (const [ex, key, where] of missing) {
