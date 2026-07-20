@@ -412,9 +412,59 @@ class AiService {
   async test() {
     const t0 = Date.now();
     const cfg = getAiConfig();
+    // Round 66：apikey.fun kimi-k3 依然 Upstream failed（model 名对、temp 0.3
+    // 也对）→ 可能是 max_tokens 或某个参数上游拒。用最裸的 payload 直接 fetch
+    // 绕开 aiChat 的默认参数，尝试多种组合并返回第一个成功 + 完整 raw response
+    // 让用户看清上游到底说啥。
+    if (cfg.provider === 'openai' && cfg.apiKey) {
+      const attempts = [
+        { name: '标准', body: { model: cfg.model, messages: [{ role: 'user', content: '回复"连接正常"四个字。' }], max_tokens: 50, temperature: 0.3 } },
+        { name: '无 max_tokens', body: { model: cfg.model, messages: [{ role: 'user', content: '回复"连接正常"四个字。' }], temperature: 0.3 } },
+        { name: '大 max_tokens', body: { model: cfg.model, messages: [{ role: 'user', content: '回复"连接正常"四个字。' }], max_tokens: 1024, temperature: 0.7 } },
+        { name: '最裸', body: { model: cfg.model, messages: [{ role: 'user', content: 'hi' }] } },
+      ];
+      const attemptLog = [];
+      for (const a of attempts) {
+        try {
+          const r = await fetch(cfg.baseUrl + '/chat/completions', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + cfg.apiKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify(a.body),
+            signal: AbortSignal.timeout(30000),
+          });
+          const text = await r.text();
+          let j = null; try { j = JSON.parse(text); } catch {}
+          if (r.ok && j?.choices?.[0]?.message?.content) {
+            return {
+              ok: true, ms: Date.now() - t0,
+              model: cfg.model, provider: cfg.provider,
+              reply: String(j.choices[0].message.content).slice(0, 100),
+              variant: a.name,
+              attempts: attemptLog.concat([`${a.name}: HTTP ${r.status} ✓`]),
+            };
+          }
+          attemptLog.push(`${a.name}: HTTP ${r.status} - ${text.slice(0, 200)}`);
+        } catch (e) {
+          attemptLog.push(`${a.name}: 抛错 ${e?.message || e}`);
+        }
+      }
+      // 全失败 → 拉 /v1/models 附上 available list
+      let availableModels = null;
+      try {
+        const r = await fetch(cfg.baseUrl + '/models', {
+          headers: { Authorization: 'Bearer ' + cfg.apiKey },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (r.ok) {
+          const j = await r.json();
+          availableModels = (j?.data || []).map((m) => m.id).filter(Boolean);
+        }
+      } catch { /* skip */ }
+      const err = new Error(`4 种 payload 组合全失败\n\n${attemptLog.join('\n\n')}${availableModels ? `\n\n服务商实际可用 model (${availableModels.length}):\n${availableModels.slice(0, 15).join('\n')}` : ''}`);
+      throw err;
+    }
+    // 非 openai 兼容协议：走原来的 aiChat 路径（Anthropic/Gemini）
     try {
-      // Round 65：temperature=0 部分上游（Moonshot Kimi 官方要求 ≥ 0.1，默认 0.3）
-      // 会拒绝→ apikey.fun 转"Upstream request failed"。用 0.3 兼容所有主流上游。
       const text = await aiChat({ small: false, maxTokens: 50, temperature: 0.3, messages: [{ role: 'user', content: '回复"连接正常"四个字。' }] });
       return { ok: true, ms: Date.now() - t0, model: cfg.model, provider: cfg.provider, reply: text.slice(0, 50) };
     } catch (e) {
