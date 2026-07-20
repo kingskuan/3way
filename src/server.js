@@ -519,7 +519,10 @@ const server = http.createServer(async (request, res) => {
     if (p === '/api/ai/sentinel-run' && request.method === 'POST') {
       try {
         const r = await aiService.runSentinel();
-        return send(res, 200, r || { error: aiService.sentinelError || '巡检失败' });
+        // Round 70：优先返 sentinelError（含 raw AI 响应片段）而不是 fallback
+        // "巡检失败"泛化消息，方便定位 kimi 返非 JSON 之类的 root cause
+        if (aiService.sentinelError) return send(res, 200, { error: aiService.sentinelError });
+        return send(res, 200, r || { error: '巡检没返数据也没设错误——可能刚重启，AI 服务未初始化' });
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
     }
     if (p === '/api/ai/market-run' && request.method === 'POST') {
