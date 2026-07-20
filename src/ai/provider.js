@@ -105,16 +105,16 @@ export async function aiChat({ system = '', messages, small = false, json = fals
       const systemPrefix = system ? system + jsonHint + '\n\n---\n\n' : jsonHint ? jsonHint + '\n\n' : '';
       const mergedMessages = messages.map((m, i) => ({
         role: m.role === 'assistant' ? 'assistant' : 'user',
-        // 第一条 user 消息前面 prepend system + json hint（kimi 上游可能拒 role=system）
         content: (i === 0 && systemPrefix ? systemPrefix : '') + m.content,
       }));
-      // 如果没有任何 messages（不该发生），至少发一条空的
       if (mergedMessages.length === 0 && systemPrefix) {
         mergedMessages.push({ role: 'user', content: systemPrefix });
       }
+      // Round 69：apikey.fun kimi-k3 对参数极敏感，完全走最裸——不传 temperature，
+      // 不传 max_tokens，不传任何可选字段。Round 66 test() 唯一成功的组合就是
+      // {model, messages}。哨兵/日报的大 payload fail 是因为除了 messages 内容
+      // 变多外，其他参数还在，任何一个不认就 400。
       body = { model, messages: mergedMessages };
-      // temperature 也可能是坑；只在明确非默认时传（0.3 是 Kimi 默认可省略）
-      if (Number.isFinite(temperature) && temperature !== 0.3) body.temperature = temperature;
     } else {
       body = {
         model, max_tokens: maxTokens, temperature,
@@ -130,8 +130,14 @@ export async function aiChat({ system = '', messages, small = false, json = fals
       headers: { Authorization: 'Bearer ' + cfg.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const j = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(`AI 接口错误 HTTP ${res.status}: ${j?.error?.message || JSON.stringify(j || {}).slice(0, 200)}`);
+    const rawText = await res.text().catch(() => '');
+    let j = null; try { j = JSON.parse(rawText); } catch {}
+    if (!res.ok) {
+      // Round 69：kimi 上游拒绝时把完整 raw body 拼进 error，方便下轮定位。
+      // 之前只显示 j.error.message = "Upstream request failed"，不知道上游具体拒啥
+      const errDetail = j?.error?.message || rawText.slice(0, 400) || `HTTP ${res.status}`;
+      throw new Error(`AI 接口错误 HTTP ${res.status}: ${errDetail}${isKimi ? ` [kimi payload: model=${model}, msgs=${body.messages?.length || 0}, sysLen=${(system || '').length}, firstUserLen=${(body.messages?.[0]?.content || '').length}]` : ''}`);
+    }
     const text = j?.choices?.[0]?.message?.content;
     const finishReason = j?.choices?.[0]?.finish_reason;
     // finish_reason=length 说明 max_tokens 太小被截断，给用户人性化提示
