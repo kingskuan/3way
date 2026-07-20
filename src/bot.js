@@ -996,8 +996,35 @@ export class GridBot {
     if (this._reconTimer) return;
     this._reconTimer = setInterval(() => { this.reconcileOpenOrders().catch(() => {}); }, RECONCILE_MS);
     this._reconTimer.unref?.();
+    // Round 75：定期同步 exchange 侧真实 volume（Ondo /v1/portfolio/summary,
+    // StandX /api/query_* 试探）。fill event 不可靠的 exchange 就靠这个。
+    if (!this._volumeSyncTimer && typeof this.ex.getStats === 'function') {
+      this._volumeSyncTimer = setInterval(() => this._syncExchangeStats().catch(() => {}), 60_000);
+      this._volumeSyncTimer.unref?.();
+      // 启动时立刻拉一次，别等 60s
+      this._syncExchangeStats().catch(() => {});
+    }
   }
-  _stopReconcileTimer() { if (this._reconTimer) { clearInterval(this._reconTimer); this._reconTimer = null; } }
+  _stopReconcileTimer() {
+    if (this._reconTimer) { clearInterval(this._reconTimer); this._reconTimer = null; }
+    if (this._volumeSyncTimer) { clearInterval(this._volumeSyncTimer); this._volumeSyncTimer = null; }
+  }
+
+  /**
+   * Round 75：拉 exchange 侧真实 volume 覆盖 stats.volume。
+   * 用 max(local, exchange) 保护本地已累计的（尤其 Extended/RISEx fill 正常的
+   * 所），避免 exchange API 短期漂移把本地准确数字覆盖成偏小值。
+   */
+  async _syncExchangeStats() {
+    try {
+      const s = await this.ex.getStats();
+      if (s && Number.isFinite(s.volume) && s.volume > 0) {
+        const before = this.stats.volume || 0;
+        this.stats.volume = Math.max(before, round2(s.volume));
+        if (this.stats.volume !== before) this._changed();
+      }
+    } catch { /* transient */ }
+  }
 
   _alert(message) {
     this.alerts.unshift({ t: Date.now(), message });

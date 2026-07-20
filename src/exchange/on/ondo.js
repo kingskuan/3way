@@ -232,6 +232,27 @@ export class OndoExchange extends EventEmitter {
 
   async getPrice(marketId) { return this.prices.get(Number(marketId)); }
 
+  /**
+   * Round 75：返 exchange-side 真实 volume（不依赖本地 fill event 累积）。
+   * Ondo /v1/portfolio/summary (auth) 返 volume30d/volumeAllTime/realizedPnl。
+   * bot.js 会定期 poll 这个覆盖 stats.volume。
+   */
+  async getStats() {
+    try {
+      const r = await this._req('GET', '/v1/portfolio/summary');
+      const j = r?.result || r;
+      const v30 = Number(j?.volume30d);
+      const vAll = Number(j?.volumeAllTime);
+      const rpnl = Number(j?.realizedPnl);
+      return {
+        volume: Number.isFinite(v30) ? v30 : (Number.isFinite(vAll) ? vAll : null),
+        volume30d: Number.isFinite(v30) ? v30 : null,
+        volumeAllTime: Number.isFinite(vAll) ? vAll : null,
+        realizedPnl: Number.isFinite(rpnl) ? rpnl : null,
+      };
+    } catch { return null; }
+  }
+
   async setLeverage(_marketId, _leverage) {
     // Ondo 目前 API 里没找到独立的 setLeverage 端点；杠杆在下单时通过账户模式生效
     return true;
