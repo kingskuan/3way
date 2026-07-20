@@ -91,30 +91,40 @@ export async function aiChat({ system = '', messages, small = false, json = fals
     }
 
     // openai 兼容协议（默认）
-    // Round 67：Kimi 系列 model（kimi-*, moonshot-*）对 response_format /
-    // max_tokens 挑剔——apikey.fun 上游转发时会返 "Upstream request failed"。
-    // Round 66 test() 用最裸 payload {model,messages} 就通，所以哨兵/日报/
-    // 分析走 aiChat 全参数 payload 一律 fail。
-    // 检测到 kimi/moonshot → 用最简 payload，靠 system prompt 约束 JSON 格式。
+    // Round 67/68：apikey.fun 的 kimi-k3 / moonshot 系列上游对参数极度挑剔。
+    // Round 66 探测确定：唯一能通的 payload 是 {model, messages:[{role:'user'}]}
+    //   - 拒 max_tokens
+    //   - 拒 response_format
+    //   - 大概率也拒 role='system'（Round 67 保留 system 仍 fail）
+    // Round 68：kimi 分支彻底最简——system 融合到第一条 user message 里，
+    // 不发 role='system'。json 模式靠 prompt 约束。
     const isKimi = /^(kimi|moonshot|k[23])[-.\/_]?/i.test(model);
-    const body = isKimi
-      ? {
-          model,
-          messages: [
-            ...(system ? [{ role: 'system', content: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] : []),
-            ...messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
-          ],
-          temperature,
-          // 无 max_tokens / response_format —— Kimi 上游会拒
-        }
-      : {
-          model, max_tokens: maxTokens, temperature,
-          messages: [
-            ...(system ? [{ role: 'system', content: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] : []),
-            ...messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
-          ],
-          ...(json ? { response_format: { type: 'json_object' } } : {}),
-        };
+    let body;
+    if (isKimi) {
+      const jsonHint = json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '';
+      const systemPrefix = system ? system + jsonHint + '\n\n---\n\n' : jsonHint ? jsonHint + '\n\n' : '';
+      const mergedMessages = messages.map((m, i) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        // 第一条 user 消息前面 prepend system + json hint（kimi 上游可能拒 role=system）
+        content: (i === 0 && systemPrefix ? systemPrefix : '') + m.content,
+      }));
+      // 如果没有任何 messages（不该发生），至少发一条空的
+      if (mergedMessages.length === 0 && systemPrefix) {
+        mergedMessages.push({ role: 'user', content: systemPrefix });
+      }
+      body = { model, messages: mergedMessages };
+      // temperature 也可能是坑；只在明确非默认时传（0.3 是 Kimi 默认可省略）
+      if (Number.isFinite(temperature) && temperature !== 0.3) body.temperature = temperature;
+    } else {
+      body = {
+        model, max_tokens: maxTokens, temperature,
+        messages: [
+          ...(system ? [{ role: 'system', content: system + (json ? '\n必须只输出一个合法 JSON 对象，不要任何其他文字。' : '') }] : []),
+          ...messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+        ],
+        ...(json ? { response_format: { type: 'json_object' } } : {}),
+      };
+    }
     const res = await fetch(cfg.baseUrl + '/chat/completions', {
       method: 'POST', signal,
       headers: { Authorization: 'Bearer ' + cfg.apiKey, 'Content-Type': 'application/json' },
