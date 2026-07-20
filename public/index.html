@@ -443,12 +443,11 @@ body {
   letter-spacing: -0.02em !important;
 }
 .header-logo-img {
-  width: 28px; height: 28px;
-  border-radius: 7px;
+  width: 32px; height: 32px;
   display: block;
   object-fit: contain;
-  background: #000;
-  box-shadow: 0 0 20px rgba(99, 102, 241, 0.25);
+  background: transparent;
+  /* Round 77：去掉边框/阴影，logo 裸露不套框 */
 }
 .header-logo-txt {
   font-size: 17px !important;
@@ -461,7 +460,7 @@ body {
 /* 兜底：老的 .header-logo span 规则被后写的这条覆盖 */
 .header-logo span { color: #f1f5f9 !important; background: none !important; }
 @media (max-width: 640px) {
-  .header-logo-img { width: 24px; height: 24px; }
+  .header-logo-img { width: 26px; height: 26px; }
   .header-logo-txt { font-size: 15px !important; }
 }
 .header-sep { background: var(--v2-line) !important; }
@@ -809,9 +808,11 @@ body {
   color: #f8fafc !important;
 }
 .header-logo-img {
-  border-radius: 4px !important;
-  border: 2px solid var(--v3-outline);
-  box-shadow: 3px 3px 0 var(--v3-shadow-a) !important;
+  /* Round 77：v3 层的 logo 边框/偏移阴影也一起去掉，保持"裸 logo"风格 */
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
 }
 
 .main-tabs {
@@ -1134,7 +1135,8 @@ input:focus, select:focus {
 
   <!-- 一键动作条 -->
   <div style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 4px">
-    <button class="btn btn-ghost" style="margin:0;padding:8px 14px;font-size:12px;width:auto" onclick="bulkReconnectAll(this)">🔌 一键重连所有交易所</button>
+    <button class="btn btn-ghost" style="margin:0;padding:8px 14px;font-size:12px;width:auto" onclick="bulkReconnectAll(this)">🔌 一键重连所有 DEX</button>
+    <button class="btn btn-ghost" style="margin:0;padding:8px 14px;font-size:12px;width:auto;border-color:var(--pur);color:var(--pur)" onclick="bulkEnableAutopilot(this)">🚀 一键 AutoPilot 托管</button>
 <!-- Round 74：Demo 重置按钮删除——用户全 LIVE 用不上，只清 paper 模式 -->
     <span id="bulk-status" class="muted" style="font-size:12px;align-self:center"></span>
   </div>
@@ -1144,11 +1146,11 @@ input:focus, select:focus {
     <div class="panel-title" style="margin-bottom:10px" id="reconnect-panel-title">🔌 重连结果</div>
     <div id="reconnect-panel-body"></div>
     <div class="muted" style="font-size:10.5px;line-height:1.5;margin-top:10px;padding-top:8px;border-top:1px solid rgba(148,163,184,0.15)">
-      <b>真实行情</b>= 已成功从交易所拉真价格 · <b>合成行情</b>= 用本地随机漫步（缺 API Key）· <b>失败</b>= 需检查密钥/代理
+      <b>真实行情</b>= 已成功从 DEX 拉真价格 · <b>合成行情</b>= 用本地随机漫步（缺 API Key）· <b>失败</b>= 需检查密钥/代理
     </div>
   </div>
 
-  <!-- 五交易所独立概览 -->
+  <!-- 六 DEX 独立概览 -->
   <div class="overview-grid">
     <!-- Decibel -->
     <div class="ov-card de">
@@ -1334,6 +1336,7 @@ input:focus, select:focus {
 <div class="grid-left-right">
   <!-- Left: Controls -->
   <div>
+    <div class="panel de pet-card" id="de-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
     <div class="panel de" style="margin-bottom:14px">
       <div class="panel-title" style="color:var(--de-color)">Decibel · 市场与趋势</div>
       <label>交易对</label>
@@ -1429,7 +1432,7 @@ input:focus, select:focus {
       <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="de-st-total">—</span></div>
       <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="de-st-orders">—</span></div>
       <button class="btn btn-ghost" id="de-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
-      <button class="btn btn-ghost" id="de-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="de-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
       <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
@@ -1458,6 +1461,7 @@ input:focus, select:focus {
 <div class="wrap">
 <div class="grid-left-right">
   <div>
+    <div class="panel ex pet-card" id="ex-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
     <div class="panel ex" style="margin-bottom:14px">
       <div class="panel-title" style="color:var(--ex-color)">Extended · 市场与趋势</div>
       <label>交易对</label>
@@ -1552,7 +1556,7 @@ input:focus, select:focus {
       <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="ex-st-total">—</span></div>
       <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="ex-st-orders">—</span></div>
       <button class="btn btn-ghost" id="ex-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
-      <button class="btn btn-ghost" id="ex-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="ex-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
       <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
@@ -1581,6 +1585,7 @@ input:focus, select:focus {
 <div class="wrap">
 <div class="grid-left-right">
   <div>
+    <div class="panel rs pet-card" id="rs-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
     <div class="panel rs" style="margin-bottom:14px">
       <div class="panel-title" style="color:var(--rs-color)">RISEx · 市场与趋势</div>
       <label>交易对</label>
@@ -1675,7 +1680,7 @@ input:focus, select:focus {
       <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="rs-st-total">—</span></div>
       <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="rs-st-orders">—</span></div>
       <button class="btn btn-ghost" id="rs-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
-      <button class="btn btn-ghost" id="rs-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="rs-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
       <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
@@ -1704,6 +1709,7 @@ input:focus, select:focus {
 <div class="wrap">
 <div class="grid-left-right">
   <div>
+    <div class="panel on pet-card" id="on-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
     <div class="panel on" style="margin-bottom:14px">
       <div class="panel-title" style="color:var(--on-color)">Ondo Perps · 市场与趋势</div>
       <label>交易对</label>
@@ -1803,7 +1809,7 @@ input:focus, select:focus {
       <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="on-st-total">—</span></div>
       <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="on-st-orders">—</span></div>
       <button class="btn btn-ghost" id="on-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
-      <button class="btn btn-ghost" id="on-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="on-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
     </div>
     <div class="panel" style="margin-bottom:14px">
       <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
@@ -1832,6 +1838,7 @@ input:focus, select:focus {
 <div class="wrap">
 <div class="grid-left-right">
   <div>
+    <div class="panel pl pet-card" id="pl-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
     <div class="panel pl" style="margin-bottom:14px">
       <div class="panel-title" style="color:var(--pl-color)">Perpl · 市场与趋势</div>
       <label>交易对</label>
@@ -1930,7 +1937,7 @@ input:focus, select:focus {
       <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="pl-st-total">—</span></div>
       <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="pl-st-orders">—</span></div>
       <button class="btn btn-ghost" id="pl-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
-      <button class="btn btn-ghost" id="pl-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="pl-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
       <button class="btn btn-ghost" id="pl-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
       <div style="margin-top:6px;padding:8px;font-size:11px;background:rgba(255,215,0,0.08);border:1px dashed var(--yel);border-radius:6px;color:var(--yel);line-height:1.5">
         ⚠️ Perpl REST 接口对 open orders 一直返 401，QnV 无法从我方枚举链上历史孤儿。
@@ -1965,6 +1972,7 @@ input:focus, select:focus {
 <div class="wrap">
 <div class="grid-left-right">
   <div>
+    <div class="panel sx pet-card" id="sx-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
     <div class="panel sx" style="margin-bottom:14px">
       <div class="panel-title" style="color:var(--v2-txt,#e2e8f0)">StandX · 市场与趋势</div>
       <label>交易对</label>
@@ -2064,7 +2072,7 @@ input:focus, select:focus {
       <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="sx-st-total">—</span></div>
       <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="sx-st-orders">—</span></div>
       <button class="btn btn-ghost" id="sx-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
-      <button class="btn btn-ghost" id="sx-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连交易所（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="sx-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
       <button class="btn btn-ghost" id="sx-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
       <button class="btn btn-ghost" id="sx-debug-btn" style="margin-top:8px;font-size:12px">🔍 诊断 StandX 挂单（raw API 响应）</button>
     </div>
@@ -2097,8 +2105,8 @@ input:focus, select:focus {
   <div class="panel" style="margin-top:4px;border-top:2px solid var(--pur)">
     <div class="panel-title" style="color:var(--pur)">🚀 Autopilot · AI 无脑一键托管</div>
     <p class="muted" style="line-height:1.6;margin-bottom:14px">
-      打开主开关后，AI 会每 <b><span id="ap-interval-label">15</span></b> 分钟自动为你勾选的交易所选交易对、
-      开网格、监控行情，触发熔断（日亏 / 连亏）会自动停网格并推 Telegram。<b>只有勾选的交易所会被托管，未勾选的手动模式不受影响。</b>
+      打开主开关后，AI 会每 <b><span id="ap-interval-label">15</span></b> 分钟自动为你勾选的 DEX 选交易对、
+      开网格、监控行情，触发熔断（日亏 / 连亏）会自动停网格并推 Telegram。<b>只有勾选的 DEX 会被托管，未勾选的手动模式不受影响。</b>
     </p>
     <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px">
       <label style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;color:var(--txt);margin:0">
@@ -2128,7 +2136,7 @@ input:focus, select:focus {
   <!-- 每所独立勾选 + 资金上限 -->
   <div class="panel" style="margin-top:14px">
     <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
-      <span>托管哪些交易所</span>
+      <span>托管哪些 DEX</span>
       <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px">
         <button class="btn btn-ghost" style="width:auto;margin:0;padding:4px 10px;font-size:11px" onclick="apToggleAll(true)">☑ 全选</button>
         <button class="btn btn-ghost" style="width:auto;margin:0 0 0 6px;padding:4px 10px;font-size:11px" onclick="apToggleAll(false)">☐ 全清</button>
@@ -2243,13 +2251,13 @@ input:focus, select:focus {
     <p class="muted" style="margin-bottom:14px;line-height:1.6">
       配置代理后，服务器重启才能生效（修改 <code style="background:var(--bg2);padding:1px 5px;border-radius:3px">.env</code> 文件中对应字段）。<br>
       下方"测试连接"按钮会通过当前已配置的代理检测出口IP，无需重启。<br>
-      <strong style="color:var(--yel)">全局代理</strong>优先级最高，会覆盖各交易所独立代理。
+      <strong style="color:var(--yel)">全局代理</strong>优先级最高，会覆盖各 DEX 独立代理。
     </p>
 
     <!-- 全局代理 -->
     <div class="ip-section">
       <div class="ip-section-title">🌐 全局代理（GLOBAL_PROXY）</div>
-      <p class="muted" style="margin-bottom:8px">同时应用于所有三个交易所。留空则各交易所使用各自配置。</p>
+      <p class="muted" style="margin-bottom:8px">同时应用于所有 DEX。留空则各 DEX 使用各自配置。</p>
       <div class="ip-row">
         <div>
           <label>代理地址</label>
@@ -2263,7 +2271,7 @@ input:focus, select:focus {
     <!-- Decibel 代理 -->
     <div class="ip-section">
       <div class="ip-section-title" style="color:var(--de-color)">⬡ Decibel 独立代理（DECIBEL_PROXY）</div>
-      <p class="muted" style="margin-bottom:8px">仅用于 Decibel 交易所。支持 HTTP(S) 和 SOCKS5（含用户名密码认证）。</p>
+      <p class="muted" style="margin-bottom:8px">仅用于 Decibel DEX。支持 HTTP(S) 和 SOCKS5（含用户名密码认证）。</p>
       <div class="ip-row">
         <div>
           <label>代理地址</label>
@@ -2277,7 +2285,7 @@ input:focus, select:focus {
     <!-- Extended 代理 -->
     <div class="ip-section">
       <div class="ip-section-title" style="color:var(--ex-color)">⬡ Extended 独立代理（EXTENDED_PROXY）</div>
-      <p class="muted" style="margin-bottom:8px">仅用于 Extended 交易所。</p>
+      <p class="muted" style="margin-bottom:8px">仅用于 Extended DEX。</p>
       <div class="ip-row">
         <div>
           <label>代理地址</label>
@@ -2291,7 +2299,7 @@ input:focus, select:focus {
     <!-- RISEx 代理 -->
     <div class="ip-section">
       <div class="ip-section-title" style="color:var(--rs-color)">⬡ RISEx 独立代理（RISEX_PROXY）</div>
-      <p class="muted" style="margin-bottom:8px">仅用于 RISEx 交易所。</p>
+      <p class="muted" style="margin-bottom:8px">仅用于 RISEx DEX。</p>
       <div class="ip-row">
         <div>
           <label>代理地址</label>
@@ -2305,7 +2313,7 @@ input:focus, select:focus {
     <!-- Ondo Perps 代理 -->
     <div class="ip-section">
       <div class="ip-section-title" style="color:var(--on-color)">⬡ Ondo Perps 独立代理（ONDO_PROXY）</div>
-      <p class="muted" style="margin-bottom:8px">仅用于 Ondo Perps 交易所。</p>
+      <p class="muted" style="margin-bottom:8px">仅用于 Ondo Perps DEX。</p>
       <div class="ip-row">
         <div>
           <label>代理地址</label>
@@ -2319,7 +2327,7 @@ input:focus, select:focus {
     <!-- Perpl 代理 -->
     <div class="ip-section">
       <div class="ip-section-title" style="color:var(--pl-color)">⬡ Perpl 独立代理（PERPL_PROXY）</div>
-      <p class="muted" style="margin-bottom:8px">仅用于 Perpl（perpl.xyz）交易所。</p>
+      <p class="muted" style="margin-bottom:8px">仅用于 Perpl（perpl.xyz）DEX。</p>
       <div class="ip-row">
         <div>
           <label>代理地址</label>
@@ -2340,8 +2348,8 @@ input:focus, select:focus {
 
     <div class="warn-box" style="margin-top:4px">
       ⚠ 写入 .env 后需<strong>重启服务器</strong>才能让代理生效。<br>
-      不同交易所配置不同代理时，因 Node.js 技术限制，实际生效代理为全局设置（GLOBAL_PROXY）。<br>
-      如需严格隔离，建议分开部署各交易所版本。
+      不同 DEX 配置不同代理时，因 Node.js 技术限制，实际生效代理为全局设置（GLOBAL_PROXY）。<br>
+      如需严格隔离，建议分开部署各 DEX 版本。
     </div>
   </div>
 </div>
@@ -2377,7 +2385,7 @@ function switchTab(name) {
 setInterval(() => { $('hdr-time').textContent = new Date().toLocaleTimeString('zh-CN'); }, 1000);
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 各交易所控制逻辑（工厂函数）
+// 各 DEX 控制逻辑（工厂函数）
 // ══════════════════════════════════════════════════════════════════════════════
 function makeExchangeCtrl(prefix, chartId) {
   let selectedMode = 'neutral';
@@ -2606,7 +2614,7 @@ function makeExchangeCtrl(prefix, chartId) {
   };
 
   P('reset-btn').onclick = async () => {
-    if (!confirm('确认重置该交易所的统计？\n已实现盈亏、收益率、成交量、完成格数将清零，并以当前权益为新基准。\n（不影响持仓与挂单）')) return;
+    if (!confirm('确认重置该 DEX 的统计？\n已实现盈亏、收益率、成交量、完成格数将清零，并以当前权益为新基准。\n（不影响持仓与挂单）')) return;
     const r = await fetch(`/api/${prefix}/reset`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
     const j = await r.json();
     if (j.error) alert('重置失败：' + j.error);
@@ -2617,7 +2625,7 @@ function makeExchangeCtrl(prefix, chartId) {
   // 紧急清链上残留：不管 bot 状态，直接调 exchange 层撤所有市场的挂单 + 平所有仓
   // 用户遇到过 Perpl 链上 155 单 + 1 仓，QnV bot 状态为空的场景（autopilot 崩溃遗留）
   if (P('emergency-cleanup-btn')) P('emergency-cleanup-btn').onclick = async () => {
-    if (!confirm('确认紧急清链上残留？\n\n将【绕过 QnV bot 状态】直接对交易所调用：\n① 撤该交易所所有市场的挂单\n② 市价平所有持仓\n\n此操作不可撤销，用于清 autopilot 崩溃或历史遗留的孤儿单/孤儿仓。')) return;
+    if (!confirm('确认紧急清链上残留？\n\n将【绕过 QnV bot 状态】直接对 DEX 调用：\n① 撤该 DEX 所有市场的挂单\n② 市价平所有持仓\n\n此操作不可撤销，用于清 autopilot 崩溃或历史遗留的孤儿单/孤儿仓。')) return;
     const btn = P('emergency-cleanup-btn');
     btn.disabled = true;
     const oldText = btn.textContent;
@@ -2651,13 +2659,13 @@ function makeExchangeCtrl(prefix, chartId) {
   };
 
   P('cancel-orders-btn').onclick = async () => {
-    if (!confirm('确认一键撤销该交易所的全部挂单？\n持仓不受影响（不会平仓）。网格将停止，需要时可重新启动。')) return;
+    if (!confirm('确认一键撤销该 DEX 的全部挂单？\n持仓不受影响（不会平仓）。网格将停止，需要时可重新启动。')) return;
     const btn = P('cancel-orders-btn'); const oldText = btn.textContent;
     btn.disabled = true; btn.textContent = '撤单中…';
     try {
       const r = await fetch(`/api/${prefix}/cancel-orders`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
       const j = await r.json();
-      if (j.error) alert('撤单失败：\n\n' + j.error + '\n\n（如是 StandX 链上残留问题，请点"🚨 紧急清链上残留"绕开 bot 直接调用交易所）');
+      if (j.error) alert('撤单失败：\n\n' + j.error + '\n\n（如是 StandX 链上残留问题，请点"🚨 紧急清链上残留"绕开 bot 直接调用 DEX）');
       else alert('✅ 已撤销该市场全部挂单。');
     } catch (e) {
       alert('撤单请求异常：' + (e?.message || e));
@@ -2883,7 +2891,7 @@ function makeExchangeCtrl(prefix, chartId) {
   return { getLastState: () => lastState };
 }
 
-// ── 初始化三个交易所控制器 ──────────────────────────────────────────────────
+// ── 初始化各 DEX 控制器 ──────────────────────────────────────────────────
 const deCtrl = makeExchangeCtrl('de', 'de-chart');
 const exCtrl = makeExchangeCtrl('ex', 'ex-chart');
 const rsCtrl = makeExchangeCtrl('rs', 'rs-chart');
@@ -2926,7 +2934,7 @@ setInterval(updateConnStatus, 1000);
 updateConnStatus();
 
 // ── 全局代理状态 ──────────────────────────────────────────────────────────────
-// 先看是否配置了代理（GLOBAL_PROXY 或任一交易所代理）；若有则通过 /api/proxy-check
+// 先看是否配置了代理（GLOBAL_PROXY 或任一 DEX 代理）；若有则通过 /api/proxy-check
 // 验证出口 IP，显示 代理正常/代理异常；若未配置则显示 直连模式。
 async function refreshProxyStatus() {
   const el = $('hdr-proxy'), txt = $('hdr-proxy-txt');
@@ -2943,7 +2951,7 @@ async function refreshProxyStatus() {
     const r = await (await fetch('/api/proxy-check')).json();
     if (r.ok) {
       el.className = 'conn online'; txt.textContent = '代理正常';
-      el.title = `全局代理正常 · 出口 IP：${r.ip}` + (cfg.global ? '' : '（使用交易所独立代理）');
+      el.title = `全局代理正常 · 出口 IP：${r.ip}` + (cfg.global ? '' : '（使用 DEX 独立代理）');
     } else {
       el.className = 'conn offline'; txt.textContent = '代理异常';
       el.title = '代理无法联网：' + (r.error || '未知错误');
@@ -2957,7 +2965,7 @@ refreshProxyStatus();
 setInterval(refreshProxyStatus, 30000); // 代理检测走外网，30 秒一次即可
 
 // ── 趋势预警 ──────────────────────────────────────────────────────────────────
-// 定时扫描各交易所"运行中"网格所在币种的趋势，与网格类型(中性/做多/做空)比对：
+// 定时扫描各 DEX"运行中"网格所在币种的趋势，与网格类型(中性/做多/做空)比对：
 // 趋势变化（可能突破/反转）时在对应卡片上高亮提示。使用与"市场与趋势"相同的分析。
 const MODE_LABEL = { neutral: '中性', long: '做多', short: '做空' };
 const TREND_LABEL = { up: '上升', down: '下降', range: '震荡' };
@@ -3009,7 +3017,7 @@ function renderTrendWarn(box, mode, a, name) {
 scanTrends();
 setInterval(scanTrends, 60000); // 每分钟扫描一次趋势
 
-// 重新与交易所建立连接（不撤单、不平仓、不改网格状态；成功后自动对账一次）
+// 重新与 DEX 建立连接（不撤单、不平仓、不改网格状态；成功后自动对账一次）
 async function reconnectEx(p, btn) {
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ 重连中…'; }
@@ -3316,7 +3324,7 @@ function aiVendorChange() {
 const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX' };
 const AI_ACTION_LABEL = {
   adjust_range:'调整网格区间', stop_grid:'停止网格', cancel_orders:'撤销全部挂单（保留持仓）',
-  close_position:'市价平仓', reconnect:'重连交易所', start_recovery:'启动只减仓回收阶梯', start_grid:'启动网格',
+  close_position:'市价平仓', reconnect:'重连 DEX', start_recovery:'启动只减仓回收阶梯', start_grid:'启动网格',
 };
 let aiChatHistory = [];
 
@@ -3813,7 +3821,7 @@ async function apResume(key) {
 }
 
 async function apResumeAll() {
-  if (!confirm('确定清除所有交易所的熔断状态？（如果主开关开着，AI 会在下一轮决策时可能重新起网格）')) return;
+  if (!confirm('确定清除所有 DEX 的熔断状态？（如果主开关开着，AI 会在下一轮决策时可能重新起网格）')) return;
   try {
     const r = await fetch('/api/autopilot/resume-all', { method:'POST' });
     const j = await r.json();
@@ -3859,6 +3867,66 @@ function apToggleAll(enabled) {
 
 apRefresh();
 setInterval(apRefresh, 15000);   // 每 15s 刷一次状态
+
+// ── 🐾 宠物系统（Round 77）─────────────────────────────────────────────────
+// 每家 DEX 一只专属宠物，交易量累积成养料，6 阶进化。
+// 60s 拉一次 /api/pets（服务端 60s tick，前端跟一样节拍即可）。
+const PET_COLORS = {
+  de:'var(--de-color,#f59e0b)', ex:'var(--ex-color,#3b82f6)', rs:'var(--rs-color,#10b981)',
+  on:'var(--on-color,#06b6d4)', pl:'var(--pl-color,#ec4899)', sx:'#8b5cf6',
+};
+function petFmtNum(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'k';
+  return Math.round(n).toLocaleString();
+}
+function petRenderCard(k, entry, species, thresholds) {
+  const card = document.getElementById(`${k}-pet-card`);
+  if (!card) return;
+  const stages = species.stages || ['🥚'];
+  const icon = stages[entry.level] || stages[stages.length - 1] || '🥚';
+  const lvLabel = `Lv ${entry.level + 1} / ${stages.length}`;
+  const color = PET_COLORS[k] || '#8b5cf6';
+  let pct = 100, tipText = '已达最高进化！继续吃养料 (累计 ' + petFmtNum(entry.feed) + ')';
+  if (entry.nextThreshold != null) {
+    const span = entry.nextThreshold - entry.prevThreshold;
+    pct = Math.min(100, Math.max(0, (entry.feed - entry.prevThreshold) / span * 100));
+    const need = Math.max(0, entry.nextThreshold - entry.feed);
+    tipText = `再吃 ${petFmtNum(need)} 进化到 Lv ${entry.level + 2} · ${stages[entry.level + 1] || '?'}`;
+  }
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;gap:14px">
+      <div style="font-size:56px;line-height:1;filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))">${icon}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:2px">
+          <div style="font-size:15px;font-weight:700;color:${color}">${species.name} · ${lvLabel}</div>
+          <div class="muted" style="font-size:11px">养料 ${petFmtNum(entry.feed)}</div>
+        </div>
+        <div class="muted" style="font-size:10px;margin-bottom:6px">${species.theme}</div>
+        <div style="height:8px;background:var(--bg2,#111a2e);border-radius:4px;overflow:hidden;border:1px solid rgba(148,163,184,.15)">
+          <div style="height:100%;width:${pct.toFixed(1)}%;background:${color};transition:width .6s ease"></div>
+        </div>
+        <div class="muted" style="font-size:10.5px;margin-top:4px">${tipText}</div>
+      </div>
+    </div>
+  `;
+}
+async function petsRefresh() {
+  try {
+    const r = await fetch('/api/pets');
+    if (!r.ok) return;
+    const j = await r.json();
+    const species = j.species || {};
+    const pets = j.pets || {};
+    for (const k of ['de','ex','rs','on','pl','sx']) {
+      const entry = pets[k];
+      const sp = species[k];
+      if (entry && sp) petRenderCard(k, entry, sp, j.thresholds);
+    }
+  } catch { /* ignore */ }
+}
+petsRefresh();
+setInterval(petsRefresh, 60_000);
 
 // ══════════════════════════════════════════════════════════════════════════
 // ▓▓▓ v2 数字翻页动画（日历跳动）——所有 .num-anim 元素变化时触发一次翻转
@@ -3964,6 +4032,38 @@ function renderReconnectRow(k, status) {
   `;
 }
 
+// Round 77：一键 AutoPilot 托管 —— 打开主开关 + 全部 6 家 DEX 勾选
+async function bulkEnableAutopilot(btn) {
+  if (!confirm('确定一键开启 AutoPilot 托管所有 6 家 DEX？\n\n・主开关：开启\n・Decibel / Extended / RISEx / Ondo / Perpl / StandX：全部勾选\n・资金上限保持每家原设置（默认 1000 USDC）\n\nAI 会在下一次决策周期（15 分钟内）自动选币 + 起网格。')) return;
+  const st = $('bulk-status');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ 开启中…';
+  st.textContent = '';
+  try {
+    const perExchange = {};
+    for (const k of ['de','ex','rs','on','pl','sx']) perExchange[k] = { enabled: true };
+    const r = await fetch('/api/autopilot/config', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ masterEnabled: true, perExchange }),
+    });
+    const j = await r.json();
+    if (j.error) {
+      st.textContent = '❌ ' + j.error;
+      st.style.color = 'var(--red)';
+    } else {
+      st.textContent = '✅ 已托管 6 家 DEX · 主开关已开启 · AI 将在下一轮决策接管';
+      st.style.color = 'var(--grn)';
+    }
+  } catch (e) {
+    st.textContent = '❌ ' + e.message;
+    st.style.color = 'var(--red)';
+  }
+  btn.disabled = false;
+  btn.textContent = orig;
+  setTimeout(() => { st.textContent = ''; st.style.color = ''; }, 6000);
+}
+
 async function bulkReconnectAll(btn) {
   const st = $('bulk-status');
   const panel = $('reconnect-panel');
@@ -4000,7 +4100,7 @@ async function bulkReconnectAll(btn) {
         } else if (dataSource === 'synthetic') {
           statuses[k] = { state: 'synthetic', mode: j.state?.mode || statuses[k].mode };
         } else {
-          // 有些交易所 state.health.dataSource 不返回，退化到 markets 端点看
+          // 有些 DEX 的 state.health.dataSource 不返回，退化到 markets 端点看
           try {
             const mr = await fetch(`/api/${k}/markets`);
             const mj = await mr.json();

@@ -22,6 +22,7 @@ import { setupProxies, checkProxy } from './proxy.js';
 import { loadSnapshot, saveSnapshot } from './persist.js';
 import { createAiService } from './ai/service.js';
 import { createAutopilot } from './ai/autopilot.js';
+import { createPets } from './pets.js';
 
 // ── 启动配置 ─────────────────────────────────────────────────────────────────
 const cfg = getConfig();
@@ -142,7 +143,11 @@ const autopilot = createAutopilot({
 });
 autopilot.start();
 
-// SSE 客户端集合（按交易所分组）
+// ── 宠物系统（每家 DEX 一只宠物，交易量累积成养料，6 阶进化）
+const pets = createPets({ bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot } });
+pets.start();
+
+// SSE 客户端集合（按 DEX 分组）
 const deClients = new Set();
 const exClients = new Set();
 const rsClients = new Set();
@@ -573,6 +578,10 @@ const server = http.createServer(async (request, res) => {
     if (p === '/api/autopilot/resume-all' && request.method === 'POST') {
       try { return send(res, 200, autopilot.resumeAll()); }
       catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+    }
+    // ── 宠物系统 API ─────────────────────────────────────────────────────
+    if (p === '/api/pets') {
+      return send(res, 200, pets.status());
     }
 
     if (p === '/api/ai/chat' && request.method === 'POST') {
