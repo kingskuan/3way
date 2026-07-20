@@ -3525,7 +3525,7 @@ async function aiAnalyze(p, btn) {
     let attempts = 0;
     const pollTimer = setInterval(async () => {
       attempts++;
-      if (attempts > 40) { clearInterval(pollTimer); box.textContent = '❌ 分析超时（90s+），可能是 AI 模型挂了'; if (btn) { btn.disabled = false; btn.textContent = '分析 ' + AI_EXNAME[p]; } return; }
+      if (attempts > 60) { clearInterval(pollTimer); box.textContent = '❌ 分析超时（180s+），AI 模型确实挂了。检查 apikey.fun 后台或换服务商'; if (btn) { btn.disabled = false; btn.textContent = '分析 ' + AI_EXNAME[p]; } return; }
       try {
         const sr = await fetch('/api/ai/analyze-status?key=' + encodeURIComponent(p));
         const sj = await sr.json();
@@ -3567,7 +3567,7 @@ async function aiChatSend() {
     let attempts = 0;
     const pollTimer = setInterval(async () => {
       attempts++;
-      if (attempts > 40) { clearInterval(pollTimer); waiting.remove(); aiChatAppend('sys', '❌ 对话超时（90s+）'); return; }
+      if (attempts > 60) { clearInterval(pollTimer); waiting.remove(); aiChatAppend('sys', '❌ 对话超时（180s+），AI 模型挂了。可换服务商'); return; }
       try {
         const sr = await fetch('/api/ai/chat-status?jobId=' + encodeURIComponent(jobId));
         const sj = await sr.json();
