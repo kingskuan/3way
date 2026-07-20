@@ -3497,27 +3497,46 @@ async function aiReport(btn) {
   }
 }
 
+// Round 71：analyze 异步化——kimi 慢 iOS Safari 30s Load failed。改成
+// 202 + poll /api/ai/analyze-status?key=X，最长 poll 90 秒。
+function _renderAnalyze(j, p) {
+  const box = $('ai-analyze-box');
+  box.className = 'ai-box';
+  box.textContent =
+    `【${AI_EXNAME[p]} · ${j.market} · 现价 ${j.price}】\n` +
+    `市况：${j.regime} · ${j.suitable ? '✅ 适合跑网格' : '⛔ 当前不适合跑网格'} · 置信度 ${Math.round((j.confidence || 0) * 100)}%\n` +
+    `建议模式：${j.recommendMode === 'long' ? '做多网格' : j.recommendMode === 'short' ? '做空网格' : '中性网格'}` +
+    (j.suggestedRange ? ` · 区间 ${j.suggestedRange.lower} ~ ${j.suggestedRange.upper}` : '') +
+    (j.suggestedGridCount ? ` · ${j.suggestedGridCount} 格` : '') +
+    (j.suggestedSpacingPct ? ` · 间距约 ${j.suggestedSpacingPct}%` : '') +
+    `\n分析：${j.reasoning || ''}` +
+    (j.caution ? `\n⚠️ ${j.caution}` : '');
+}
 async function aiAnalyze(p, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '分析中…'; }
   const box = $('ai-analyze-box');
   try {
     const r = await fetch('/api/ai/analyze', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ex: p }) });
     const j = await r.json();
-    if (j.error) { box.textContent = '❌ ' + j.error; }
-    else {
-      box.className = 'ai-box';
-      box.textContent =
-        `【${AI_EXNAME[p]} · ${j.market} · 现价 ${j.price}】\n` +
-        `市况：${j.regime} · ${j.suitable ? '✅ 适合跑网格' : '⛔ 当前不适合跑网格'} · 置信度 ${Math.round((j.confidence || 0) * 100)}%\n` +
-        `建议模式：${j.recommendMode === 'long' ? '做多网格' : j.recommendMode === 'short' ? '做空网格' : '中性网格'}` +
-        (j.suggestedRange ? ` · 区间 ${j.suggestedRange.lower} ~ ${j.suggestedRange.upper}` : '') +
-        (j.suggestedGridCount ? ` · ${j.suggestedGridCount} 格` : '') +
-        (j.suggestedSpacingPct ? ` · 间距约 ${j.suggestedSpacingPct}%` : '') +
-        `\n分析：${j.reasoning || ''}` +
-        (j.caution ? `\n⚠️ ${j.caution}` : '');
-    }
-  } catch (e) { box.textContent = '❌ 分析失败：' + e.message; }
-  if (btn) { btn.disabled = false; btn.textContent = '分析 ' + AI_EXNAME[p]; }
+    if (j.error) { box.textContent = '❌ ' + j.error; return; }
+    // 202 accepted → poll
+    box.textContent = '分析中… (kimi 模型可能 20-40 秒，请稍候)';
+    const startedAt = j.startedAt;
+    let attempts = 0;
+    const pollTimer = setInterval(async () => {
+      attempts++;
+      if (attempts > 40) { clearInterval(pollTimer); box.textContent = '❌ 分析超时（90s+），可能是 AI 模型挂了'; if (btn) { btn.disabled = false; btn.textContent = '分析 ' + AI_EXNAME[p]; } return; }
+      try {
+        const sr = await fetch('/api/ai/analyze-status?key=' + encodeURIComponent(p));
+        const sj = await sr.json();
+        if (sj.pending) return;   // 还在跑
+        clearInterval(pollTimer);
+        if (btn) { btn.disabled = false; btn.textContent = '分析 ' + AI_EXNAME[p]; }
+        if (sj.error) { box.textContent = '❌ ' + sj.error; return; }
+        if (sj.result) _renderAnalyze(sj.result, p);
+      } catch { /* transient */ }
+    }, 2500);
+  } catch (e) { box.textContent = '❌ 分析请求失败：' + e.message; if (btn) { btn.disabled = false; btn.textContent = '分析 ' + AI_EXNAME[p]; } }
 }
 
 function aiChatAppend(cls, text) {
@@ -3537,16 +3556,33 @@ async function aiChatSend() {
   input.value = '';
   aiChatAppend('user', msg);
   aiChatHistory.push({ role:'user', content: msg });
-  const waiting = aiChatAppend('sys', 'AI 思考中…');
+  const waiting = aiChatAppend('sys', 'AI 思考中…（kimi 可能 20-40 秒）');
   try {
+    // Round 71：chat 异步化——kimi 慢 iOS Safari 30s Load failed。
+    // 202 + poll /api/ai/chat-status?jobId=X，最长 poll 90 秒。
     const r = await fetch('/api/ai/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: msg, history: aiChatHistory.slice(0, -1) }) });
-    const j = await r.json();
-    waiting.remove();
-    if (j.error) { aiChatAppend('sys', '❌ ' + j.error); return; }
-    aiChatAppend('bot', j.reply || '（空回复）');
-    aiChatHistory.push({ role:'assistant', content: j.reply || '' });
-    if (aiChatHistory.length > 16) aiChatHistory = aiChatHistory.slice(-16);
-    if (j.action && j.action.type && j.action.type !== 'none') aiRenderAction(j.action);
+    const j0 = await r.json();
+    if (j0.error) { waiting.remove(); aiChatAppend('sys', '❌ ' + j0.error); return; }
+    const jobId = j0.jobId;
+    let attempts = 0;
+    const pollTimer = setInterval(async () => {
+      attempts++;
+      if (attempts > 40) { clearInterval(pollTimer); waiting.remove(); aiChatAppend('sys', '❌ 对话超时（90s+）'); return; }
+      try {
+        const sr = await fetch('/api/ai/chat-status?jobId=' + encodeURIComponent(jobId));
+        const sj = await sr.json();
+        if (sj.pending) return;
+        clearInterval(pollTimer);
+        waiting.remove();
+        if (sj.error) { aiChatAppend('sys', '❌ ' + sj.error); return; }
+        const j = sj.result || {};
+        aiChatAppend('bot', j.reply || '（空回复）');
+        aiChatHistory.push({ role:'assistant', content: j.reply || '' });
+        if (aiChatHistory.length > 16) aiChatHistory = aiChatHistory.slice(-16);
+        if (j.action && j.action.type && j.action.type !== 'none') aiRenderAction(j.action);
+      } catch { /* transient */ }
+    }, 2500);
+    return;   // 后续 UI update 在 poll 里做
   } catch (e) { waiting.remove(); aiChatAppend('sys', '❌ 请求失败：' + e.message); }
 }
 
@@ -3618,7 +3654,17 @@ async function aiMarketRun(btn) {
   try {
     const r = await fetch('/api/ai/market-run', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
     const j = await r.json();
-    if (j.error) alert('市况分析失败：' + j.error); else aiRefreshStatus();
+    if (j.error) { alert('市况分析失败：' + j.error); }
+    else if (r.status === 202) {
+      // Round 71：202 accepted → poll aiRefreshStatus 拿最新 market
+      alert('✅ 市况分析已发起（kimi 20-40 秒），AI 页会自动刷新');
+      // 每 3s 刷一次，最长 90s
+      let n = 0;
+      const t = setInterval(() => {
+        n++; aiRefreshStatus();
+        if (n > 30) clearInterval(t);
+      }, 3000);
+    } else aiRefreshStatus();
   } catch (e) { alert('市况分析失败：' + e.message); }
   if (btn) { btn.disabled = false; btn.textContent = '立即分析'; }
 }

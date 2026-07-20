@@ -39,6 +39,37 @@ class AiService {
       this._reportDoneDay = saved.reportDoneDay ?? null;
     }
     this._baseline = this._baseline || null;
+    // Round 71：async analyze/chat 结果缓存
+    this._analysisByEx = {};       // { de: {t, result, error?}, ex: {...} }
+    this._chatResults = {};         // { jobId: {t, result, error?} }
+  }
+
+  /** Round 71：analyze async wrapper — 结果存 _analysisByEx[key] 供前端 poll */
+  async analyzeAsync(key, startedAt) {
+    this._analysisByEx[key] = { t: startedAt, pending: true };
+    try {
+      const r = await this.analyze(key);
+      this._analysisByEx[key] = { t: Date.now(), result: r };
+    } catch (e) {
+      this._analysisByEx[key] = { t: Date.now(), error: e?.message || String(e) };
+    }
+  }
+
+  /** Round 71：chat async wrapper */
+  async chatControlAsync(jobId, message, history) {
+    this._chatResults[jobId] = { t: Date.now(), pending: true };
+    try {
+      const r = await this.chatControl(message, history);
+      this._chatResults[jobId] = { t: Date.now(), result: r };
+    } catch (e) {
+      this._chatResults[jobId] = { t: Date.now(), error: e?.message || String(e) };
+    }
+    // 只保留最近 10 个结果，防内存泄漏
+    const keys = Object.keys(this._chatResults);
+    if (keys.length > 10) {
+      const sorted = keys.map((k) => [k, this._chatResults[k].t]).sort((a, b) => b[1] - a[1]);
+      for (const [k] of sorted.slice(10)) delete this._chatResults[k];
+    }
   }
 
   start() {
@@ -76,6 +107,40 @@ class AiService {
       this._save();
       await this.makeReport().catch(() => {});
     }
+  }
+
+  /**
+   * Round 71：kimi/moonshot 处理大 payload 慢（30s+），iOS Safari 30s 硬超时
+   * → Load failed。给 kimi 用超简版 snapshot（关键字段），减 70% payload 大小
+   * → kimi ~10-15s 返回避免超时。GLM/OpenAI/Claude 支持 response_format 更快，
+   * 用完整 snapshot 无压力。
+   */
+  _isSlowModel() {
+    const cfg = getAiConfig();
+    return /^(kimi|moonshot|k[23])[-.\/_]?/i.test(cfg.model);
+  }
+
+  async _snapshotCompact() {
+    const out = {};
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
+      const s = this.bots[key].getState();
+      const pos = s.position?.sizeBase
+        ? `${s.position.sizeBase > 0 ? 'long' : 'short'} ${Math.abs(s.position.sizeBase)} @${s.position.entryPrice}`
+        : null;
+      out[key] = {
+        exchange: EXNAMES[key], running: s.running,
+        market: s.config?.displayName ?? null,
+        health: s.health?.status ?? null, healthReason: s.health?.reason ?? null,
+        lastPrice: s.lastPrice, outOfRange: s.outOfRange,
+        equity: s.equity, balance: s.balance,
+        pnl: s.realizedPnl, uPnl: s.unrealizedPnl, retPct: s.returnPct,
+        position: pos,
+        openOrders: s.openOrders, chainOrders: s.exchangeOpenOrders,
+        completedRungs: s.stats?.completedRungs,
+        recentAlert: (s.alerts || [])[0]?.message?.slice(0, 80),
+      };
+    }
+    return out;
   }
 
   // ---------- 状态快照（喂给 AI 的紧凑上下文） ----------
@@ -129,7 +194,7 @@ class AiService {
     }
     this._busy.sentinel = true;
     try {
-      const snap = await this._snapshot();
+      const snap = this._isSlowModel() ? await this._snapshotCompact() : await this._snapshot();
       const text = await aiChat({
         small: true, json: true, maxTokens: 4000, temperature: 0.1,
         system: [
@@ -209,7 +274,7 @@ class AiService {
     if (this._busy.report) return this.report;
     this._busy.report = true;
     try {
-      const snap = await this._snapshot();
+      const snap = this._isSlowModel() ? await this._snapshotCompact() : await this._snapshot();
       const base = this._baseline;
       const diff = {};
       for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx']) {
@@ -352,7 +417,7 @@ class AiService {
 
   // ---------- 4) 对话操控（AI 只提议，前端确认后走现有 REST 执行） ----------
   async chatControl(message, history = []) {
-    const snap = await this._snapshot();
+    const snap = this._isSlowModel() ? await this._snapshotCompact() : await this._snapshot();
     const text = await aiChat({
       json: true, maxTokens: 2500, temperature: 0.3,
       system: [

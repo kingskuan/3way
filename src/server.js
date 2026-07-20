@@ -526,8 +526,10 @@ const server = http.createServer(async (request, res) => {
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
     }
     if (p === '/api/ai/market-run' && request.method === 'POST') {
-      try { return send(res, 200, await aiService.runMarketAnalysis()); }
-      catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+      // Round 71：也异步化（Round 35 只做了 report）——kimi 慢，iOS 30s Load failed
+      const startedAt = Date.now();
+      aiService.runMarketAnalysis().catch(() => {});
+      return send(res, 202, { ok: true, startedAt, msg: '市况分析中，约 15-40 秒后 AI 页会自动刷新' });
     }
     if (p === '/api/ai/report' && request.method === 'POST') {
       // 异步生成——AI 调用 + prompt 加持完常常 20-60s，手机浏览器 30s 就会 "Load
@@ -538,10 +540,20 @@ const server = http.createServer(async (request, res) => {
       return send(res, 202, { ok: true, startedAt, msg: '日报生成中，约 30-60 秒后自动出现' });
     }
     if (p === '/api/ai/analyze' && request.method === 'POST') {
+      // Round 71：异步化。kimi 分析大 payload 会 30s+，iOS Safari Load failed。
+      // 结果存 aiService._analysisByEx[key]，前端 poll /api/ai/analyze-status?key=xx
       try {
         const b = await readBody(request);
-        return send(res, 200, await aiService.analyze(String(b.ex || 'de')));
+        const key = String(b.ex || 'de');
+        const startedAt = Date.now();
+        aiService.analyzeAsync(key, startedAt);
+        return send(res, 202, { ok: true, startedAt, key, msg: '分析中，约 10-30 秒后自动出现' });
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+    }
+    if (p === '/api/ai/analyze-status' && request.method === 'GET') {
+      const key = url.searchParams.get('key') || 'de';
+      const r = aiService._analysisByEx?.[key];
+      return send(res, 200, r || { pending: true });
     }
     // ── Autopilot API ─────────────────────────────────────────────────────
     if (p === '/api/autopilot/status') {
@@ -564,11 +576,20 @@ const server = http.createServer(async (request, res) => {
     }
 
     if (p === '/api/ai/chat' && request.method === 'POST') {
+      // Round 71：异步化。kimi 大 snapshot 30s+ iOS Safari Load failed。
+      // 结果存 aiService._chatResult[jobId]，前端 poll /api/ai/chat-status
       try {
         const b = await readBody(request);
         if (!b.message) return send(res, 400, { error: '消息为空' });
-        return send(res, 200, await aiService.chatControl(b.message, Array.isArray(b.history) ? b.history : []));
+        const jobId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        aiService.chatControlAsync(jobId, b.message, Array.isArray(b.history) ? b.history : []);
+        return send(res, 202, { ok: true, jobId, msg: '对话中，约 10-30 秒...' });
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+    }
+    if (p === '/api/ai/chat-status' && request.method === 'GET') {
+      const jobId = url.searchParams.get('jobId') || '';
+      const r = aiService._chatResults?.[jobId];
+      return send(res, 200, r || { pending: true });
     }
 
     // ── 代理配置 API ──────────────────────────────────────────────────────
