@@ -298,7 +298,13 @@ export class GridBot {
     this._stopReconcileTimer();
     if (!this.running) {
       if (this.config) {
-        await this.ex.cancelAll(this.config.marketId).catch(() => {});
+        // Round 60: cancelAll 若成功（不 throw）说明链上已清干净（Round 51 加过
+        // finalCheck）。重置 _exchangeOpenOrders=0 让 sentinel 别再报"停止但
+        // 仍剩 N 单"陈旧信息。cancelAll throw 则保持旧值（真有残留）。
+        let cancelOk = false;
+        try { await this.ex.cancelAll(this.config.marketId); cancelOk = true; }
+        catch { cancelOk = false; }
+        if (cancelOk) this._exchangeOpenOrders = 0;
         if (closePosition && typeof this.ex.closePosition === 'function') {
           await this._closeWithConfirm(this.config.marketId);
         }
@@ -311,7 +317,11 @@ export class GridBot {
     }
     this.ex.off('fill', this._onFill);
     this.ex.off('price', this._onPrice);
-    await this.ex.cancelAll(this.config.marketId).catch(() => {});
+    // Round 60: 同上——cancelAll 成功即清空 _exchangeOpenOrders
+    let cancelOk2 = false;
+    try { await this.ex.cancelAll(this.config.marketId); cancelOk2 = true; }
+    catch { cancelOk2 = false; }
+    if (cancelOk2) this._exchangeOpenOrders = 0;
     this.active.clear();
     let closeRequested = false;
     if (closePosition && typeof this.ex.closePosition === 'function') {
@@ -344,6 +354,8 @@ export class GridBot {
     let cancelErr = null;
     try {
       await this.ex.cancelAll(this.config.marketId);
+      // Round 60: 成功 = 链上真的清干净了 → 同步 _exchangeOpenOrders=0
+      this._exchangeOpenOrders = 0;
     } catch (e) {
       cancelErr = e;
       this._alert('撤单失败: ' + (e?.message || e));
