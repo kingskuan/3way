@@ -2430,7 +2430,13 @@ function makeExchangeCtrl(prefix, chartId) {
     }
   }
 
+  // Round 62：refreshTrend 请求 generation counter。防 race condition：
+  // 页面初始化时 loadMarkets 用默认 sel（BTC=id1）触发一次 refreshTrend；
+  // SSE state 到 → renderState 检测 config.marketId=ETH 触发第二次。两个
+  // 并发 fetch，如果 BTC 响应晚到就覆盖 ETH chart（用户看到 ETH 网格但 BTC 蜡烛）
+  let _refreshTrendGen = 0;
   async function refreshTrend() {
+    const gen = ++_refreshTrendGen;
     // Round 38：网格图应该跟"正在跑的市场"而不是"下拉框的默认值"。
     // Autopilot 起单时不改下拉框（用户可能同时手动选着 BTC），
     // 之前 chart 就一直画 BTC 蜡烛，但 bot 跑的是 ETH——牛头不对马嘴。
@@ -2457,12 +2463,15 @@ function makeExchangeCtrl(prefix, chartId) {
     try {
       const r = await fetch(`/api/${prefix}/trend?marketId=${marketId}&intervalSec=${P('interval').value}`);
       const j = await r.json();
+      // Round 62：过时响应直接丢弃，不覆盖 chart
+      if (gen !== _refreshTrendGen) return;
       if (j.error) throw new Error(j.error);
       curTrend = j.analysis;
       renderTrend(j.analysis);
       drawChart(j.candles || []);
       if (!P('lower').value) applyAutoRange();
     } catch (e) {
+      if (gen !== _refreshTrendGen) return;   // 过时错误也不覆盖
       P('rec-tag').textContent = '趋势数据暂不可用';
       P('rec-detail').textContent = '手动填上下边界即可启动。(' + e.message + ')';
     }
