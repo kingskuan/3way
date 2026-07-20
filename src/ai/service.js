@@ -9,7 +9,7 @@ import { aiChat, extractJson, notify, getAiConfig } from './provider.js';
 import { analyzeTrend } from '../trend.js';
 import { loadSnapshot, saveSnapshot } from '../persist.js';
 
-const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX' };
+const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget' };
 
 export function createAiService({ bots, exchanges }) {
   return new AiService(bots, exchanges);
