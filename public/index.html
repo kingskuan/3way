@@ -2952,6 +2952,13 @@ function makeExchangeCtrl(prefix, chartId) {
         if (j.debug.mt23Count != null) msg += `  · mt=23 快照收到: ${j.debug.mt23Count} 次\n`;
         if (j.debug.mt23LastOrdersLen != null) msg += `  · 上次快照 orders: ${j.debug.mt23LastOrdersLen} 单\n`;
         if (j.debug.mt23LastAgeSec != null) msg += `  · 距上次快照: ${j.debug.mt23LastAgeSec}秒前\n`;
+        // Round 96：把前 3 单 raw JSON 显示出来，让 user 一看就知道 Perpl 用的字段名
+        if (j.debug.mt23FirstOrders && j.debug.mt23FirstOrders.length) {
+          msg += '\n🧬 mt=23 前 3 单原始字段（找 oid/mkt/size 真名）:\n';
+          j.debug.mt23FirstOrders.forEach((o, i) => {
+            msg += `  #${i+1}: ${JSON.stringify(o).slice(0, 260)}\n`;
+          });
+        }
         if (j.debug.localBalance != null) msg += `  · 本地 balance: ${j.debug.localBalance}\n`;
         if (j.debug.localPositionsCount != null) msg += `  · 本地 positions: ${j.debug.localPositionsCount} 个\n`;
         // Round 94：多端点 probe 结果——找到能返 positions/orders 的端点
