@@ -367,13 +367,11 @@ export class StandXExchange extends EventEmitter {
     // 返 {page_size:0, result:[]}。但 StandX 网页明明 77 单。API 完全无视我们的
     // 参数（可能 param 位置错、endpoint 名错、或需要 body）。probe 5 种变体，
     // 用返 result 有内容的那个。
+    // Round 118：官方 doc 只有一个正确 endpoint + 参数就是 symbol + limit(max 1200)。
+    // Round 114 那些 status/state/list_orders 变体全 spec 里没有 → 简化。
     const candidates = [
-      { m: 'GET', path: `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500&status=OPEN` },
-      { m: 'GET', path: `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&status=open&size=500` },
-      { m: 'GET', path: `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&state=OPEN` },
-      { m: 'GET', path: `/api/list_orders?symbol=${encodeURIComponent(symbol)}&status=OPEN` },
-      { m: 'GET', path: `/api/query_active_orders?symbol=${encodeURIComponent(symbol)}` },
-      { m: 'GET', path: `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500` }, // 原来的 Round 108 fallback
+      { m: 'GET', path: `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=1200` },
+      { m: 'GET', path: `/api/query_open_orders?limit=1200` },   // 不带 symbol 兜底
     ];
     let j = null;
     for (const c of candidates) {
@@ -548,35 +546,38 @@ export class StandXExchange extends EventEmitter {
   }
 
   /**
-   * 尝试批量撤单端点。StandX 可能有以下几种命名：
-   *   /api/cancel_all_orders     (Bybit-style)
-   *   /api/cancel_all             (Backpack-style)
-   *   /api/cancel_orders          (无 order_id 参数 = 批量)
-   * 依次尝试，第一个返 code=0 就用。都 404/400 就走 fallback loop。
-   * Round 52：新增。
+   * Round 118：官方 doc 找到唯一批量撤单端点 —— POST /api/cancel_orders
+   * 需要 body { order_id_list: int[] } OR { cl_ord_id_list: string[] }
+   * 之前一直传 { symbol } 是完全错的字段名 → API 一定返错/no-op → 68 单孤儿累积。
+   *
+   * 从本地 this.orders map 拿该 symbol 的 cl_ord_id 列表，一次 POST 全撤。
    */
   async _tryBatchCancel(symbol) {
-    const attempts = [
-      { path: '/api/cancel_all_orders', body: { symbol } },
-      { path: '/api/cancel_all', body: { symbol } },
-      { path: '/api/cancel_orders', body: { symbol } },
-      { path: '/api/mass_cancel', body: { symbol } },
-    ];
-    for (const { path, body } of attempts) {
+    const marketIdN = this._symbolToId?.get(symbol);
+    if (marketIdN == null) return { ok: false, reason: 'unknown symbol' };
+    // 收集本地 map 里该市场的 cl_ord_id
+    const clOrdIds = [...this.orders.values()]
+      .filter((o) => Number(o.marketId) === Number(marketIdN))
+      .map((o) => String(o.orderId));
+    if (clOrdIds.length === 0) return { ok: false, reason: 'no local orders' };
+    // Split into chunks of 100 (safety — docs 没给上限但 body 太大会 413)
+    const chunks = [];
+    for (let i = 0; i < clOrdIds.length; i += 100) chunks.push(clOrdIds.slice(i, i + 100));
+    let totalOk = 0;
+    for (const chunk of chunks) {
       try {
-        const r = await this._authPostSigned(path, body, 6000);
-        if (r?.code === 0) {
-          if (!this._batchCancelLogged) {
-            this._batchCancelLogged = true;
-            console.log(`[StandX] batch cancel 命中端点：${path}`);
-          }
-          return { ok: true, path };
-        }
-      } catch (e) {
-        // 404 = 端点不存在；跳过。其他错误也跳过（下一个端点也许行）
-      }
+        const r = await this._authPostSigned('/api/cancel_orders', { cl_ord_id_list: chunk }, 6000);
+        if (r?.code === 0) totalOk += chunk.length;
+      } catch (e) { /* skip failed chunk */ }
     }
-    return { ok: false };
+    if (totalOk > 0) {
+      if (!this._batchCancelLogged) {
+        this._batchCancelLogged = true;
+        console.log(`[StandX] /api/cancel_orders 批量撤 ${totalOk}/${clOrdIds.length} 单 (cl_ord_id_list)`);
+      }
+      return { ok: true, count: totalOk };
+    }
+    return { ok: false, reason: 'all chunks failed' };
   }
 
   /**
@@ -826,7 +827,7 @@ export class StandXExchange extends EventEmitter {
     // Round 114：probe 多个 endpoint 变体，看哪个能返 orders（Round 108 params
     // 无效，StandX API 完全无视 limit/page_size，返 result:[] page_size:0）。
     const probeUrls = [
-      `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500`,
+      `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=1200`,
       `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&status=OPEN`,
       `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&state=OPEN`,
       `/api/list_orders?symbol=${encodeURIComponent(symbol)}&status=OPEN`,
