@@ -338,19 +338,32 @@ export class PerplExchange extends EventEmitter {
       if (Number.isFinite(Number(msg.h))) this._headBlock = Number(msg.h);
       return;
     }
-    // mt=26 PositionUpdate/StreamUpdate：既是 head block，也带 msg.d[] 仓位
-    // Round 103：msg.d[] 是 positions 数组（key 字段 pid/mkt/sd/s/ep/dpnl/fee/lv），
-    // 之前 handler 只抽 head 就 return，把仓位数据整个吞了 — 用户 Perpl 网页
-    // 显示 1 仓 QnV 显示 0 的 root cause。
-    if (msg.mt === 26) {
+    // mt=26 PositionsSnapshot / mt=27 PositionsUpdate （官方 API doc types.md 里
+    // 都是 { at, d: Position[] }, 结构一致，Round 116 统一处理）
+    //   Position: { mkt, pid, st (1=Open, 2=Closed, 3=Liq, 4=Delev, 5=Unwound, 6=Failed),
+    //     sd (1=Long, 2=Short), c(collateral), ep(entry price), s(size), lv(hundredths),
+    //     dpnl(realized delta), fnd(realized funding), xp(exit price) }
+    // Round 116：加 st 状态 check —— 关仓通知 st != 1 时把 pos 从 map 删掉。之前
+    // 只按 rawSize=0 判关仓漏了 mt=27 里 st=2 但 s>0 的关闭事件 → 幽灵仓位。
+    if (msg.mt === 26 || msg.mt === 27) {
       if (msg.at && Number.isFinite(Number(msg.at.b))) this._headBlock = Number(msg.at.b);
       if (Array.isArray(msg.d)) {
         for (const pos of msg.d) {
           const marketIdN = Number(pos.mkt ?? pos.marketId);
           if (!Number.isFinite(marketIdN)) continue;
+          const status = Number(pos.st);   // Round 116：官方 st 字段
+          // st 非 1 (Open) 都视为关仓：Closed/Liquidated/Deleveraged/Unwound/Failed
+          if (Number.isFinite(status) && status !== 1) {
+            this.positions.delete(marketIdN);
+            if (!this._mt2627CloseLogged) this._mt2627CloseLogged = 0;
+            if (this._mt2627CloseLogged < 3) {
+              this._mt2627CloseLogged++;
+              try { console.log(`[Perpl] mt=${msg.mt} 关仓 mkt=${marketIdN} st=${status} pid=${pos.pid}`); } catch {}
+            }
+            continue;
+          }
           let rawSize = Number(pos.s ?? pos.size ?? pos.sz);
           if (!Number.isFinite(rawSize)) continue;
-          // Perpl sd=1 long / sd=2 short；把 short 转成负 size 供 UI 计算 PnL 用
           const sd = Number(pos.sd);
           if (sd === 2 && rawSize > 0) rawSize = -rawSize;
           if (rawSize === 0) {
@@ -369,10 +382,10 @@ export class PerplExchange extends EventEmitter {
             leverage: Number(pos.lv) / 100 || 0,
             pid: pos.pid,
           });
-          if (!this._mt26PosLogged) this._mt26PosLogged = 0;
-          if (this._mt26PosLogged < 3) {
-            this._mt26PosLogged++;
-            try { console.log(`[Perpl] mt=26 adopt position mkt=${marketIdN} size=${rawSize} ep=${rawEp} sd=${sd}`); } catch {}
+          if (!this._mt2627AdoptLogged) this._mt2627AdoptLogged = 0;
+          if (this._mt2627AdoptLogged < 3) {
+            this._mt2627AdoptLogged++;
+            try { console.log(`[Perpl] mt=${msg.mt} adopt position mkt=${marketIdN} size=${rawSize} ep=${rawEp} sd=${sd} st=${status}`); } catch {}
           }
         }
       }
