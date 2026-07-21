@@ -320,6 +320,11 @@ class Autopilot {
         await bot.stop({ closePosition: true }).catch(() => {});
         st.startedByAutopilot = false;
       } else {
+        // Round 88：仍在区间内 → 检查是否需要"收窄区间"应对趋势反转。
+        // conservative 已经全平（outOfRangeAction=close），只对 balanced/aggressive
+        // 做这个中间态干预。narrowed 就 skip 本 tick（等下一 tick 再评估）。
+        const narrowed = await this._maybeNarrowRange(key, cur, ex).catch(() => false);
+        if (narrowed) return;
         this._log(key, 'skip', `${cur.config.displayName} 网格运行中，指标正常，保持`);
         return;
       }
@@ -577,6 +582,76 @@ class Autopilot {
     }
   }
 
+  /**
+   * Round 88：趋势反转但仍在区间内 → 收窄逆势侧边界，砍掉逆势方向的挂单，
+   * 持仓保留自然消化。不停网格、不平仓（比 stop+reopen 温和很多）。
+   *
+   * 规则：
+   *   下跌趋势 → shrink lower UP（砍掉当前价以下的 BUY 挂单）
+   *   上升趋势 → shrink upper DOWN（砍掉当前价以上的 SELL 挂单）
+   *   震荡     → 不动
+   *
+   * 4 层护栏防频繁抽动：
+   *   1. 只对 balanced/aggressive（conservative 已 close on 出区间）
+   *   2. strength ≥ 0.4 才认真（避免弱趋势噪音）
+   *   3. 冷却 2 小时（每所每次收窄间隔）
+   *   4. 收窄后新区间宽度不能 < price × 0.5%（太紧就跳过）
+   *
+   * @returns true if 已收窄（本 tick 不再做后续决策）
+   */
+  async _maybeNarrowRange(key, cur, ex) {
+    if (this.cfg.riskStyle === 'conservative') return false;
+    const st = this.state[key];
+    const now = Date.now();
+    if (st.lastNarrowAt && now - st.lastNarrowAt < 2 * 3600_000) return false;
+    const marketId = cur.config?.marketId;
+    const price = cur.lastPrice;
+    const oldLower = Number(cur.config?.lower);
+    const oldUpper = Number(cur.config?.upper);
+    if (!(price > 0) || !(oldUpper > oldLower)) return false;
+
+    let trend;
+    try {
+      const candles = await ex.getCandles(marketId, 3600, 200);
+      if (!candles || candles.length < 60) return false;
+      trend = analyzeTrend(candles);
+    } catch { return false; }
+    if (!trend || Number(trend.strength) < 0.4) return false;
+    if (trend.recommended !== 'long' && trend.recommended !== 'short') return false;
+
+    let newLower = oldLower, newUpper = oldUpper, dir;
+    if (trend.recommended === 'short') {
+      // 下跌 → 砍掉当前价以下的挂单（防继续接刀）
+      newLower = Math.max(oldLower, price * 0.995);
+      if (newLower <= oldLower * 1.001) return false;   // 已经很紧
+      dir = '下跌';
+    } else {
+      // 上升 → 砍掉当前价以上的挂单（防继续追高做空）
+      newUpper = Math.min(oldUpper, price * 1.005);
+      if (newUpper >= oldUpper * 0.999) return false;
+      dir = '上升';
+    }
+    // 收窄后宽度 sanity check
+    if ((newUpper - newLower) / price < 0.005) return false;
+
+    try {
+      await this.bots[key].adjustRange({ lower: newLower, upper: newUpper });
+      st.lastNarrowAt = now;
+      const oldW = ((oldUpper - oldLower) / price * 100).toFixed(2);
+      const newW = ((newUpper - newLower) / price * 100).toFixed(2);
+      const msg = `${cur.config.displayName} 趋势 ${dir} (strength ${trend.strength})，收窄区间 [${oldLower.toFixed(4)}, ${oldUpper.toFixed(4)}] (${oldW}%) → [${newLower.toFixed(4)}, ${newUpper.toFixed(4)}] (${newW}%)，砍逆势侧挂单，持仓保留`;
+      st.lastAction = 'narrow';
+      st.lastActionReason = msg;
+      this._log(key, 'narrow', msg);
+      notify(`【网格 Autopilot·收窄区间】${EXNAMES[key]}\n${msg}\n2 小时冷却期内不再收窄。`).catch(() => {});
+      this._save();
+      return true;
+    } catch (e) {
+      this._log(key, 'narrow-fail', `${cur.config.displayName} 收窄失败：${e?.message || e}`);
+      return false;
+    }
+  }
+
   async _emergencyStop(key, reason) {
     const bot = this.bots[key];
     const st = this.state[key];
@@ -658,5 +733,6 @@ function _freshExState() {
     pausedUntil: 0,
     pausedReason: '',
     startedByAutopilot: false,
+    lastNarrowAt: 0,          // Round 88 收窄区间冷却
   };
 }
