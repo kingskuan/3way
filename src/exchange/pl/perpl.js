@@ -770,6 +770,41 @@ export class PerplExchange extends EventEmitter {
       out.openOrdersCount = arr.length;
       out.openOrdersSample = arr.slice(0, 3);
     } catch (e) { out.openOrdersError = e?.message || String(e); }
+
+    // Round 94：多端点 probing —— account-history 是 TX 日志，state=open 返 0，
+    // 得找真正返 positions/orders 的端点。probe 一波常见候选，每个返 status +
+    // body 前 800 字，用户看 alert 就知道哪个能用。
+    const probeEndpoints = [
+      '/v1/trading/portfolio',
+      '/v1/trading/account',
+      '/v1/trading/positions',
+      '/v1/trading/positions/open',
+      '/v1/trading/orders',
+      '/v1/trading/orders/open',
+      '/v1/trading/orders?status=OPEN',
+      '/v1/trading/orders?status=open',
+      '/v1/trading/orders?open=true',
+      '/v1/trading/orders?state=NEW',
+      '/v1/trading/orders?state=open',
+      '/v1/trading/open-orders',
+    ];
+    out.probes = {};
+    for (const path of probeEndpoints) {
+      try {
+        const j = await this._req('GET', path);
+        const body = JSON.stringify(j);
+        out.probes[path] = {
+          ok: true,
+          preview: body.slice(0, 600),
+          isArray: Array.isArray(j),
+          topKeys: (j && typeof j === 'object' && !Array.isArray(j)) ? Object.keys(j).slice(0, 15) : null,
+          dataLen: Array.isArray(j?.data) ? j.data.length : Array.isArray(j) ? j.length : null,
+        };
+      } catch (e) {
+        out.probes[path] = { ok: false, error: String(e?.message || e).slice(0, 160) };
+      }
+    }
+
     // 本地缓存
     out.localBalance = this.balance;
     out.localAccountId = this.accountId;
