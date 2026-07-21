@@ -641,6 +641,23 @@ const server = http.createServer(async (request, res) => {
       try { return send(res, 200, autopilot.resumeAll()); }
       catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
     }
+    // Round 112：一键撤除全部 DEX 仓位 + 挂单 + 清熔断，让 Autopilot 从零重开
+    // （用于风控风格换了、Round 109 mode 修复要生效等场景 —— 现有 bot 不停不重开）
+    if (p === '/api/autopilot/reset-all-positions' && request.method === 'POST') {
+      try {
+        const bots = { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot };
+        const results = {};
+        await Promise.all(Object.entries(bots).map(async ([k, bot]) => {
+          if (!bot?.running) { results[k] = 'not-running'; return; }
+          try {
+            await bot.stop({ closePosition: true });
+            results[k] = 'stopped+closed';
+          } catch (e) { results[k] = 'err: ' + (e?.message || String(e)).slice(0, 100); }
+        }));
+        const apStatus = autopilot.resumeAll();
+        return send(res, 200, { results, autopilot: apStatus });
+      } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+    }
     // ── 宠物系统 API ─────────────────────────────────────────────────────
     if (p === '/api/pets') {
       return send(res, 200, pets.status());
