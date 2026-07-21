@@ -1185,14 +1185,15 @@ input:focus, select:focus {
 
   <!-- 五所汇总卡 -->
   <div class="total-row" style="margin-top:4px">
-    <div class="total-card">
-      <div class="lbl">总权益</div>
-      <div class="val" id="tot-equity">—</div>
+    <div class="total-card" style="position:relative;overflow:visible" onmouseover="eqTipShow(true)" onmouseleave="eqTipShow(false)" onclick="eqTipToggle()">
+      <div class="lbl">总权益 <span style="opacity:.5;font-size:9px;font-weight:400">悬停/点击看分所</span></div>
+      <div class="val" id="tot-equity" style="cursor:pointer">—</div>
       <div class="sub">
         <span id="tot-mode-summary">— Demo · — Live</span>
         &nbsp;·&nbsp;
         <span style="color:var(--v2-mut)">余额 <span id="tot-balance">—</span></span>
       </div>
+      <div id="tot-eq-tip" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:6px;background:var(--v2-panel,#111a2e);border:1px solid rgba(148,163,184,0.3);border-radius:8px;padding:10px 12px;font-size:12px;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,0.4);line-height:1.7"></div>
     </div>
     <div class="total-card">
       <div class="lbl">总盈亏</div>
@@ -3408,6 +3409,21 @@ function volTipToggle() {
   tip.style.display = _volTipStuck ? 'block' : 'none';
 }
 
+// Round 91：总权益 tooltip（同样 pattern）
+let _eqTipStuck = false;
+function eqTipShow(on) {
+  const tip = $('tot-eq-tip');
+  if (!tip) return;
+  if (_eqTipStuck) return;
+  tip.style.display = on ? 'block' : 'none';
+}
+function eqTipToggle() {
+  const tip = $('tot-eq-tip');
+  if (!tip) return;
+  _eqTipStuck = !_eqTipStuck;
+  tip.style.display = _eqTipStuck ? 'block' : 'none';
+}
+
 function renderOverview(data) {
   lastOverview = data;
   // 五所汇总
@@ -3481,12 +3497,31 @@ function renderOverview(data) {
   $('tot-unrealized').innerHTML = `<span class="${cls(totUnrealized)}">${signed(totUnrealized)}</span>`;
   $('tot-volume').textContent = fmt(totVolume);
   $('tot-rungs').textContent = totRungs;
-  // 分所交易量存 dataset，tooltip 从这里读
+  // 分所交易量 + 权益 tooltip 数据
   const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget' };
   const perEx = ['de','ex','rs','on','pl','sx','bg'].map(p => {
     const v = data[p]?.volume;
-    return { name: exNames[p], vol: Number.isFinite(v) ? v : 0, running: !!data[p]?.running };
+    const eq = data[p]?.equity;
+    return {
+      name: exNames[p],
+      vol: Number.isFinite(v) ? v : 0,
+      eq: Number.isFinite(eq) ? eq : 0,
+      running: !!data[p]?.running,
+    };
   });
+  // Round 91: 权益 tooltip
+  const eqTip = $('tot-eq-tip');
+  if (eqTip) {
+    eqTip.innerHTML = perEx
+      .slice()
+      .sort((a,b) => b.eq - a.eq)
+      .map(x => {
+        const tag = x.running ? '' : ' <span style="color:var(--v2-mut);font-size:10px">(未运行)</span>';
+        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-mut)">${x.name}${tag}</span><span style="font-variant-numeric:tabular-nums">${fmt(x.eq)}</span></div>`;
+      })
+      .join('')
+      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span>合计</span><span style="font-variant-numeric:tabular-nums">${fmt(totEquity)}</span></div>`;
+  }
   const tip = $('tot-vol-tip');
   if (tip) {
     // Round 74：区分"未运行"（灰色标签）与"运行中 0 成交"（无标签）
