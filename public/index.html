@@ -3949,10 +3949,12 @@ const AP_EX = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', 
 const AP_ACTION_ICON = {
   none:'—', start:'🟢', started:'🟢', stop:'🛑', adjusted:'🔄',
   skip:'⏭', skipped:'⏭', error:'❌', emergency_stop:'🚨',
+  narrow:'📐', 'narrow-fail':'⚠',
 };
 const AP_ACTION_LABEL = {
   none:'—', start:'启动', started:'启动', stop:'停止', adjusted:'调整',
   skip:'跳过', skipped:'跳过', error:'出错', emergency_stop:'紧急熔断',
+  narrow:'收窄区间', 'narrow-fail':'收窄失败',
 };
 
 function apFmtTime(t) { return new Date(t).toLocaleString('zh-CN', { hour12:false }); }
