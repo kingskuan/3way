@@ -2939,6 +2939,9 @@ function makeExchangeCtrl(prefix, chartId) {
         msg += '\n⚠ REST 报错:\n';
         for (const [k, v] of Object.entries(j.errors)) msg += `  · ${k}: ${String(v).slice(0, 200)}\n`;
       }
+      if (j.resnapInfo) {
+        msg += `\n🔄 WS 断线重连触发 mt=23 全量快照:\n  · 前: ${j.resnapInfo.before.mt23Count} 次 mt=23 / ${j.resnapInfo.before.orders} 单 / ${j.resnapInfo.before.positions} 仓\n  · 后: ${j.resnapInfo.after.mt23Count} 次 / ${j.resnapInfo.after.orders} 单 / ${j.resnapInfo.after.positions} 仓\n`;
+      }
       if (j.debug) {
         msg += '\n📋 Debug 快照:\n';
         if (j.debug.accountError) msg += `  · account 拉不到: ${String(j.debug.accountError).slice(0, 150)}\n`;
@@ -2946,6 +2949,9 @@ function makeExchangeCtrl(prefix, chartId) {
         if (j.debug.openOrdersCount != null) msg += `  · open orders 拿到: ${j.debug.openOrdersCount} 单\n`;
         if (j.debug.wsAuthed != null) msg += `  · WS 认证: ${j.debug.wsAuthed ? '已认证' : '未认证'}\n`;
         if (j.debug.wsReady != null) msg += `  · WS 就绪: ${j.debug.wsReady ? '是' : '否'}\n`;
+        if (j.debug.mt23Count != null) msg += `  · mt=23 快照收到: ${j.debug.mt23Count} 次\n`;
+        if (j.debug.mt23LastOrdersLen != null) msg += `  · 上次快照 orders: ${j.debug.mt23LastOrdersLen} 单\n`;
+        if (j.debug.mt23LastAgeSec != null) msg += `  · 距上次快照: ${j.debug.mt23LastAgeSec}秒前\n`;
         if (j.debug.localBalance != null) msg += `  · 本地 balance: ${j.debug.localBalance}\n`;
         if (j.debug.localPositionsCount != null) msg += `  · 本地 positions: ${j.debug.localPositionsCount} 个\n`;
         // Round 94：多端点 probe 结果——找到能返 positions/orders 的端点
