@@ -2966,11 +2966,19 @@ function makeExchangeCtrl(prefix, chartId) {
           });
         }
         // Round 99+100：账户消息前 3 条 raw JSON — 找 positions 字段
-        // Round 100：slice 加大到 900 字，看清 sts[] 结构（Round 99 alert 显示 mt=19，sts 数组是 positions 候选）
         if (j.debug.acctMsgs && j.debug.acctMsgs.length) {
-          msg += '\n💼 账户消息前 3 条 raw（找 positions 字段·mt=19 的 sts[]?）:\n';
+          msg += '\n💼 账户消息前 3 条 raw（mt=19 的 sts 是 stats 不是 positions）:\n';
           j.debug.acctMsgs.forEach((m, i) => {
             msg += `  #${i+1} mt=${m.mt}: ${JSON.stringify(m.raw).slice(0, 900)}\n`;
+          });
+        }
+        // Round 101：所有 mt 类型 count + 首次 raw — positions 可能在别的 mt 里
+        if (j.debug.mtSeen) {
+          msg += '\n📡 所有 mt 类型（找 positions 消息类型）:\n';
+          const entries = Object.entries(j.debug.mtSeen).sort((a,b) => Number(a[0]) - Number(b[0]));
+          entries.forEach(([mt, info]) => {
+            msg += `  mt=${mt}: 收到 ${info.count} 次\n`;
+            if (info.lastRaw) msg += `    raw: ${info.lastRaw}\n`;
           });
         }
         if (j.debug.localBalance != null) msg += `  · 本地 balance: ${j.debug.localBalance}\n`;
@@ -3563,7 +3571,8 @@ function renderOverview(data) {
   });
 
   // Totals
-  $('tot-equity').innerHTML = `<span class="${totEquity > 0 ? '' : 'muted'}">${fmt(totEquity)}</span>`;
+  // Round 101：总权益数字用 neon green（用户反馈太浅）
+  $('tot-equity').innerHTML = `<span style="color:${totEquity > 0 ? '#39ff14' : '#64748b'};text-shadow:${totEquity > 0 ? '0 0 8px rgba(57,255,20,0.5)' : 'none'};font-weight:700">${fmt(totEquity)}</span>`;
   $('tot-balance').textContent = fmt(totBalance);
   $('tot-pnl').innerHTML = `<span class="${cls(totPnl)}">${signed(totPnl)}</span>`;
   $('tot-realized').innerHTML = `<span class="${cls(totRealized)}">${signed(totRealized)}</span>`;

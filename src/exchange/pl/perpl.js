@@ -320,6 +320,19 @@ export class PerplExchange extends EventEmitter {
   }
 
   _handleTradingMessage(msg) {
+    // Round 101：抓所有 mt 类型 + 各存 1 条 raw JSON —— positions 可能不在
+    // mt=19 (那是 stats)，得广撒网找到 position 消息类型（mt=25/27？）
+    if (!this._mtSeen) this._mtSeen = {};
+    if (msg.mt != null && !this._mtSeen[msg.mt]) {
+      this._mtSeen[msg.mt] = { count: 0, lastRaw: null };
+    }
+    if (msg.mt != null) {
+      this._mtSeen[msg.mt].count++;
+      // 只存前 3 次的 raw，防内存爆
+      if (this._mtSeen[msg.mt].count <= 3) {
+        try { this._mtSeen[msg.mt].lastRaw = JSON.stringify(msg).slice(0, 500); } catch {}
+      }
+    }
     // mt=100 Heartbeat / mt=26 stream update：更新 head block
     // （下单要用 lb = head + ttl）
     // 观测：mt=26 消息里 at.b 是当前块，比 mt=100 更常见
@@ -830,6 +843,8 @@ export class PerplExchange extends EventEmitter {
     out.mt23FirstOrders = this._mt23FirstOrders ?? null;
     // Round 99：暴露前 3 条 mt=20/21 (AccountUpdate/WalletUpdate) 找 positions 字段
     out.acctMsgs = this._acctMsgs ?? null;
+    // Round 101：暴露所有 mt 类型的 count + 首次 raw，找 positions 消息类型
+    out.mtSeen = this._mtSeen ?? null;
     return out;
   }
 
