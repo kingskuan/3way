@@ -519,7 +519,19 @@ export class GridBot {
   }
 
   _handleFill(f) {
-    if (!this.running || f.marketId !== this.config.marketId) return;
+    // Round 107：诊断 rungs=0 但 volume>0 —— Ondo/StandX/Bitget UI 显示大量成交
+    // 量但 completedRungs=0，怀疑 fill event 的 marketId 跟 config.marketId 类型
+    // 或值对不上（Number vs String, "BTC-USD" vs "BTC-USD.P"），静默 return 掉了。
+    // 头 3 次不 match log 一次帮定位。
+    if (!this.running) return;
+    if (f.marketId !== this.config.marketId) {
+      if (!this._fillMismatchLogged) this._fillMismatchLogged = 0;
+      if (this._fillMismatchLogged < 3) {
+        this._fillMismatchLogged++;
+        try { console.log(`[bot] fill 事件 marketId 对不上 → 丢弃。fill.marketId=${JSON.stringify(f.marketId)} (${typeof f.marketId}) vs config.marketId=${JSON.stringify(this.config.marketId)} (${typeof this.config.marketId})`); } catch {}
+      }
+      return;
+    }
     const id = String(f.orderId);
     const act = this.active.get(id);
     this.active.delete(id);
@@ -1096,7 +1108,9 @@ export class GridBot {
       exchangeOpenOrders: this._exchangeOpenOrders,
       openByLevel,
       health: this._health(),
-      position: pos ? { sizeBase: round6(pos.sizeBase), entryPrice: round2(pos.entryPrice), unrealizedPnl: round2(pos.unrealizedPnl), leverage: pos.leverage ?? null } : null,
+      // Round 107：leverage 兜底 —— 交易所有的没返 leverage 字段（Ondo/Bitget 位置解析后是 null），
+      // UI 就显示"nullx"。这时用 bot.config.leverage 兜底（这是用户设的杠杆，跟 place 时用的一致）。
+      position: pos ? { sizeBase: round6(pos.sizeBase), entryPrice: round2(pos.entryPrice), unrealizedPnl: round2(pos.unrealizedPnl), leverage: pos.leverage ?? this.config?.leverage ?? null } : null,
       realizedPnl: realized,
       unrealizedPnl: unrealized,
       totalPnl,

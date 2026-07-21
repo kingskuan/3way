@@ -267,6 +267,16 @@ class Autopilot {
     // Extended 已经 skip 28h 没 start，UI 一直显示 7/17 起单时间）。
     st.lastDecisionAt = now;
 
+    // Round 107：清 stale startedByAutopilot —— bot 因平仓失败/超时/外部 stop
+    // 停了，但 flag 卡在 true → Autopilot 每 tick 报"网格运行中，保持"，永远
+    // 不重开。用户在 QC 里看到 Perpl "决策日志说运行中但 bot state running=false"
+    // 就是这个 bug。startedByAutopilot 描述我方期望，bot.running 是链上真相，
+    // 不一致时相信真相。
+    if (st.startedByAutopilot && bot && bot.running === false) {
+      st.startedByAutopilot = false;
+      this._log(key, 'reset', `bot 实际停了但 startedByAutopilot 卡 true，重置 flag 让本 tick 重新评估起单`);
+    }
+
     // 1. 熔断中？
     if (st.pausedUntil && now < st.pausedUntil) {
       this._log(key, 'skip', `熔断中（${st.pausedReason}），剩 ${Math.round((st.pausedUntil - now) / 60_000)} 分钟`);

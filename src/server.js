@@ -279,6 +279,15 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
       const before = { ...snapCounts(), balance: exchange.balance ?? null };
       const errors = {};
       const stepCounts = { start: snapCounts() };
+      // Round 107：bot 停了但本地还残留仓位/挂单 —— 用户 Perpl 网页手动平仓
+      // 但 QnV 幽灵仓位 stuck 的场景。清本地 map 再 WS resnap，WS 会重推
+      // mt=23 (orders 快照) + mt=26 (position 更新)，还在的会自动回来，
+      // 已经关掉的就干净了。只在 bot 停 + 有本地残留时触发，正常运行不影响。
+      let cleared = null;
+      if (bot && !bot.running && (exchange.positions?.size > 0 || exchange.orders?.size > 0)) {
+        cleared = { positions: exchange.positions?.size ?? 0, orders: exchange.orders?.size ?? 0 };
+        try { exchange.positions?.clear?.(); exchange.orders?.clear?.(); } catch {}
+      }
       let resnapInfo = null;
       if (typeof exchange.forceWsResnap === 'function') {
         try { resnapInfo = await exchange.forceWsResnap(); }
@@ -302,7 +311,7 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
         catch (e) { errors.debugSnapshot = e?.message || String(e); }
       }
       stepCounts.afterDebug = snapCounts();
-      return send(res, 200, { before, after, errors, debug, resnapInfo, stepCounts });
+      return send(res, 200, { before, after, errors, debug, resnapInfo, stepCounts, cleared });
     }
 
     // 紧急清链上残留：撤所有市场的挂单 + 平所有持仓。绕过 bot 状态，直接调
