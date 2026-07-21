@@ -277,15 +277,24 @@ export class BitgetExchange extends EventEmitter {
 
   async placeLimitOrder(o) {
     const marketId = Number(o.marketId);
-    const symbol = this.markets.get(marketId)?.displayName;
+    const mkt = this.markets.get(marketId);
+    const symbol = mkt?.displayName;
     if (!symbol) throw new Error(`Bitget 未知 marketId=${marketId}`);
+    // Round 110：Bitget 严格要求 price 是 stepPrice 的倍数，否则返"price must be
+    // multiple of 0.1"。补挂平仓单时 seed 价 66183.78375 直接被拒 5 次。
+    const stepPrice = Number(mkt?.stepPrice) || 0;
+    const priceSnapped = stepPrice > 0
+      ? Math.round(Number(o.price) / stepPrice) * stepPrice
+      : Number(o.price);
+    // 保留小数精度对齐（stepPrice=0.1 → toFixed(1)）
+    const decimals = stepPrice > 0 ? Math.max(0, -Math.floor(Math.log10(stepPrice))) : 8;
     const body = {
       symbol,
       productType: PRODUCT_TYPE,
       marginMode: MARGIN_MODE,
       marginCoin: MARGIN_COIN,
       size: String(o.sizeBase),
-      price: String(o.price),
+      price: priceSnapped.toFixed(decimals),
       side: o.side,           // 'buy' | 'sell'
       orderType: 'limit',
       force: 'gtc',           // Good Till Cancel
@@ -299,7 +308,7 @@ export class BitgetExchange extends EventEmitter {
     }
     this.orders.set(orderId, {
       orderId, marketId, side: o.side,
-      price: Number(o.price), sizeBase: Number(o.sizeBase),
+      price: priceSnapped, sizeBase: Number(o.sizeBase),
       levelIndex: o.levelIndex, clientOrderId: o.clientOrderId,
       reduceOnly: !!o.reduceOnly,
     });
