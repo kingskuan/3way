@@ -2965,6 +2965,13 @@ function makeExchangeCtrl(prefix, chartId) {
             msg += `  #${i+1}: ${JSON.stringify(o).slice(0, 260)}\n`;
           });
         }
+        // Round 99：mt=20/21 (AccountUpdate/WalletUpdate) 前 3 条 raw JSON — 找 positions 字段
+        if (j.debug.acctMsgs && j.debug.acctMsgs.length) {
+          msg += '\n💼 mt=20/21 前 3 条 raw（找 positions 字段）:\n';
+          j.debug.acctMsgs.forEach((m, i) => {
+            msg += `  #${i+1} mt=${m.mt}: ${JSON.stringify(m.raw).slice(0, 280)}\n`;
+          });
+        }
         if (j.debug.localBalance != null) msg += `  · 本地 balance: ${j.debug.localBalance}\n`;
         if (j.debug.localPositionsCount != null) msg += `  · 本地 positions: ${j.debug.localPositionsCount} 个\n`;
         // Round 94：多端点 probe 结果——找到能返 positions/orders 的端点

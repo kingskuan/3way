@@ -828,6 +828,8 @@ export class PerplExchange extends EventEmitter {
     out.mt23LastAgeSec = this._mt23LastAt ? Math.round((Date.now() - this._mt23LastAt) / 1000) : null;
     // Round 96：暴露前 3 条 raw JSON，让 user alert 直接看到 Perpl 真实字段名
     out.mt23FirstOrders = this._mt23FirstOrders ?? null;
+    // Round 99：暴露前 3 条 mt=20/21 (AccountUpdate/WalletUpdate) 找 positions 字段
+    out.acctMsgs = this._acctMsgs ?? null;
     return out;
   }
 
@@ -1024,6 +1026,9 @@ function _extractPerplBalance(self, msg) {
     self._walletMsgDumped = true;
     try { console.log(`[Perpl] mt=${msg.mt} 首个账户消息全量 dump（诊断）：` + JSON.stringify(msg).slice(0, 1000)); } catch {}
   }
+  // Round 99：存前 3 条 mt=20/21 raw JSON 供 debug 看 positions 字段
+  if (!self._acctMsgs) self._acctMsgs = [];
+  if (self._acctMsgs.length < 3) self._acctMsgs.push({ mt: msg.mt, raw: msg });
   const accounts = Array.isArray(msg.as) ? msg.as : (msg.a ? [msg.a] : []);
   const candidates = accounts.length ? accounts : (msg.b !== undefined ? [msg] : []);
   for (const acc of candidates) {
