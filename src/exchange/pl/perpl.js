@@ -543,10 +543,45 @@ export class PerplExchange extends EventEmitter {
               levelIndex: tracked.levelIndex, clientOrderId: tracked.clientOrderId,
             });
           }
-          // 只在有明确 os 字段且值为 0 时删；os 不存在的事件不动本地（保守）
-          if (o.os !== undefined && Number(o.os) === 0) this.orders.delete(oid);
-          // 显式拒单（Round 17 观察）也删本地——这条单其实从没上链
-          else if (o.r === true || o.st === 7) this.orders.delete(oid);
+          // Round 117：官方 OrderStatus 枚举确认（types.md 里）：
+          //   4=Filled, 5=Canceled, 6=Expired, 7=Failed  → 所有 terminal 状态
+          //   还有 r=true (Remove from open orders) 也算 terminal
+          // 之前只 os===0 判断 → 漏掉了 Canceled/Expired 的边缘情况。
+          const orderStatus = Number(o.st);
+          const isTerminal = o.r === true
+            || (o.os !== undefined && Number(o.os) === 0)
+            || (Number.isFinite(orderStatus) && [4, 5, 6, 7].includes(orderStatus));
+          if (isTerminal) this.orders.delete(oid);
+        }
+      }
+      return;
+    }
+    // Round 117：mt=25 FillsUpdate（官方 doc websocket.md 定义的独立 fills 消息）
+    //   { mt: 25, at, d: Fill[] }  Fill = { at, mkt, acc, oid, t, l, p, s, f }
+    // 之前只从 mt=24 里 fs>0 推 fill，漏了独立的 mt=25 事件。
+    if (msg.mt === 25) {
+      if (msg.at && Number.isFinite(Number(msg.at.b))) this._headBlock = Number(msg.at.b);
+      if (Array.isArray(msg.d)) {
+        for (const fill of msg.d) {
+          const oid = fill.oid != null ? String(fill.oid) : '';
+          if (!oid || !this.orders.has(oid)) continue;
+          const tracked = this.orders.get(oid);
+          const marketId = Number(tracked.marketId);
+          const priceScale = this._priceScales.get(marketId) || 1;
+          const sizeScale = this._sizeScales.get(marketId) || 1;
+          const fillSize = Number(fill.s);
+          if (!(fillSize > 0)) continue;
+          this.emit('fill', {
+            orderId: oid, marketId, side: tracked.side,
+            price: Number(fill.p) / priceScale || tracked.price,
+            sizeBase: fillSize / sizeScale,
+            levelIndex: tracked.levelIndex, clientOrderId: tracked.clientOrderId,
+          });
+          if (!this._mt25Logged) this._mt25Logged = 0;
+          if (this._mt25Logged < 3) {
+            this._mt25Logged++;
+            try { console.log(`[Perpl] mt=25 fill oid=${oid} size=${fillSize} price=${fill.p} liq=${fill.l}`); } catch {}
+          }
         }
       }
       return;
@@ -825,11 +860,14 @@ export class PerplExchange extends EventEmitter {
     // Perpl 官方：t=3 CloseLong (卖) / t=4 CloseShort (买)；市价单 p=0；lb=head+ttl
     const t = p.sizeBase > 0 ? 3 : 4;
     const lb = this._headBlock > 0 ? this._headBlock + this._orderTtlBlocks : 0;
+    // Round 117：ms (max slippage) 官方 spec 说市价单可选，默认可能不受控
+    //  加 500 bps = 5% 允许滑点上限，防大波动时被"无限滑点"打爆。
     return await this._sendOrderRequest({
       mkt: marketIdN, t,
       p: 0,
       s: Math.round(Math.abs(p.sizeBase) * sizeScale),
       fl: 0, lv: 100, lb,
+      ms: 500,
     }, 8000);
   }
 
