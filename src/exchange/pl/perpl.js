@@ -848,13 +848,10 @@ export class PerplExchange extends EventEmitter {
   }
 
   async reconcileOpenOrders() {
-    try {
-      const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=500');
-      const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
-      // oid 是持久订单 ID（对齐 Round 28 fetchOpenOrders 修的字段名）
-      const stillOpen = new Set(arr.map((o) => String(o.oid ?? o.orderId ?? o.id ?? o.rq)));
-      for (const id of [...this.orders.keys()]) if (!stillOpen.has(id)) this.orders.delete(id);
-    } catch { /* skip */ }
+    // Round 98：完全 no-op。之前 REST 返 [] 就误清 22 单，Round 97 加了 guard 但
+    // 用户实测还是 0 单——说明 REST 端点对这个用户就是不 work，任何依赖它的
+    // reconcile 都不能碰本地 orders。WS mt=23 是唯一可靠源，_poll 里的 fill 检测
+    // 也已经改成"REST 空 → 保留本地"。这里直接 return true 别再折腾。
     return true;
   }
 
@@ -981,15 +978,17 @@ export class PerplExchange extends EventEmitter {
 
     // 3) fill 兜底：WS 应该已经推过，这里作为二次保险，检查本地跟踪的
     //    单是否还在 open 里；不在就查详情看是否 filled
+    // Round 97：REST 返 [] 就不清本地（跟 reconcileOpenOrders 一样的 root cause）——
+    // 用户 `?state=open` 端点返 200 空数组，之前每次 _poll 都会把 WS mt=23 adopt 的
+    // orders 清光 → 本地永远 0 单。信 WS，不用 REST 假空覆盖。
     if (this.orders.size > 0) {
       try {
         const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=500');
         const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
-        const stillOpen = new Set(arr.map((o) => String(o.oid ?? o.orderId ?? o.id ?? o.rq)));
-        for (const id of [...this.orders.keys()]) {
-          if (!stillOpen.has(id)) {
-            // WS 通常会先推 fill，这里静默清理即可
-            this.orders.delete(id);
+        if (arr.length > 0) {
+          const stillOpen = new Set(arr.map((o) => String(o.oid ?? o.orderId ?? o.id ?? o.rq)));
+          for (const id of [...this.orders.keys()]) {
+            if (!stillOpen.has(id)) this.orders.delete(id);
           }
         }
       } catch { /* skip */ }
