@@ -477,6 +477,10 @@ export class GridBot {
         marketId: this.config.marketId, side: o.side, price: o.price,
         sizeBase, reduceOnly,
         levelIndex: o.levelIndex, clientOrderId,
+        // Round 106：Perpl 没 setLeverage account-level 概念，杠杆必须每单带；不带
+        // 就 fallback 到 exchange 层的 _defaultLeverage=3 → user 设 15x 但仓位
+        // 一直开 3x。其他 DEX（Extended/Bitget/StandX）忽略这个字段无副作用。
+        leverage: this.config.leverage,
       }).catch((e) => {
         this._placeFails++; this._lastFailAt = Date.now();
         this._alert('下单失败: ' + e.message);
