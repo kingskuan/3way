@@ -672,6 +672,12 @@ export class StandXExchange extends EventEmitter {
     // 刷余额
     await this._refreshBalance();
 
+    // Round 111：poll 里加 fetchPositions 更新 this.positions map ——
+    // Round 110 让 fetchPositions set map 了，但 poll 从不调用它，只有
+    // closePosition 会 → 平常 map 永远空 → bot.getPosition() 永远 null →
+    // UI 显示"无持仓"，即使 StandX 网页明明有仓
+    try { await this.fetchPositions(); } catch { /* transient */ }
+
     // Round 90: Fill 检测（之前完全没实现，成交记录永远空白）
     // 本地跟踪的 orders 里，交易所已不 open 的 → 当作成交，emit fill
     // 让 bot._handleFill 更新 stats + 记 fills 表 + 触发 replacement
