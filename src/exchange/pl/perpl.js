@@ -409,10 +409,13 @@ export class PerplExchange extends EventEmitter {
       // 不再看 st 猜测。mt=24 是增量事件，另外处理。
       const isSnapshot = msg.mt === 23;
       if (isSnapshot) {
-        // Round 95：记录 mt=23 到达次数 + 当次 orders 长度，getDebugSnapshot 暴露
+        // Round 95：记录 mt=23 到达次数 + 当次 orders 长度
         this._mt23Count = (this._mt23Count || 0) + 1;
         this._mt23LastOrdersLen = orders.length;
         this._mt23LastAt = Date.now();
+        // Round 96：存前 3 单 raw JSON，供 debug 看真实字段名
+        //  用户报 mt=23 收到 23 单但本地 0 → 一定是 oid/mkt/os 字段解析全 skip
+        this._mt23FirstOrders = orders.slice(0, 3);
       }
       if (isSnapshot && orders.length) {
         let adopted = 0, dropped = 0;
@@ -823,6 +826,8 @@ export class PerplExchange extends EventEmitter {
     out.mt23Count = this._mt23Count || 0;
     out.mt23LastOrdersLen = this._mt23LastOrdersLen ?? null;
     out.mt23LastAgeSec = this._mt23LastAt ? Math.round((Date.now() - this._mt23LastAt) / 1000) : null;
+    // Round 96：暴露前 3 条 raw JSON，让 user alert 直接看到 Perpl 真实字段名
+    out.mt23FirstOrders = this._mt23FirstOrders ?? null;
     return out;
   }
 
