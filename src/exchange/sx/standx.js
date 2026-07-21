@@ -307,10 +307,29 @@ export class StandXExchange extends EventEmitter {
   async fetchPositions() {
     try {
       const arr = await this._authGet('/api/query_positions');
-      return (arr || []).map((p) => ({
-        marketId: this._symbolToId?.get(p.symbol) ?? null,
-        sizeBase: Number(p.qty), entryPrice: Number(p.entry_price),
-      }));
+      const out = [];
+      for (const p of (arr || [])) {
+        const marketId = this._symbolToId?.get(p.symbol) ?? null;
+        const size = Number(p.qty);
+        if (!marketId || !Number.isFinite(size)) continue;
+        // Round 110：qty=0 = 平仓状态记录，删掉 map 里的（防止 stale）
+        if (size === 0) { this.positions.delete(Number(marketId)); continue; }
+        // Round 110：direction 决定 sign（long=正、short=负）—— bot 侧靠符号判断方向
+        const isShort = String(p.side || p.direction || '').toLowerCase().startsWith('s');
+        const signedSize = isShort ? -Math.abs(size) : Math.abs(size);
+        const pos = {
+          marketId: Number(marketId),
+          sizeBase: signedSize,
+          entryPrice: Number(p.entry_price ?? p.entryPrice ?? 0),
+          unrealizedPnl: Number(p.upnl ?? p.unrealizedPnl ?? 0),
+          leverage: Number(p.leverage ?? 0) || null,
+        };
+        // Round 110：不写 map → bot.getPosition() 永远 null → QnV UI 显示"无持仓"
+        // 即使 StandX 网页明明有仓（用户 IMG_3980 显示 ETH-USD long 0.021 @15x）
+        this.positions.set(Number(marketId), pos);
+        out.push(pos);
+      }
+      return out;
     } catch { return []; }
   }
 
