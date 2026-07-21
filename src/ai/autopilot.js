@@ -49,7 +49,12 @@ const STYLES = {
   aggressive: {
     rangePct: 0.03,
     gridCount: 24,
-    sizeFractionOfBalance: 0.04,
+    // Round 119：用户要每格 ~$30 notional。fraction 0.04 → 0.10 (×2.5)：
+    //   $300 balance × 0.10 = $30/grid（EX/PL/其他）
+    //   $700 Bitget × 0.10 = $70/grid（受惠更多，Bitget 高余额充分利用）
+    // 24 格总 notional：24 × $30 = $720 (EX/PL), 24 × $70 = $1680 (BG)
+    // 保证金占用：10x → 24%, 12x → 20%, 15x → 16%（BG 因 15x + 高余额，占 11%）
+    sizeFractionOfBalance: 0.10,
     maxLeverage: 15,   // Round 81：用户要 15x（Round 37 是 10x, 更早 8x）。
                        // 15x × 3% 区间边缘 = 45% 亏损，护栏 dailyLossPctLimit 必须
                        // 相应放宽到 8%（原 5%）才能给网格留出跑动空间——否则
