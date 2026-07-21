@@ -345,11 +345,38 @@ export class StandXExchange extends EventEmitter {
   async fetchOpenOrders(marketId) {
     const symbol = this._sym(marketId);
     if (!symbol) return [];
+    // Round 114：/api/query_open_orders?symbol=X&limit=500&page_size=500 依然
+    // 返 {page_size:0, result:[]}。但 StandX 网页明明 77 单。API 完全无视我们的
+    // 参数（可能 param 位置错、endpoint 名错、或需要 body）。probe 5 种变体，
+    // 用返 result 有内容的那个。
+    const candidates = [
+      { m: 'GET', path: `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500&status=OPEN` },
+      { m: 'GET', path: `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&status=open&size=500` },
+      { m: 'GET', path: `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&state=OPEN` },
+      { m: 'GET', path: `/api/list_orders?symbol=${encodeURIComponent(symbol)}&status=OPEN` },
+      { m: 'GET', path: `/api/query_active_orders?symbol=${encodeURIComponent(symbol)}` },
+      { m: 'GET', path: `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500` }, // 原来的 Round 108 fallback
+    ];
+    let j = null;
+    for (const c of candidates) {
+      try {
+        const r = await this._authGet(c.path);
+        const arr = Array.isArray(r) ? r : (Array.isArray(r?.result) ? r.result : (Array.isArray(r?.orders) ? r.orders : (Array.isArray(r?.data) ? r.data : [])));
+        if (arr.length > 0) {
+          if (!this._winningEndpointLogged) {
+            this._winningEndpointLogged = true;
+            try { console.log(`[StandX] fetchOpenOrders 命中 ${c.path} → ${arr.length} 单`); } catch {}
+          }
+          j = r;
+          break;
+        }
+      } catch { /* try next */ }
+    }
+    if (!j) {
+      // 全 fallback 空：用最后一个当作"真的没单"信号（不是 error）
+      try { j = await this._authGet(candidates[candidates.length - 1].path); } catch { j = {}; }
+    }
     try {
-      // Round 108：StandX API 需要 limit/page_size，不带 → 返 page_size:0 空数组
-      // debug 显示 openOrdersRaw={code:0, result:[], page_size:0} 但 web UI 有 18 单
-      // 少了这个参数 QnV 侧看到 0 单 → cancelAll 不知道要撤 → 链上 18 单卡死
-      const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500`);
       // Round 51：不同版本 API 响应结构可能不同（{result:[]} / {orders:[]} /
       // {data:[]} / 直接 []）——用户报告链上 48 单但 QnV 只见 24 单，很可能
       // 就是 fetchOpenOrders 拉不全。兼容多形 + 首次日志诊断结构。
@@ -759,7 +786,9 @@ export class StandXExchange extends EventEmitter {
   }
 
   async getDebugSnapshot() {
-    const symbol = this._sym(1) || 'BTC-USD';
+    // Round 114：symbol 用当前活跃 market 而不是 hardcoded BTC-USD（bot 可能在
+    // MU-USD/ETH-USD 上，用 BTC-USD probe 永远返 0）。
+    const symbol = this._sym(this._activeMarketId ?? 1) || this._sym(1) || 'BTC-USD';
     const snap = {
       symbol,
       chain: this.chain,
@@ -770,11 +799,32 @@ export class StandXExchange extends EventEmitter {
       })),
       localOrdersCount: this.orders.size,
     };
-    // openOrders raw
+    // Round 114：probe 多个 endpoint 变体，看哪个能返 orders（Round 108 params
+    // 无效，StandX API 完全无视 limit/page_size，返 result:[] page_size:0）。
+    const probeUrls = [
+      `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500`,
+      `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&status=OPEN`,
+      `/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&state=OPEN`,
+      `/api/list_orders?symbol=${encodeURIComponent(symbol)}&status=OPEN`,
+      `/api/query_active_orders?symbol=${encodeURIComponent(symbol)}`,
+    ];
+    snap.probes = {};
+    for (const url of probeUrls) {
+      try {
+        const r = await this._authGet(url);
+        const arr = Array.isArray(r) ? r : (Array.isArray(r?.result) ? r.result : (Array.isArray(r?.orders) ? r.orders : (Array.isArray(r?.data) ? r.data : [])));
+        snap.probes[url.replace('/api/', '').replace(`symbol=${encodeURIComponent(symbol)}&`, '').replace(`symbol=${encodeURIComponent(symbol)}`, '')] = {
+          ok: true,
+          keys: r && typeof r === 'object' && !Array.isArray(r) ? Object.keys(r) : null,
+          len: arr.length,
+          preview: JSON.stringify(r).slice(0, 300),
+        };
+      } catch (e) {
+        snap.probes[url.replace('/api/', '')] = { ok: false, err: String(e?.message || e).slice(0, 120) };
+      }
+    }
+    // openOrders raw (legacy field name, first probe)
     try {
-      // Round 108：StandX API 需要 limit/page_size，不带 → 返 page_size:0 空数组
-      // debug 显示 openOrdersRaw={code:0, result:[], page_size:0} 但 web UI 有 18 单
-      // 少了这个参数 QnV 侧看到 0 单 → cancelAll 不知道要撤 → 链上 18 单卡死
       const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500`);
       snap.openOrdersRaw = j;
       snap.openOrdersRawType = Array.isArray(j) ? 'array' : typeof j;
