@@ -333,15 +333,49 @@ export class PerplExchange extends EventEmitter {
         try { this._mtSeen[msg.mt].lastRaw = JSON.stringify(msg).slice(0, 500); } catch {}
       }
     }
-    // mt=100 Heartbeat / mt=26 stream update：更新 head block
-    // （下单要用 lb = head + ttl）
-    // 观测：mt=26 消息里 at.b 是当前块，比 mt=100 更常见
+    // mt=100 Heartbeat：更新 head block
     if (msg.mt === 100) {
       if (Number.isFinite(Number(msg.h))) this._headBlock = Number(msg.h);
       return;
     }
-    if (msg.mt === 26 && msg.at && Number.isFinite(Number(msg.at.b))) {
-      this._headBlock = Number(msg.at.b);
+    // mt=26 PositionUpdate/StreamUpdate：既是 head block，也带 msg.d[] 仓位
+    // Round 103：msg.d[] 是 positions 数组（key 字段 pid/mkt/sd/s/ep/dpnl/fee/lv），
+    // 之前 handler 只抽 head 就 return，把仓位数据整个吞了 — 用户 Perpl 网页
+    // 显示 1 仓 QnV 显示 0 的 root cause。
+    if (msg.mt === 26) {
+      if (msg.at && Number.isFinite(Number(msg.at.b))) this._headBlock = Number(msg.at.b);
+      if (Array.isArray(msg.d)) {
+        for (const pos of msg.d) {
+          const marketIdN = Number(pos.mkt ?? pos.marketId);
+          if (!Number.isFinite(marketIdN)) continue;
+          let rawSize = Number(pos.s ?? pos.size ?? pos.sz);
+          if (!Number.isFinite(rawSize)) continue;
+          // Perpl sd=1 long / sd=2 short；把 short 转成负 size 供 UI 计算 PnL 用
+          const sd = Number(pos.sd);
+          if (sd === 2 && rawSize > 0) rawSize = -rawSize;
+          if (rawSize === 0) {
+            this.positions.delete(marketIdN);
+            continue;
+          }
+          const sizeScale = this._sizeScales.get(marketIdN) || 1;
+          const priceScale = this._priceScales.get(marketIdN) || 1;
+          const rawEp = Number(pos.ep ?? pos.entryPrice ?? pos.avgPrice);
+          const rawDpnl = Number(pos.dpnl);
+          this.positions.set(marketIdN, {
+            marketId: marketIdN,
+            sizeBase: rawSize / sizeScale,
+            entryPrice: Number.isFinite(rawEp) && rawEp > 0 ? rawEp / priceScale : 0,
+            unrealizedPnl: Number.isFinite(rawDpnl) ? rawDpnl / 1e6 : 0,
+            leverage: Number(pos.lv) / 100 || 0,
+            pid: pos.pid,
+          });
+          if (!this._mt26PosLogged) this._mt26PosLogged = 0;
+          if (this._mt26PosLogged < 3) {
+            this._mt26PosLogged++;
+            try { console.log(`[Perpl] mt=26 adopt position mkt=${marketIdN} size=${rawSize} ep=${rawEp} sd=${sd}`); } catch {}
+          }
+        }
+      }
       return;
     }
     // mt=3 是 status 响应：Perpl 对每个 OrderRequest 都会回一条。观测：
