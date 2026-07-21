@@ -492,26 +492,32 @@ export class BitgetExchange extends EventEmitter {
         }
       } catch { /* ignore */ }
 
-      // Fill 检测：对当前活跃市场，比对本地跟踪的 orders 和 exchange 的 open orders
-      if (this._activeMarketId) {
-        try {
-          const exchangeOrders = await this.fetchOpenOrders(this._activeMarketId);
-          const exchangeIds = new Set(exchangeOrders.map((o) => o.orderId));
-          const localOrders = this.getOpenOrders(this._activeMarketId);
-          for (const lo of localOrders) {
-            if (!exchangeIds.has(String(lo.orderId))) {
-              // 本地有、exchange 没 → 已成交（或被外部撤了）
-              this.emit('fill', {
-                orderId: lo.orderId, marketId: lo.marketId,
-                levelIndex: lo.levelIndex, side: lo.side,
-                price: lo.price, sizeBase: lo.sizeBase,
-                fillPrice: lo.price, fillSize: lo.sizeBase,
-                clientOrderId: lo.clientOrderId,
-              });
-              this.orders.delete(String(lo.orderId));
+      // Round 90: Fill 检测扫所有 markets with 本地 orders
+      // (之前 gate 在 _activeMarketId 上，bot 从不 setActiveMarket → 永远不触发 →
+      //  Bitget 成交记录永远空白，只有 unrealizedPnl 从 position poll 更新)
+      if (this.orders.size > 0) {
+        const marketIds = new Set();
+        for (const o of this.orders.values()) marketIds.add(o.marketId);
+        for (const mid of marketIds) {
+          try {
+            const exchangeOrders = await this.fetchOpenOrders(mid);
+            const exchangeIds = new Set(exchangeOrders.map((o) => String(o.orderId)));
+            for (const [id, lo] of [...this.orders]) {
+              if (lo.marketId !== mid) continue;
+              if (!exchangeIds.has(String(id))) {
+                // 本地有、exchange 没 → 已成交（或被外部撤了）
+                this.emit('fill', {
+                  orderId: lo.orderId, marketId: lo.marketId,
+                  levelIndex: lo.levelIndex, side: lo.side,
+                  price: lo.price, sizeBase: lo.sizeBase,
+                  fillPrice: lo.price, fillSize: lo.sizeBase,
+                  clientOrderId: lo.clientOrderId,
+                });
+                this.orders.delete(String(lo.orderId));
+              }
             }
-          }
-        } catch { /* fill 检测失败不阻塞 */ }
+          } catch { /* skip this market */ }
+        }
       }
     }
   }

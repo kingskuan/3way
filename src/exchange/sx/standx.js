@@ -649,6 +649,32 @@ export class StandXExchange extends EventEmitter {
     }
     // 刷余额
     await this._refreshBalance();
+
+    // Round 90: Fill 检测（之前完全没实现，成交记录永远空白）
+    // 本地跟踪的 orders 里，交易所已不 open 的 → 当作成交，emit fill
+    // 让 bot._handleFill 更新 stats + 记 fills 表 + 触发 replacement
+    if (this.orders.size > 0) {
+      const marketIds = new Set();
+      for (const o of this.orders.values()) marketIds.add(o.marketId);
+      for (const mid of marketIds) {
+        try {
+          const exchangeOrders = await this.fetchOpenOrders(mid);
+          const stillOpen = new Set(exchangeOrders.map((o) => String(o.orderId)));
+          for (const [id, o] of [...this.orders]) {
+            if (o.marketId !== mid) continue;
+            if (!stillOpen.has(id)) {
+              this.emit('fill', {
+                orderId: id, marketId: o.marketId, side: o.side,
+                price: o.price, sizeBase: o.sizeBase,
+                fillPrice: o.price, fillSize: o.sizeBase,
+                levelIndex: o.levelIndex, clientOrderId: o.clientOrderId,
+              });
+              this.orders.delete(id);
+            }
+          }
+        } catch { /* skip */ }
+      }
+    }
   }
 
   async reconnect() {
