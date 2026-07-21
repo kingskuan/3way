@@ -851,7 +851,10 @@ export class PerplExchange extends EventEmitter {
     try {
       const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=500');
       const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
-      // oid 是持久订单 ID（对齐 Round 28 fetchOpenOrders 修的字段名）
+      // Round 97：REST 返 [] 就不清本地——Perpl REST `state=open` filter 对这个
+      // 用户返 200 空数组，之前会误把 WS mt=23 adopt 的 23 单全清掉。
+      // 信 WS mt=23 快照（Perpl 端源头），别用 REST 的假空结果覆盖。
+      if (!arr.length) return true;
       const stillOpen = new Set(arr.map((o) => String(o.oid ?? o.orderId ?? o.id ?? o.rq)));
       for (const id of [...this.orders.keys()]) if (!stillOpen.has(id)) this.orders.delete(id);
     } catch { /* skip */ }
@@ -981,15 +984,17 @@ export class PerplExchange extends EventEmitter {
 
     // 3) fill 兜底：WS 应该已经推过，这里作为二次保险，检查本地跟踪的
     //    单是否还在 open 里；不在就查详情看是否 filled
+    // Round 97：REST 返 [] 就不清本地（跟 reconcileOpenOrders 一样的 root cause）——
+    // 用户 `?state=open` 端点返 200 空数组，之前每次 _poll 都会把 WS mt=23 adopt 的
+    // orders 清光 → 本地永远 0 单。信 WS，不用 REST 假空覆盖。
     if (this.orders.size > 0) {
       try {
         const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=500');
         const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
-        const stillOpen = new Set(arr.map((o) => String(o.oid ?? o.orderId ?? o.id ?? o.rq)));
-        for (const id of [...this.orders.keys()]) {
-          if (!stillOpen.has(id)) {
-            // WS 通常会先推 fill，这里静默清理即可
-            this.orders.delete(id);
+        if (arr.length > 0) {
+          const stillOpen = new Set(arr.map((o) => String(o.oid ?? o.orderId ?? o.id ?? o.rq)));
+          for (const id of [...this.orders.keys()]) {
+            if (!stillOpen.has(id)) this.orders.delete(id);
           }
         }
       } catch { /* skip */ }
