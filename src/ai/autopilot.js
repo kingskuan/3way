@@ -385,14 +385,18 @@ class Autopilot {
       }
     }
 
-    // 4b. 简单规则打分（不需要 AI 也能跑：震荡 + 波动率适中 = 高分）
-    // Round 80：去掉 neutral +1 加分——之前 long/short 候选被系统性压低分数，
-    // AI 几乎永远选 neutral。现在 3 种模式在打分层面权重一致，交给趋势强度决定。
+    // 4b. 简单规则打分
+    // Round 109：全部开仓都中性的根因——range +3 vs others +1 的偏置太重，
+    // 打分后 range 总占 top，AI prompt 又强化 neutral，strongTrend override
+    // 只查 picked 一个候选（已经 neutral 了）→ 三层叠加永远出 neutral。
+    // 新打分：range +2, others +1, 强趋势 (strength >= 0.4) +3。
+    // 强趋势能真正打赢 range，跟趋势方向做 long/short 网格。
     for (const c of candidates) {
       c.score = 0;
-      if (c.trend === 'range') c.score += 3;            // 震荡最适合网格
+      if (c.trend === 'range') c.score += 2;
       else c.score += 1;
-      if (c.atrPct != null && c.atrPct >= 0.5 && c.atrPct <= 3.0) c.score += 2;  // 波动率适中
+      if (c.atrPct != null && c.atrPct >= 0.5 && c.atrPct <= 3.0) c.score += 2;   // 波动率适中
+      if (Number(c.strength) >= 0.4 && c.recommended !== 'neutral') c.score += 3; // 强趋势加分
     }
     candidates.sort((a, b) => b.score - a.score);
     const shortlist = candidates.slice(0, 5);
@@ -406,9 +410,12 @@ class Autopilot {
         const text = await aiChat({
           small: true, json: true, maxTokens: 1500, temperature: 0.2,
           system: [
-            '你是自动网格交易的 AI 选币器。从候选市场里挑一个最适合网格的（震荡强、波动适中），',
+            '你是自动网格交易的 AI 选币器。从候选里挑一个最适合网格的市场。',
             '返回 JSON：{"marketId":<数字>,"mode":"neutral|long|short","reason":"<20字内中文>"}',
-            '优先选 recommended=neutral 且 atrPct 在 0.5-3.0 之间的。不确定就选第一个（分数最高）。',
+            '规则（Round 109 重写）：',
+            '① 如有候选 strength >= 0.4 且 recommended 是 long/short，优先挑它 + 用 recommended 做 mode（跟趋势）。',
+            '② 否则选 recommended=neutral 且 atrPct 0.5-3.0 的做中性网格。',
+            '③ 不确定就选第一个（分数最高的）。',
           ].join(''),
           messages: [{ role: 'user', content: '候选：\n' + JSON.stringify(shortlist) }],
         });
@@ -491,17 +498,15 @@ class Autopilot {
       pickedLower = lower; pickedUpper = upper;
       pickedSizeBase = sizeBase; pickedGridCount = gridCount;
       pickedLeverage = leverage;
-      // Round 36 引入 → Round 80 放宽：strongTrend 门槛 0.5 → 0.3。
-      // 用户反馈 AI 几乎永远出 neutral（4 层偏 neutral 叠加：trend 阈值严 +
-      // 打分偏 range + prompt 强推 neutral + 覆盖门槛太高）。0.3 大约对应
-      // "EMA 差 0.9%+、斜率 ≥0.2%/根"这种中等单边——已经足够让神经元网格
-      // 单向库存开始堆积，跟着方向做 long/short 更合理。
-      //   strength >= 0.3 且 recommended != neutral → 用 recommended（跟趋势）
-      //   否则           → AI 挑的 mode 或规则 recommended，最后兜底 neutral
+      // Round 109：strongTrend override 完整版。
+      // 门槛 0.3（跟 Round 80 一致），三种覆盖顺序：
+      //   ① 该候选自己 strongTrend → 直接跟 recommended
+      //   ② AI 明确给了 long/short → 用 AI 的（AI 看得到 shortlist 全貌）
+      //   ③ 兜底 recommended 或 neutral
       const strongTrend = Number(c.strength) >= 0.3 && c.recommended && c.recommended !== 'neutral';
       const chosenMode = strongTrend
         ? c.recommended
-        : (c._aiMode || c.recommended || 'neutral');
+        : (c._aiMode && c._aiMode !== 'neutral' ? c._aiMode : (c._aiMode || c.recommended || 'neutral'));
       params = {
         marketId: c.marketId, mode: chosenMode,
         lower, upper, gridCount, sizeBase, leverage,
