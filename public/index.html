@@ -2045,6 +2045,8 @@ input:focus, select:focus {
       <button class="btn btn-ghost" id="pl-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
       <button class="btn btn-ghost" id="pl-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
       <button class="btn btn-ghost" id="pl-sync-btn" style="margin-top:8px;font-size:12px;border-color:var(--yel);color:var(--yel)">🔄 强制同步 Perpl 仓位/挂单</button>
+      <div id="pl-sync-out" style="display:none;margin-top:8px;padding:10px;background:#0a0a0a;border:1px solid #333;border-radius:6px;font-family:'SF Mono',monospace;font-size:10.5px;color:#e2e8f0;white-space:pre-wrap;word-break:break-all;max-height:60vh;overflow:auto"></div>
+      <button id="pl-sync-copy" style="display:none;margin-top:6px;font-size:11px;padding:4px 10px;background:#334155;color:#fff;border:none;border-radius:4px">📋 复制到剪贴板</button>
       <button class="btn btn-ghost" id="pl-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
       <div style="margin-top:6px;padding:8px;font-size:11px;background:rgba(255,215,0,0.08);border:1px dashed var(--yel);border-radius:6px;color:var(--yel);line-height:1.5">
         ⚠️ Perpl REST 接口对 open orders 一直返 401，QnV 无法从我方枚举链上历史孤儿。
@@ -2999,8 +3001,30 @@ function makeExchangeCtrl(prefix, chartId) {
         }
       }
       const hasIssue = (j.errors && Object.keys(j.errors).length) || j.after?.positions === 0;
-      alert((hasIssue ? '⚠ ' : '✅ ') + '同步结果\n\n' + msg + (hasIssue ? '\n把这条弹窗内容截图给我，我针对性再修。' : ''));
-    } catch (e) { alert('同步失败：' + e.message); }
+      // Round 102：iOS alert() 有 ~2KB 长度限制导致 debug 截断——改用页内滚动面板
+      const fullMsg = (hasIssue ? '⚠ ' : '✅ ') + '同步结果\n\n' + msg + (hasIssue ? '\n把这条内容截图给我（可点“复制到剪贴板”再粘贴给我），针对性再修。' : '');
+      const outPanel = P('sync-out');
+      const copyBtn = P('sync-copy');
+      if (outPanel) {
+        outPanel.textContent = fullMsg;
+        outPanel.style.display = 'block';
+      }
+      if (copyBtn) {
+        copyBtn.style.display = 'inline-block';
+        copyBtn.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(fullMsg);
+            copyBtn.textContent = '✓ 已复制';
+            setTimeout(() => copyBtn.textContent = '📋 复制到剪贴板', 1500);
+          } catch { copyBtn.textContent = '❌ 复制失败'; }
+        };
+      }
+      if (!outPanel) alert((hasIssue ? '⚠ ' : '✅ ') + '同步结果\n\n' + msg.slice(0, 1200) + '\n...(截断，找 pl-sync-out 面板看全文)');
+    } catch (e) {
+      const outPanel = P('sync-out');
+      if (outPanel) { outPanel.textContent = '同步失败：' + e.message; outPanel.style.display = 'block'; }
+      else alert('同步失败：' + e.message);
+    }
     btn.disabled = false;
     btn.textContent = oldText;
   };
@@ -3571,8 +3595,8 @@ function renderOverview(data) {
   });
 
   // Totals
-  // Round 101：总权益数字用 neon green（用户反馈太浅）
-  $('tot-equity').innerHTML = `<span style="color:${totEquity > 0 ? '#39ff14' : '#64748b'};text-shadow:${totEquity > 0 ? '0 0 8px rgba(57,255,20,0.5)' : 'none'};font-weight:700">${fmt(totEquity)}</span>`;
+  // Round 102：还原总权益颜色（用户说要改的是 tooltip 里圈里的数字，不是主总权益）
+  $('tot-equity').innerHTML = `<span class="${totEquity > 0 ? '' : 'muted'}">${fmt(totEquity)}</span>`;
   $('tot-balance').textContent = fmt(totBalance);
   $('tot-pnl').innerHTML = `<span class="${cls(totPnl)}">${signed(totPnl)}</span>`;
   $('tot-realized').innerHTML = `<span class="${cls(totRealized)}">${signed(totRealized)}</span>`;
@@ -3591,19 +3615,20 @@ function renderOverview(data) {
       running: !!data[p]?.running,
     };
   });
-  // Round 91: 权益 tooltip
-  // Round 100：DEX 名字用 --v2-txt（亮白）而不是 --v2-mut（暗灰），user 反馈太浅
+  // Round 91/100/102: 权益 tooltip — DEX 名字亮白 + 数字用 neon green（用户红圈标注）
   const eqTip = $('tot-eq-tip');
   if (eqTip) {
+    const NEON = '#39ff14';
+    const GLOW = '0 0 4px rgba(57,255,20,0.5)';
     eqTip.innerHTML = perEx
       .slice()
       .sort((a,b) => b.eq - a.eq)
       .map(x => {
         const tag = x.running ? '' : ' <span style="color:var(--v2-mut);font-size:10px">(未运行)</span>';
-        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-txt);font-weight:500">${x.name}${tag}</span><span style="font-variant-numeric:tabular-nums">${fmt(x.eq)}</span></div>`;
+        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-txt);font-weight:500">${x.name}${tag}</span><span style="font-variant-numeric:tabular-nums;color:${NEON};font-weight:700;text-shadow:${GLOW}">${fmt(x.eq)}</span></div>`;
       })
       .join('')
-      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span>合计</span><span style="font-variant-numeric:tabular-nums">${fmt(totEquity)}</span></div>`;
+      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span style="color:var(--v2-txt)">合计</span><span style="font-variant-numeric:tabular-nums;color:${NEON};font-weight:800;text-shadow:${GLOW}">${fmt(totEquity)}</span></div>`;
   }
   const tip = $('tot-vol-tip');
   if (tip) {
