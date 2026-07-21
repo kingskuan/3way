@@ -327,7 +327,10 @@ export class StandXExchange extends EventEmitter {
     const symbol = this._sym(marketId);
     if (!symbol) return [];
     try {
-      const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(symbol)}`);
+      // Round 108：StandX API 需要 limit/page_size，不带 → 返 page_size:0 空数组
+      // debug 显示 openOrdersRaw={code:0, result:[], page_size:0} 但 web UI 有 18 单
+      // 少了这个参数 QnV 侧看到 0 单 → cancelAll 不知道要撤 → 链上 18 单卡死
+      const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500`);
       // Round 51：不同版本 API 响应结构可能不同（{result:[]} / {orders:[]} /
       // {data:[]} / 直接 []）——用户报告链上 48 单但 QnV 只见 24 单，很可能
       // 就是 fetchOpenOrders 拉不全。兼容多形 + 首次日志诊断结构。
@@ -744,7 +747,10 @@ export class StandXExchange extends EventEmitter {
     };
     // openOrders raw
     try {
-      const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(symbol)}`);
+      // Round 108：StandX API 需要 limit/page_size，不带 → 返 page_size:0 空数组
+      // debug 显示 openOrdersRaw={code:0, result:[], page_size:0} 但 web UI 有 18 单
+      // 少了这个参数 QnV 侧看到 0 单 → cancelAll 不知道要撤 → 链上 18 单卡死
+      const j = await this._authGet(`/api/query_open_orders?symbol=${encodeURIComponent(symbol)}&limit=500&page_size=500`);
       snap.openOrdersRaw = j;
       snap.openOrdersRawType = Array.isArray(j) ? 'array' : typeof j;
       snap.openOrdersRawKeys = j && typeof j === 'object' && !Array.isArray(j) ? Object.keys(j) : null;
