@@ -554,6 +554,11 @@ export class PerplExchange extends EventEmitter {
     if (!this._wsReady) throw new Error('Perpl trading WS 未连接，稍等重试');
     if (!this._wsAuthed) throw new Error('Perpl WS 认证未完成，稍等重试');
     if (this.accountId == null) throw new Error('Perpl accountId 未就绪（等 mt=21 消息）');
+    // Round 113：safety-bump —— Perpl lfr 是时间戳量级 (~1.78e9)。若 bot 长时间
+    // 没收到 mt=19/21 带 lfr 的消息，_reqSeq 会落后 → sr=32 静默拒绝所有 mt=22。
+    // 每次发前保 max(_reqSeq, now_sec)，把 rq 拉到当前时间之上，稳过 lfr。
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (this._reqSeq < nowSec) this._reqSeq = nowSec;
     const rq = ++this._reqSeq;
     const msg = { mt: 22, rq, acc: this.accountId, ...payload };
     return new Promise((resolve, reject) => {
@@ -644,28 +649,41 @@ export class PerplExchange extends EventEmitter {
 
   async cancelAll(marketId) {
     const marketIdN = Number(marketId);
+    // Round 113：safety-bump 已下沉到 _sendOrderRequest；这里保留一个 note
+    // 说明 cancelAll 内的每次 cancelOrder 都会走 _sendOrderRequest 自动 bump。
     // 先从 exchange 端拉真实 open orders，把服务端所有单都撤 —— 不再只信本地
     // this.orders map。之前用户遇到 132 个链上遗留单，因为本地 map 空所以撤不到；
     // 现在总是先真拉一次 exchange，再撤本地里剩下的（防止 fetchOpenOrders 漏）。
     const exchangeOrders = await this.fetchOpenOrders(marketIdN).catch(() => []);
     const exIds = new Set();
+    const failures = [];
     for (const o of exchangeOrders) {
       const oid = String(o.orderId ?? o.id ?? '');
       if (oid && oid !== '0') {
         exIds.add(oid);
-        await this.cancelOrder(marketIdN, oid).catch(() => {});
+        try { await this.cancelOrder(marketIdN, oid); }
+        catch (e) { failures.push({ oid, err: e?.message?.slice(0, 100) }); }
       }
     }
     // 兜底：本地 tracking 里还有没撤到的，也撤一遍
     for (const o of [...this.orders.values()].filter((x) => x.marketId === marketIdN)) {
       const oid = String(o.orderId);
-      if (!exIds.has(oid)) await this.cancelOrder(marketIdN, oid).catch(() => {});
+      if (!exIds.has(oid)) {
+        try { await this.cancelOrder(marketIdN, oid); }
+        catch (e) { failures.push({ oid, err: e?.message?.slice(0, 100) }); }
+      }
     }
-    // 清本地 tracking
+    // Round 113：真的撤了才清本地；有 failure 保留在 map，让下一轮 sentinel 能
+    // 看到不一致 → 触发再 retry。之前不管成败一律 delete → 掩盖了 sr=32 全失败。
+    if (failures.length > 0) {
+      console.log(`[Perpl] cancelAll ${marketIdN} 失败 ${failures.length}/${exchangeOrders.length}: ${JSON.stringify(failures.slice(0, 3))}`);
+    }
     for (const [id, o] of this.orders) {
-      if (o.marketId === marketIdN) this.orders.delete(id);
+      if (o.marketId === marketIdN && !failures.find((f) => f.oid === id)) {
+        this.orders.delete(id);
+      }
     }
-    return true;
+    return { cancelled: exchangeOrders.length - failures.length, failed: failures.length, failures: failures.slice(0, 5) };
   }
 
   getOpenOrders(marketId) {
