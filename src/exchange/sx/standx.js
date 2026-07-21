@@ -546,38 +546,56 @@ export class StandXExchange extends EventEmitter {
   }
 
   /**
-   * Round 118：官方 doc 找到唯一批量撤单端点 —— POST /api/cancel_orders
-   * 需要 body { order_id_list: int[] } OR { cl_ord_id_list: string[] }
-   * 之前一直传 { symbol } 是完全错的字段名 → API 一定返错/no-op → 68 单孤儿累积。
-   *
-   * 从本地 this.orders map 拿该 symbol 的 cl_ord_id 列表，一次 POST 全撤。
+   * Round 120：先本地 cl_ord_id_list 撤，再拿 fetchOpenOrders 的 numeric id
+   * 做 order_id_list 二次撤（清孤儿 —— Round 115 之前的历史遗留单本地 map
+   * 没记录 cl_ord_id，但 exchange 侧有 numeric id）。
    */
   async _tryBatchCancel(symbol) {
     const marketIdN = this._symbolToId?.get(symbol);
     if (marketIdN == null) return { ok: false, reason: 'unknown symbol' };
-    // 收集本地 map 里该市场的 cl_ord_id
+    let totalOk = 0;
+
+    // Step 1: 本地 cl_ord_id_list（新单，Round 115 持久化的）
     const clOrdIds = [...this.orders.values()]
       .filter((o) => Number(o.marketId) === Number(marketIdN))
       .map((o) => String(o.orderId));
-    if (clOrdIds.length === 0) return { ok: false, reason: 'no local orders' };
-    // Split into chunks of 100 (safety — docs 没给上限但 body 太大会 413)
-    const chunks = [];
-    for (let i = 0; i < clOrdIds.length; i += 100) chunks.push(clOrdIds.slice(i, i + 100));
-    let totalOk = 0;
-    for (const chunk of chunks) {
-      try {
-        const r = await this._authPostSigned('/api/cancel_orders', { cl_ord_id_list: chunk }, 6000);
-        if (r?.code === 0) totalOk += chunk.length;
-      } catch (e) { /* skip failed chunk */ }
+    if (clOrdIds.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < clOrdIds.length; i += 100) chunks.push(clOrdIds.slice(i, i + 100));
+      for (const chunk of chunks) {
+        try {
+          const r = await this._authPostSigned('/api/cancel_orders', { cl_ord_id_list: chunk }, 6000);
+          if (r?.code === 0) totalOk += chunk.length;
+        } catch (e) { /* skip */ }
+      }
     }
+
+    // Step 2: exchange 侧 numeric order_id_list（清孤儿 —— 拉真单从 chain 拿）
+    // 关键：fetchOpenOrders 返的 orderId 是 String(o.id ?? o.order_id ?? o.cl_ord_id)，
+    // 官方 doc 的孤儿单只有 numeric id，没 cl_ord_id 匹配我们本地 map。
+    const chainOrders = await this.fetchOpenOrders(marketIdN).catch(() => []);
+    const numericIds = chainOrders
+      .map((o) => Number(o.orderId))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (numericIds.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < numericIds.length; i += 100) chunks.push(numericIds.slice(i, i + 100));
+      for (const chunk of chunks) {
+        try {
+          const r = await this._authPostSigned('/api/cancel_orders', { order_id_list: chunk }, 6000);
+          if (r?.code === 0) totalOk += chunk.length;
+        } catch (e) { /* skip */ }
+      }
+    }
+
     if (totalOk > 0) {
       if (!this._batchCancelLogged) {
         this._batchCancelLogged = true;
-        console.log(`[StandX] /api/cancel_orders 批量撤 ${totalOk}/${clOrdIds.length} 单 (cl_ord_id_list)`);
+        console.log(`[StandX] /api/cancel_orders 批量撤 ${totalOk} 单 (cl:${clOrdIds.length}, orphans:${numericIds.length})`);
       }
       return { ok: true, count: totalOk };
     }
-    return { ok: false, reason: 'all chunks failed' };
+    return { ok: false, reason: 'nothing to cancel or all failed' };
   }
 
   /**

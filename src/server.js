@@ -646,13 +646,25 @@ const server = http.createServer(async (request, res) => {
     if (p === '/api/autopilot/reset-all-positions' && request.method === 'POST') {
       try {
         const bots = { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot };
+        const exchanges = { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange };
         const results = {};
         await Promise.all(Object.entries(bots).map(async ([k, bot]) => {
-          if (!bot?.running) { results[k] = 'not-running'; return; }
-          try {
-            await bot.stop({ closePosition: true });
-            results[k] = 'stopped+closed';
-          } catch (e) { results[k] = 'err: ' + (e?.message || String(e)).slice(0, 100); }
+          const ex = exchanges[k];
+          if (bot?.running) {
+            try {
+              await bot.stop({ closePosition: true });
+              results[k] = 'stopped+closed';
+            } catch (e) { results[k] = 'err: ' + (e?.message || String(e)).slice(0, 100); }
+          } else if (ex && typeof ex.cancelAll === 'function' && bot?.config?.marketId != null) {
+            // Round 120：bot 已停但 chain 可能有孤儿 → 试撤（清 StandX 那 44 单场景）
+            // 用 bot.config.marketId (bot 最后跑的市场，即使停了 config 还在)
+            try {
+              const r = await ex.cancelAll(bot.config.marketId);
+              results[k] = 'was-stopped, orphan-cancel: ' + (typeof r === 'object' ? JSON.stringify(r).slice(0, 80) : String(r));
+            } catch (e) { results[k] = 'was-stopped, orphan-cancel err: ' + (e?.message || String(e)).slice(0, 100); }
+          } else {
+            results[k] = 'not-running';
+          }
         }));
         const apStatus = autopilot.resumeAll();
         return send(res, 200, { results, autopilot: apStatus });
