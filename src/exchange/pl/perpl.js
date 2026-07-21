@@ -673,10 +673,21 @@ export class PerplExchange extends EventEmitter {
   }
 
   async fetchOpenOrders(marketId) {
-    // Perpl 用 REST 查开放订单。用户遇到 155 单在链上时 limit=100 只拉到
-    // 100 单，Round 21 的 cancelAll 只能撤 100 单，剩 55 单成孤儿。
-    // 改：limit=500 + offset 分页兜底，直到 API 返空。
+    // Round 104：Perpl REST /order-history?state=open 一直返 200 空数组 → bot 以
+    // 为链上 0 单，UI"挂单数"卡在 0/3，但 WS mt=23 已经 adopt 了 19 单到
+    // this.orders。REST 不 work 就直接从本地 WS 缓存兜底 —— 反正 WS 是 Perpl
+    // 端唯一稳定的 orders 源，比 REST 更可信。
     const mIdN = Number(marketId);
+    const wsAdopted = [...this.orders.values()]
+      .filter((o) => Number(o.marketId) === mIdN)
+      .map((o) => ({
+        orderId: String(o.orderId),
+        price: o.price,
+        side: o.side,
+        sizeBase: o.sizeBase,
+        levelIndex: o.levelIndex,
+        clientOrderId: o.clientOrderId,
+      }));
     const collected = [];
     let offset = 0;
     const PER_PAGE = 500;
@@ -709,7 +720,7 @@ export class PerplExchange extends EventEmitter {
         this._filterMissLogged = true;
         try { console.log(`[Perpl] fetchOpenOrders 过滤后 0 单（原有 ${before} 单），可能 marketId 字段名不对。首单 keys: ${Object.keys(collected[0] || {}).join(',')}`); } catch {}
       }
-      return filtered
+      const restResult = filtered
         .map((o) => {
           const scale = this._priceScales.get(mIdN) || 1;
           const rawPrice = Number(o.p ?? o.price);
@@ -724,6 +735,18 @@ export class PerplExchange extends EventEmitter {
             side: rawSide === 'sell' || rawSide === 'ask' ? 'sell' : 'buy',
           };
         });
+      // Round 104：REST 返 200 但空数组时，用 WS 本地 map 兜底 —— Perpl
+      // /order-history?state=open 对当前 API key 一直返空（Round 30 记的 401
+      // 现在变成 200 但空），但 WS mt=23 有真数据。bot._exchangeOpenOrders
+      // 依赖这个返回值，之前一直返 0 → UI"挂单数"卡片显示 0/3。
+      if (restResult.length === 0 && wsAdopted.length > 0) {
+        if (!this._wsFallbackLogged) {
+          this._wsFallbackLogged = true;
+          console.log(`[Perpl] fetchOpenOrders REST 返空但 WS 本地有 ${wsAdopted.length} 单，返回本地 map`);
+        }
+        return wsAdopted;
+      }
+      return restResult;
     } catch (e) {
       // Round 30 根因：/v1/trading/order-history?state=open 对当前签名方案返回
       // 401 Unauthorized（诊断日志确认），所以 REST 永远拿不到订单。之前静默
