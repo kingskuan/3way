@@ -408,6 +408,12 @@ export class PerplExchange extends EventEmitter {
       // snapshot 里出现的都是 open orders（Perpl 只会推 open 状态给 snapshot），
       // 不再看 st 猜测。mt=24 是增量事件，另外处理。
       const isSnapshot = msg.mt === 23;
+      if (isSnapshot) {
+        // Round 95：记录 mt=23 到达次数 + 当次 orders 长度，getDebugSnapshot 暴露
+        this._mt23Count = (this._mt23Count || 0) + 1;
+        this._mt23LastOrdersLen = orders.length;
+        this._mt23LastAt = Date.now();
+      }
       if (isSnapshot && orders.length) {
         let adopted = 0, dropped = 0;
         const snapOids = new Set();
@@ -813,7 +819,27 @@ export class PerplExchange extends EventEmitter {
     out.localOrdersCount = this.orders.size;
     out.wsAuthed = this._wsAuthed;
     out.wsReady = this._wsReady;
+    // Round 95：mt=23 snapshot 收到次数（判 WS 有没有真的推 orders snapshot）
+    out.mt23Count = this._mt23Count || 0;
+    out.mt23LastOrdersLen = this._mt23LastOrdersLen ?? null;
+    out.mt23LastAgeSec = this._mt23LastAt ? Math.round((Date.now() - this._mt23LastAt) / 1000) : null;
     return out;
+  }
+
+  /**
+   * Round 95：强制 WS 断线重连——Perpl 只在 WS 首次连上时推 mt=23 全量快照。
+   * 用户 balance 靠 mt=26 更新，但 orders/positions 靠 mt=23 一次性快照。
+   * 如果本地 orders/positions 空 → 大概率是 WS 首次连上没触发 snapshot。
+   * 断开重连一次 → Perpl 服务端会重新推 snapshot。
+   */
+  async forceWsResnap() {
+    const before = { mt23Count: this._mt23Count || 0, orders: this.orders.size, positions: this.positions.size };
+    // 走标准 reconnect 流程（内部已 bump _wsGen 让老 socket close handler 不再自动重连）
+    await this.reconnect();
+    // 等 3 秒让 WS 连上 + auth + snapshot 到达
+    await new Promise((r) => setTimeout(r, 3000));
+    const after = { mt23Count: this._mt23Count || 0, orders: this.orders.size, positions: this.positions.size };
+    return { before, after };
   }
 
   async reconcileOpenOrders() {

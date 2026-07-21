@@ -267,9 +267,9 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
       } catch (e) { return send(res, 500, { error: e.message }); }
     }
 
-    // Round 92: 强制同步 exchange 侧状态（fetch positions + reconcile open orders）
-    // Round 93：不再吞异常，把 fetchPositions/reconcile 的真实错误 + debug snapshot
-    // 全返给前端，方便用户在 alert 里直接看到 root cause（不用去 Railway 日志）
+    // Round 92-95: 强制同步 exchange 侧状态
+    // Round 95：Perpl 特殊——REST 全 404，只能靠 WS mt=23 snapshot 重推。
+    // 加 forceWsResnap 步骤：断线重连让 Perpl 服务端重新推 snapshot。
     if (subPath === '/sync' && req.method === 'POST') {
       const before = {
         positions: exchange.positions?.size ?? 0,
@@ -277,6 +277,12 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
         balance: exchange.balance ?? null,
       };
       const errors = {};
+      // Round 95：Perpl 优先走 forceWsResnap（触发 mt=23 全量快照）
+      let resnapInfo = null;
+      if (typeof exchange.forceWsResnap === 'function') {
+        try { resnapInfo = await exchange.forceWsResnap(); }
+        catch (e) { errors.forceWsResnap = e?.message || String(e); }
+      }
       if (typeof exchange.fetchPositions === 'function') {
         try { await exchange.fetchPositions(); }
         catch (e) { errors.fetchPositions = e?.message || String(e); }
@@ -290,13 +296,12 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
         orders: exchange.orders?.size ?? 0,
         balance: exchange.balance ?? null,
       };
-      // 附带 debug snapshot（有实现时）—— Perpl 会返 raw account/order-history 响应
       let debug = null;
       if (typeof exchange.getDebugSnapshot === 'function') {
         try { debug = await exchange.getDebugSnapshot(); }
         catch (e) { errors.debugSnapshot = e?.message || String(e); }
       }
-      return send(res, 200, { before, after, errors, debug });
+      return send(res, 200, { before, after, errors, debug, resnapInfo });
     }
 
     // 紧急清链上残留：撤所有市场的挂单 + 平所有持仓。绕过 bot 状态，直接调
