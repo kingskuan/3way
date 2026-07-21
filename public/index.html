@@ -2943,12 +2943,25 @@ function makeExchangeCtrl(prefix, chartId) {
         msg += '\n📋 Debug 快照:\n';
         if (j.debug.accountError) msg += `  · account 拉不到: ${String(j.debug.accountError).slice(0, 150)}\n`;
         if (j.debug.openOrdersError) msg += `  · open orders 拉不到: ${String(j.debug.openOrdersError).slice(0, 150)}\n`;
-        if (j.debug.accountRaw) msg += `  · account 原始字段: ${JSON.stringify(j.debug.accountRaw).slice(0, 300)}\n`;
         if (j.debug.openOrdersCount != null) msg += `  · open orders 拿到: ${j.debug.openOrdersCount} 单\n`;
         if (j.debug.wsAuthed != null) msg += `  · WS 认证: ${j.debug.wsAuthed ? '已认证' : '未认证'}\n`;
         if (j.debug.wsReady != null) msg += `  · WS 就绪: ${j.debug.wsReady ? '是' : '否'}\n`;
         if (j.debug.localBalance != null) msg += `  · 本地 balance: ${j.debug.localBalance}\n`;
         if (j.debug.localPositionsCount != null) msg += `  · 本地 positions: ${j.debug.localPositionsCount} 个\n`;
+        // Round 94：多端点 probe 结果——找到能返 positions/orders 的端点
+        if (j.debug.probes) {
+          msg += '\n🔍 端点 probe（找返数据的）:\n';
+          for (const [path, r] of Object.entries(j.debug.probes)) {
+            if (r.ok) {
+              const marker = (r.dataLen > 0 || (r.preview && !/\[\]|\{\}|null/.test(r.preview.slice(0, 30)))) ? '✓' : '·';
+              msg += `  ${marker} ${path.replace('/v1/trading/', '')}: len=${r.dataLen ?? '?'}\n`;
+              if (r.topKeys) msg += `    keys=[${r.topKeys.join(',')}]\n`;
+              if (r.dataLen > 0) msg += `    preview=${r.preview.slice(0, 200)}\n`;
+            } else {
+              msg += `  ✗ ${path.replace('/v1/trading/', '')}: ${r.error}\n`;
+            }
+          }
+        }
       }
       const hasIssue = (j.errors && Object.keys(j.errors).length) || j.after?.positions === 0;
       alert((hasIssue ? '⚠ ' : '✅ ') + '同步结果\n\n' + msg + (hasIssue ? '\n把这条弹窗内容截图给我，我针对性再修。' : ''));
