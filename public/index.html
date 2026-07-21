@@ -2367,6 +2367,13 @@ input:focus, select:focus {
     </div>
     <button class="btn btn-smart" id="ap-save-btn" style="margin-top:14px">💾 保存配置</button>
     <div id="ap-save-msg" class="muted" style="margin-top:8px;font-size:12px"></div>
+    <!-- Round 112：一键撤除全部 DEX 仓位 + 挂单，让 Autopilot 从零重开（换风格 / mode 修复要生效） -->
+    <button class="btn btn-ghost" id="ap-reset-all-btn" style="margin-top:10px;border-color:var(--red);color:var(--red);font-size:12px">
+      🚨 一键撤除全部 DEX 仓位 & 重新托管
+    </button>
+    <div id="ap-reset-msg" class="muted" style="margin-top:6px;font-size:11px;line-height:1.5">
+      平掉所有正在跑的 DEX 仓位 + 撤销挂单，清熔断，让 Autopilot 从零重新选币起单。用于换风控风格或 mode 修复要生效但现有 bot 不想等自然停时。
+    </div>
   </div>
 
   <!-- 每所独立勾选 + 资金上限 -->
@@ -4302,6 +4309,30 @@ async function apSave() {
 }
 
 $('ap-save-btn').addEventListener('click', apSave);
+
+// Round 112：一键撤除全部 DEX 仓位 + 挂单，让 Autopilot 从零重新托管
+async function apResetAllPositions() {
+  if (!confirm('确定要平掉全部 DEX 仓位 + 撤销全部挂单？\n\n此操作会：\n1. 对所有正在跑的 bot 发送 stop({closePosition:true})\n2. 清除所有熔断状态\n3. Autopilot 主开关若开着，下一轮 tick (≤15 分钟) 会从零重新选币起单\n\n继续？')) return;
+  const btn = $('ap-reset-all-btn');
+  const msg = $('ap-reset-msg');
+  btn.disabled = true;
+  const oldText = btn.textContent;
+  btn.textContent = '⏳ 撤除中…';
+  try {
+    const r = await fetch('/api/autopilot/reset-all-positions', { method:'POST' });
+    const j = await r.json();
+    if (j.error) {
+      msg.innerHTML = '❌ ' + j.error;
+    } else {
+      const lines = Object.entries(j.results||{}).map(([k,v])=>`  · ${k.toUpperCase()}: ${v}`).join('\n');
+      msg.innerHTML = '✅ 已发送撤除指令，下一 Autopilot tick 会从零重开：\n<pre style="font-size:10px;margin-top:4px;color:var(--txt2)">'+lines+'</pre>';
+      if (j.autopilot) apRender(j.autopilot);
+    }
+  } catch (e) { msg.innerHTML = '❌ ' + e.message; }
+  btn.disabled = false;
+  btn.textContent = oldText;
+}
+$('ap-reset-all-btn').addEventListener('click', apResetAllPositions);
 
 function apToggleAll(enabled) {
   document.querySelectorAll('.ap-ex-enable').forEach((cb) => { cb.checked = enabled; });
