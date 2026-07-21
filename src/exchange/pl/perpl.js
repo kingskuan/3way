@@ -834,52 +834,84 @@ export class PerplExchange extends EventEmitter {
     // 1) 价格
     await this._pollPrices();
 
-    // 2) 账户历史 → 推 balance + 持仓（perpl 用 account-history 查最新 snapshot）
-    try {
-      const j = await this._req('GET', '/v1/trading/account-history?limit=1');
-      const snap = j?.data?.[0] || j?.[0] || j;
-      if (snap) {
-        if (!this._accountSnapDumped) {
-          this._accountSnapDumped = true;
-          try { console.log('[Perpl] account-history snapshot 字段结构（诊断）：' + JSON.stringify(snap).slice(0, 800)); } catch {}
-        }
-        // 优先总值语义（accountValue/equity/collateral/totalBalance）→ 兜底 balance
-        const bal = Number(
-          snap.accountValue ?? snap.totalBalance ?? snap.total ?? snap.equity
-          ?? snap.collateral ?? snap.usdcBalance ?? snap.balance
-        );
-        if (Number.isFinite(bal) && bal > 0) this.balance = bal;
-        // 持仓：不管本地 map 状态如何，snapshot 一到就同步一次（不然 UI 显示不出）
-        const raw = snap.positions || snap.p || snap.ps || snap.pos || [];
-        const arr = Array.isArray(raw) ? raw : [];
-        // 先诊断一次 dump：便于核实 Perpl 实际字段名
-        if (!this._positionsDumped && arr.length) {
-          this._positionsDumped = true;
-          try { console.log('[Perpl] account snapshot positions 字段结构（诊断）：' + JSON.stringify(arr[0]).slice(0, 500)); } catch {}
-        }
-        const seen = new Set();
-        for (const pos of arr) {
-          const marketIdN = Number(pos.mkt ?? pos.marketId ?? pos.market_id ?? pos.market);
-          if (!Number.isFinite(marketIdN)) continue;
-          const rawSize = Number(pos.size ?? pos.sz ?? pos.s ?? pos.qty ?? pos.q);
-          if (!Number.isFinite(rawSize)) continue;
-          if (rawSize === 0) { this.positions.delete(marketIdN); continue; }
-          const sizeScale = this._sizeScales.get(marketIdN) || 1;
-          const priceScale = this._priceScales.get(marketIdN) || 1;
-          const rawEp = Number(pos.entryPrice ?? pos.avgPrice ?? pos.ep ?? pos.p ?? pos.avg);
-          this.positions.set(marketIdN, {
-            marketId: marketIdN,
-            sizeBase: rawSize / sizeScale,
-            entryPrice: Number.isFinite(rawEp) && rawEp > 0 ? rawEp / priceScale : 0,
-          });
-          seen.add(marketIdN);
-        }
-        // 若 snapshot 有持仓字段但某 market 不在里面，说明该市场持仓已归零；清掉
-        if (arr.length > 0) {
-          for (const mId of [...this.positions.keys()]) if (!seen.has(mId)) this.positions.delete(mId);
-        }
+    // 2) 账户 → 拉 balance + 持仓（Round 92：多端点 + 多字段名探测）
+    //    用户报告 Perpl 网页显示 $12.48 BTC long + $303 account，QnV 显示"无持仓" + $299。
+    //    balance 对上了说明 account-history 能拿到，只是 positions 字段解析失败。
+    //    枚举 3 个可能的端点 + 大量字段变体，找到就 break。
+    let snap = null;
+    for (const path of [
+      '/v1/trading/account-history?limit=1',
+      '/v1/trading/account',
+      '/v1/trading/positions',
+    ]) {
+      try {
+        const j = await this._req('GET', path);
+        // Perpl 各端点 wrap 方式不一：可能 { data: [snap] }、{ data: snap }、纯 snap
+        const candidate = j?.data?.[0] || j?.data || j?.[0] || j;
+        if (candidate) { snap = candidate; break; }
+      } catch { /* try next */ }
+    }
+    if (snap) {
+      if (!this._accountSnapDumped) {
+        this._accountSnapDumped = true;
+        try { console.log('[Perpl] account snapshot 字段结构（诊断，只打一次）：' + JSON.stringify(snap).slice(0, 1200)); } catch {}
       }
-    } catch { /* transient */ }
+      // 优先总值语义（accountValue/equity/collateral/totalBalance）→ 兜底 balance
+      const bal = Number(
+        snap.accountValue ?? snap.account_value ?? snap.totalBalance ?? snap.total_balance
+        ?? snap.total ?? snap.equity ?? snap.collateral
+        ?? snap.usdcBalance ?? snap.usdc_balance ?? snap.availableBalance ?? snap.available_balance
+        ?? snap.balance
+      );
+      if (Number.isFinite(bal) && bal > 0) this.balance = bal;
+      // 持仓：更多字段变体 + 更多嵌套路径
+      const raw = snap.positions || snap.p || snap.ps || snap.pos
+                || snap.openPositions || snap.open_positions
+                || snap.perpPositions || snap.perp_positions
+                || snap.holdings || snap.positionsList
+                || snap.account?.positions
+                || snap.data?.positions
+                || [];
+      const arr = Array.isArray(raw) ? raw : [];
+      if (!this._positionsDumped && arr.length) {
+        this._positionsDumped = true;
+        try { console.log('[Perpl] positions[0] 字段结构（诊断，只打一次）：' + JSON.stringify(arr[0]).slice(0, 600)); } catch {}
+      }
+      const seen = new Set();
+      for (const pos of arr) {
+        // marketId：Perpl 各版本字段名混乱，尝试所有已知变体
+        const marketIdN = Number(
+          pos.mkt ?? pos.marketId ?? pos.market_id ?? pos.market ?? pos.mid
+          ?? pos.symbol_id ?? pos.symbolId ?? pos.id
+        );
+        if (!Number.isFinite(marketIdN)) continue;
+        // size: 正=long 负=short
+        const rawSize = Number(
+          pos.size ?? pos.sz ?? pos.s ?? pos.qty ?? pos.q
+          ?? pos.baseSize ?? pos.base_size ?? pos.amount ?? pos.n
+        );
+        if (!Number.isFinite(rawSize)) continue;
+        if (rawSize === 0) { this.positions.delete(marketIdN); continue; }
+        const sizeScale = this._sizeScales.get(marketIdN) || 1;
+        const priceScale = this._priceScales.get(marketIdN) || 1;
+        const rawEp = Number(
+          pos.entryPrice ?? pos.entry_price ?? pos.avgPrice ?? pos.avg_price
+          ?? pos.averagePrice ?? pos.average_price ?? pos.ep ?? pos.p ?? pos.avg
+        );
+        this.positions.set(marketIdN, {
+          marketId: marketIdN,
+          sizeBase: rawSize / sizeScale,
+          entryPrice: Number.isFinite(rawEp) && rawEp > 0 ? rawEp / priceScale : 0,
+        });
+        seen.add(marketIdN);
+      }
+      // Round 92：只在明确拿到 positions 数组（arr.length>0）时才清"不在里面"的旧仓位。
+      // 如果 snapshot 里根本没 positions 字段（arr=[]），保留 WS 之前建立的持仓，
+      // 避免 REST 返 401 / 字段名变了 → 误清用户还在的仓位（Perpl 网页明明有 1 仓）。
+      if (arr.length > 0) {
+        for (const mId of [...this.positions.keys()]) if (!seen.has(mId)) this.positions.delete(mId);
+      }
+    }
 
     // 3) fill 兜底：WS 应该已经推过，这里作为二次保险，检查本地跟踪的
     //    单是否还在 open 里；不在就查详情看是否 filled

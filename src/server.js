@@ -267,6 +267,30 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
       } catch (e) { return send(res, 500, { error: e.message }); }
     }
 
+    // Round 92: 强制同步 exchange 侧状态（fetch positions + reconcile open orders）
+    // 用户报 Perpl 网页显示有仓/单，QnV 显示无 → 点这个按钮强制走一次 REST sync
+    if (subPath === '/sync' && req.method === 'POST') {
+      try {
+        const before = {
+          positions: exchange.positions?.size ?? 0,
+          orders: exchange.orders?.size ?? 0,
+          balance: exchange.balance ?? null,
+        };
+        if (typeof exchange.fetchPositions === 'function') {
+          await exchange.fetchPositions().catch(() => {});
+        }
+        if (typeof exchange.reconcileOpenOrders === 'function') {
+          await exchange.reconcileOpenOrders().catch(() => {});
+        }
+        const after = {
+          positions: exchange.positions?.size ?? 0,
+          orders: exchange.orders?.size ?? 0,
+          balance: exchange.balance ?? null,
+        };
+        return send(res, 200, { before, after });
+      } catch (e) { return send(res, 500, { error: e.message }); }
+    }
+
     // 紧急清链上残留：撤所有市场的挂单 + 平所有持仓。绕过 bot 状态，直接调
     // exchange 层。用于 bot 无 config / autopilot 崩溃后链上有残留的场景。
     //

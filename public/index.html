@@ -2044,6 +2044,7 @@ input:focus, select:focus {
       <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="pl-st-orders">—</span></div>
       <button class="btn btn-ghost" id="pl-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
       <button class="btn btn-ghost" id="pl-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="pl-sync-btn" style="margin-top:8px;font-size:12px;border-color:var(--yel);color:var(--yel)">🔄 强制同步 Perpl 仓位/挂单</button>
       <button class="btn btn-ghost" id="pl-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
       <div style="margin-top:6px;padding:8px;font-size:11px;background:rgba(255,215,0,0.08);border:1px dashed var(--yel);border-radius:6px;color:var(--yel);line-height:1.5">
         ⚠️ Perpl REST 接口对 open orders 一直返 401，QnV 无法从我方枚举链上历史孤儿。
@@ -2923,6 +2924,22 @@ function makeExchangeCtrl(prefix, chartId) {
   };
 
   if (P('reconnect-btn')) P('reconnect-btn').onclick = () => reconnectEx(prefix, P('reconnect-btn'));
+
+  // Round 92：强制同步（Perpl 专用）—— 触发 fetchPositions + reconcileOpenOrders
+  if (P('sync-btn')) P('sync-btn').onclick = async () => {
+    const btn = P('sync-btn');
+    btn.disabled = true;
+    const oldText = btn.textContent;
+    btn.textContent = '⏳ 同步中…';
+    try {
+      const r = await fetch(`/api/${prefix}/sync`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+      const j = await r.json();
+      if (j.error) alert('同步失败：\n\n' + j.error);
+      else alert(`✅ 同步完成\n\n同步前：${j.before?.positions ?? '?'} 仓 · ${j.before?.orders ?? '?'} 单 · 余额 ${j.before?.balance ?? '?'}\n同步后：${j.after?.positions ?? '?'} 仓 · ${j.after?.orders ?? '?'} 单 · 余额 ${j.after?.balance ?? '?'}\n\n如果 QnV 仍显示不对，去 IP 配置页看 Railway 日志诊断输出，或直接到 Perpl 网页操作。`);
+    } catch (e) { alert('同步失败：' + e.message); }
+    btn.disabled = false;
+    btn.textContent = oldText;
+  };
 
   // 紧急清链上残留：不管 bot 状态，直接调 exchange 层撤所有市场的挂单 + 平所有仓
   // 用户遇到过 Perpl 链上 155 单 + 1 仓，QnV bot 状态为空的场景（autopilot 崩溃遗留）
