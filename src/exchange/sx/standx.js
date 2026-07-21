@@ -23,6 +23,9 @@
 
 import { EventEmitter } from 'events';
 import { randomFillSync, generateKeyPairSync, createSign, sign as cryptoSign } from 'crypto';
+// Round 115：持久化 orders map，防止 bot 重启后 map 空 → cancelAll 无从下手 →
+// 每次 Autopilot 重启都往 chain 加 24 单，orders 累积。
+import { loadSnapshot, saveSnapshot } from '../../persist.js';
 
 const AUTH_BASE = 'https://api.standx.com';
 const REST_BASE = 'https://perps.standx.com';
@@ -107,9 +110,24 @@ export class StandXExchange extends EventEmitter {
     await this._loadMarkets();
     // 立刻拉一次余额，避免 restore 后 /api/sx/state 返 balance=0（poll 5s 才追上）
     await this._refreshBalance().catch(() => {});
+    // Round 115：从 disk 恢复 orders map ——因为 /api/query_open_orders 返空，
+    // bot 重启后本地 map 空 → cancelAll 无从下手 → 每次 Autopilot 重启都往
+    // chain 加 24 单，orders 累积到 77+。持久化后 restart 也能看见旧单 → 撤。
+    try {
+      const persisted = loadSnapshot('sx-orders');
+      if (Array.isArray(persisted?.orders)) {
+        for (const o of persisted.orders) this.orders.set(String(o.orderId), o);
+        console.log(`[StandX] 从 disk 恢复 ${this.orders.size} 单本地追踪`);
+      }
+    } catch (e) { console.log(`[StandX] orders 恢复失败: ${e?.message || e}`); }
     this.dataSource = 'real';
     this.lastOkAt = Date.now();
     this.start();
+  }
+
+  // Round 115：把 orders map 写盘。每次 place/cancel 都调。防止 restart 丢。
+  _saveOrders() {
+    try { saveSnapshot('sx-orders', { orders: [...this.orders.values()], t: Date.now() }); } catch {}
   }
 
   /** 3 步 JWT 换取流程。 */
@@ -459,6 +477,7 @@ export class StandXExchange extends EventEmitter {
       levelIndex: o.levelIndex, clientOrderId: cl_ord_id,
       reduceOnly: payload.reduce_only,
     });
+    this._saveOrders();   // Round 115：place 后写盘
     return { orderId: cl_ord_id };
   }
 
@@ -522,6 +541,7 @@ export class StandXExchange extends EventEmitter {
     }
     if (cancelled) {
       this.orders.delete(String(orderId));
+      this._saveOrders();   // Round 115：cancel 后写盘
       return true;
     }
     throw new Error(`StandX cancelOrder ${orderId} 全部字段名尝试失败: ${lastErr || '未知'}`);
@@ -615,6 +635,7 @@ export class StandXExchange extends EventEmitter {
     for (const [id, o] of [...this.orders]) {
       if (Number(o.marketId) === marketIdN) this.orders.delete(id);
     }
+    this._saveOrders();   // Round 115：批量清完写盘
 
     // 最后 finalCheck
     const finalCheck = await this.fetchOpenOrders(marketIdN).catch(() => []);
@@ -715,6 +736,7 @@ export class StandXExchange extends EventEmitter {
         try {
           const exchangeOrders = await this.fetchOpenOrders(mid);
           const stillOpen = new Set(exchangeOrders.map((o) => String(o.orderId)));
+          let anyRemoved = false;
           for (const [id, o] of [...this.orders]) {
             if (o.marketId !== mid) continue;
             if (!stillOpen.has(id)) {
@@ -725,8 +747,10 @@ export class StandXExchange extends EventEmitter {
                 levelIndex: o.levelIndex, clientOrderId: o.clientOrderId,
               });
               this.orders.delete(id);
+              anyRemoved = true;
             }
           }
+          if (anyRemoved) this._saveOrders();   // Round 115：fill 检测删完写盘
         } catch { /* skip */ }
       }
     }
