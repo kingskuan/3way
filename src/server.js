@@ -268,40 +268,41 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
     }
 
     // Round 92-95: 强制同步 exchange 侧状态
-    // Round 95：Perpl 特殊——REST 全 404，只能靠 WS mt=23 snapshot 重推。
-    // 加 forceWsResnap 步骤：断线重连让 Perpl 服务端重新推 snapshot。
+    // Round 98：加 stepCounts 逐步 snapshot orders/positions size —— 定位到底是哪一步
+    // 把 mt=23 adopt 的 orders 清掉的。之前 Round 97 加了 guard 但 orders 还是被清 →
+    // 说明还有别的 code path 在删。
     if (subPath === '/sync' && req.method === 'POST') {
-      const before = {
+      const snapCounts = () => ({
         positions: exchange.positions?.size ?? 0,
         orders: exchange.orders?.size ?? 0,
-        balance: exchange.balance ?? null,
-      };
+      });
+      const before = { ...snapCounts(), balance: exchange.balance ?? null };
       const errors = {};
-      // Round 95：Perpl 优先走 forceWsResnap（触发 mt=23 全量快照）
+      const stepCounts = { start: snapCounts() };
       let resnapInfo = null;
       if (typeof exchange.forceWsResnap === 'function') {
         try { resnapInfo = await exchange.forceWsResnap(); }
         catch (e) { errors.forceWsResnap = e?.message || String(e); }
+        stepCounts.afterResnap = snapCounts();
       }
       if (typeof exchange.fetchPositions === 'function') {
         try { await exchange.fetchPositions(); }
         catch (e) { errors.fetchPositions = e?.message || String(e); }
+        stepCounts.afterFetchPositions = snapCounts();
       }
       if (typeof exchange.reconcileOpenOrders === 'function') {
         try { await exchange.reconcileOpenOrders(); }
         catch (e) { errors.reconcileOpenOrders = e?.message || String(e); }
+        stepCounts.afterReconcile = snapCounts();
       }
-      const after = {
-        positions: exchange.positions?.size ?? 0,
-        orders: exchange.orders?.size ?? 0,
-        balance: exchange.balance ?? null,
-      };
+      const after = { ...snapCounts(), balance: exchange.balance ?? null };
       let debug = null;
       if (typeof exchange.getDebugSnapshot === 'function') {
         try { debug = await exchange.getDebugSnapshot(); }
         catch (e) { errors.debugSnapshot = e?.message || String(e); }
       }
-      return send(res, 200, { before, after, errors, debug, resnapInfo });
+      stepCounts.afterDebug = snapCounts();
+      return send(res, 200, { before, after, errors, debug, resnapInfo, stepCounts });
     }
 
     // 紧急清链上残留：撤所有市场的挂单 + 平所有持仓。绕过 bot 状态，直接调

@@ -848,16 +848,10 @@ export class PerplExchange extends EventEmitter {
   }
 
   async reconcileOpenOrders() {
-    try {
-      const j = await this._req('GET', '/v1/trading/order-history?state=open&limit=500');
-      const arr = j.orders || j.data || (Array.isArray(j) ? j : []);
-      // Round 97：REST 返 [] 就不清本地——Perpl REST `state=open` filter 对这个
-      // 用户返 200 空数组，之前会误把 WS mt=23 adopt 的 23 单全清掉。
-      // 信 WS mt=23 快照（Perpl 端源头），别用 REST 的假空结果覆盖。
-      if (!arr.length) return true;
-      const stillOpen = new Set(arr.map((o) => String(o.oid ?? o.orderId ?? o.id ?? o.rq)));
-      for (const id of [...this.orders.keys()]) if (!stillOpen.has(id)) this.orders.delete(id);
-    } catch { /* skip */ }
+    // Round 98：完全 no-op。之前 REST 返 [] 就误清 22 单，Round 97 加了 guard 但
+    // 用户实测还是 0 单——说明 REST 端点对这个用户就是不 work，任何依赖它的
+    // reconcile 都不能碰本地 orders。WS mt=23 是唯一可靠源，_poll 里的 fill 检测
+    // 也已经改成"REST 空 → 保留本地"。这里直接 return true 别再折腾。
     return true;
   }
 

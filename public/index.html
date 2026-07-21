@@ -2942,6 +2942,12 @@ function makeExchangeCtrl(prefix, chartId) {
       if (j.resnapInfo) {
         msg += `\n🔄 WS 断线重连触发 mt=23 全量快照:\n  · 前: ${j.resnapInfo.before.mt23Count} 次 mt=23 / ${j.resnapInfo.before.orders} 单 / ${j.resnapInfo.before.positions} 仓\n  · 后: ${j.resnapInfo.after.mt23Count} 次 / ${j.resnapInfo.after.orders} 单 / ${j.resnapInfo.after.positions} 仓\n`;
       }
+      if (j.stepCounts) {
+        msg += '\n📊 每步 orders/positions 计数:\n';
+        for (const [step, c] of Object.entries(j.stepCounts)) {
+          msg += `  · ${step}: ${c.orders} 单 / ${c.positions} 仓\n`;
+        }
+      }
       if (j.debug) {
         msg += '\n📋 Debug 快照:\n';
         if (j.debug.accountError) msg += `  · account 拉不到: ${String(j.debug.accountError).slice(0, 150)}\n`;
