@@ -2925,7 +2925,7 @@ function makeExchangeCtrl(prefix, chartId) {
 
   if (P('reconnect-btn')) P('reconnect-btn').onclick = () => reconnectEx(prefix, P('reconnect-btn'));
 
-  // Round 92：强制同步（Perpl 专用）—— 触发 fetchPositions + reconcileOpenOrders
+  // Round 92→93：强制同步（Perpl 专用）—— 返 REST 真错 + debug 快照，直接弹给用户看
   if (P('sync-btn')) P('sync-btn').onclick = async () => {
     const btn = P('sync-btn');
     btn.disabled = true;
@@ -2934,8 +2934,24 @@ function makeExchangeCtrl(prefix, chartId) {
     try {
       const r = await fetch(`/api/${prefix}/sync`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
       const j = await r.json();
-      if (j.error) alert('同步失败：\n\n' + j.error);
-      else alert(`✅ 同步完成\n\n同步前：${j.before?.positions ?? '?'} 仓 · ${j.before?.orders ?? '?'} 单 · 余额 ${j.before?.balance ?? '?'}\n同步后：${j.after?.positions ?? '?'} 仓 · ${j.after?.orders ?? '?'} 单 · 余额 ${j.after?.balance ?? '?'}\n\n如果 QnV 仍显示不对，去 IP 配置页看 Railway 日志诊断输出，或直接到 Perpl 网页操作。`);
+      let msg = `同步前：${j.before?.positions ?? '?'} 仓 · ${j.before?.orders ?? '?'} 单 · 余额 ${j.before?.balance ?? '?'}\n同步后：${j.after?.positions ?? '?'} 仓 · ${j.after?.orders ?? '?'} 单 · 余额 ${j.after?.balance ?? '?'}\n`;
+      if (j.errors && Object.keys(j.errors).length) {
+        msg += '\n⚠ REST 报错:\n';
+        for (const [k, v] of Object.entries(j.errors)) msg += `  · ${k}: ${String(v).slice(0, 200)}\n`;
+      }
+      if (j.debug) {
+        msg += '\n📋 Debug 快照:\n';
+        if (j.debug.accountError) msg += `  · account 拉不到: ${String(j.debug.accountError).slice(0, 150)}\n`;
+        if (j.debug.openOrdersError) msg += `  · open orders 拉不到: ${String(j.debug.openOrdersError).slice(0, 150)}\n`;
+        if (j.debug.accountRaw) msg += `  · account 原始字段: ${JSON.stringify(j.debug.accountRaw).slice(0, 300)}\n`;
+        if (j.debug.openOrdersCount != null) msg += `  · open orders 拿到: ${j.debug.openOrdersCount} 单\n`;
+        if (j.debug.wsAuthed != null) msg += `  · WS 认证: ${j.debug.wsAuthed ? '已认证' : '未认证'}\n`;
+        if (j.debug.wsReady != null) msg += `  · WS 就绪: ${j.debug.wsReady ? '是' : '否'}\n`;
+        if (j.debug.localBalance != null) msg += `  · 本地 balance: ${j.debug.localBalance}\n`;
+        if (j.debug.localPositionsCount != null) msg += `  · 本地 positions: ${j.debug.localPositionsCount} 个\n`;
+      }
+      const hasIssue = (j.errors && Object.keys(j.errors).length) || j.after?.positions === 0;
+      alert((hasIssue ? '⚠ ' : '✅ ') + '同步结果\n\n' + msg + (hasIssue ? '\n把这条弹窗内容截图给我，我针对性再修。' : ''));
     } catch (e) { alert('同步失败：' + e.message); }
     btn.disabled = false;
     btn.textContent = oldText;
