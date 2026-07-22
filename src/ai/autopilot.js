@@ -369,17 +369,40 @@ class Autopilot {
     }
 
     // 4a. 拉每个市场的近期 K 线打分（震荡强度高 + 有波动 = 网格友好）
+    // Round 124：多时间框架 —— 同时拉 1h + 15m，两个时间框架一致才算 high
+    // confidence。1h up + 15m down（短线反转）→ 判 neutral，避免追涨杀跌。
+    //   · 1h 100 bars = 4 天多，反映中期趋势
+    //   · 15m 100 bars = 25 小时，反映短线动量
+    // strength 取两者平均，atrPct 用 15m（波动率更实时）。
     const candidates = [];
     for (const m of markets.slice(0, 8)) {   // 限 top-8 减少 API 压力
       try {
-        const candles = await ex.getCandles(m.marketId, 3600, 200);
-        if (!candles || candles.length < 50) continue;
-        const trend = analyzeTrend(candles);
+        const [c1h, c15m] = await Promise.all([
+          ex.getCandles(m.marketId, 3600, 100).catch(() => []),
+          ex.getCandles(m.marketId, 900, 100).catch(() => []),
+        ]);
+        if (!c1h || c1h.length < 50) continue;
+        const t1h = analyzeTrend(c1h);
+        // 15m 数据不足就退化为纯 1h（Ondo/Perpl 冷市场可能拉不到短线）
+        const t15m = c15m && c15m.length >= 50 ? analyzeTrend(c15m) : null;
+        const agreement = t15m ? (t1h.recommended === t15m.recommended) : true;
+        const trend = {
+          trend: agreement ? t1h.trend : 'range',
+          recommended: agreement ? t1h.recommended : 'neutral',   // 时间框架不一致 → 保守中性
+          strength: t15m
+            ? Number(((t1h.strength + t15m.strength) / 2).toFixed(2))
+            : t1h.strength,
+          atrPct: t15m?.atrPct ?? t1h.atrPct,   // 短线 ATR 更实时
+          agreement,
+          _detail: t15m ? `1h=${t1h.recommended}(${t1h.strength}) · 15m=${t15m.recommended}(${t15m.strength})` : `1h-only=${t1h.recommended}(${t1h.strength})`,
+        };
         candidates.push({
           marketId: m.marketId, name: m.displayName, price: m.lastPrice,
           minOrderSize: m.minOrderSize, stepSize: m.stepSize, maxLeverage: m.maxLeverage,
           trend: trend.trend, recommended: trend.recommended,
           strength: trend.strength, atrPct: trend.atrPct,
+          agreement: trend.agreement,   // Round 124：两个时间框架是否一致
+          tfDetail: trend._detail,      // Round 124：AI 能看到 1h + 15m 分别的判断
         });
       } catch { /* skip */ }
     }
