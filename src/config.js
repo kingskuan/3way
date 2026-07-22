@@ -131,6 +131,17 @@ export function getConfig() {
     proxy: process.env.BG_PROXY || globalProxy,
   };
 
+  // ── Bitunix Perps (bitunix.com, USDT-M futures) ───────────────────────────
+  // Round 127：LIVE 首发。Bitunix 用 double-SHA256 认证（不是标准 HMAC），
+  // 需 2 段凭证：BU_API_KEY / BU_API_SECRET。bitunix.com → API Management。
+  const bu = {
+    mode: (process.env.BU_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
+    apiKey: process.env.BU_API_KEY || '',
+    apiSecret: process.env.BU_API_SECRET || '',
+    startBalance: Number(process.env.PAPER_BALANCE || 10000),
+    proxy: process.env.BU_PROXY || globalProxy,
+  };
+
   // ── Ondo Perps ────────────────────────────────────────────────────────────
   const onNet = (process.env.ON_NETWORK || 'mainnet').toLowerCase();
   const onDefaults = onNet === 'testnet'
@@ -174,6 +185,7 @@ export function getConfig() {
     pl,
     sx,
     bg,
+    bu,
   };
 }
 
