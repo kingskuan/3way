@@ -2363,38 +2363,133 @@ input:focus, select:focus {
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
-<!-- TAB: Bitunix (Round 127 · LIVE 首发 · 精简 UI，全控走 Autopilot) -->
+<!-- TAB: Bitunix (Round 131 · 完整控制台，跟 Bitget 结构一致) -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <div id="tab-bu" class="tab-panel">
-<div class="wrap" style="max-width:1100px">
-  <!-- 宠物：穷奇 -->
-  <div class="panel bu pet-card" id="bu-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
-  <div class="panel" style="margin-top:4px;border-top:2px solid var(--bu-color)">
-    <div class="panel-title" style="color:var(--bu-color)">🌌 Bitunix · USDT-M 永续（LIVE）</div>
-    <div class="muted" style="line-height:1.7;padding:6px 2px 0">
-      💡 Bitunix 是主流 CEX，USDT-M 永续（BTC/ETH/SOL/BNB/DOGE/XRP + 更多主流币），结算币 <code>USDT</code>，主流杠杆 100-125x。<br>
-      ✅ Round 127（当前）：LIVE 打通（double-SHA256 auth · 3s REST 轮询 · 下单/撤单/平仓/杠杆/持仓/K 线全接入）。Autopilot 能真起。<br>
-      🚀 实盘 <code>BU_MODE=live</code> 需要 <code>BU_API_KEY</code> + <code>BU_API_SECRET</code>（bitunix.com → API Management → Create API）。
+<div class="wrap">
+<div class="grid-left-right">
+  <div>
+    <div class="panel bu pet-card" id="bu-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
+    <div class="panel bu" style="margin-bottom:14px">
+      <div class="panel-title" style="color:var(--v2-txt,#e2e8f0)">Bitunix · 市场与趋势</div>
+      <label>交易对</label>
+      <select id="bu-market"></select>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>K线周期</label>
+          <select id="bu-interval">
+            <option value="900">15m</option>
+            <option value="3600" selected>1h</option>
+            <option value="14400">4h</option>
+            <option value="86400">1d</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-ghost" style="margin:0;padding:7px" id="bu-refresh-trend">刷新</button>
+        </div>
+      </div>
+      <div style="margin-top:10px" id="bu-rec-box" class="rec-box rec-range">
+        <div class="muted">趋势分析</div>
+        <div class="rec-tag" id="bu-rec-tag">分析中…</div>
+        <div class="rec-detail" id="bu-rec-detail">—</div>
+        <button class="btn btn-ghost" style="margin-top:8px;padding:6px;font-size:12px" id="bu-apply-rec">采用推荐策略 + 自动区间</button>
+      </div>
+      <div class="muted" style="margin-top:10px;font-size:11px;line-height:1.6">
+        💡 Bitunix 是主流 CEX，USDT-M 永续（BTC/ETH/SOL/BNB/DOGE/XRP + 更多主流币），结算币 <code>USDT</code>，主流杠杆 100-125x。<br>
+        ⚠️ 实盘 <code>BU_MODE=live</code> 需要 <code>BU_API_KEY</code> + <code>BU_API_SECRET</code>（bitunix.com → API Management，双 SHA256 签名）。<br>
+        ✅ Round 127-129：LIVE 完全打通（double-SHA256 auth · 3s REST 轮询 · 下单/撤单/平仓/杠杆/持仓/K线 全接入 · flash_close_position + cancel_all_orders 官方一键端点）。Autopilot 能真起。
+      </div>
+    </div>
+
+    <div class="panel bu">
+      <div class="panel-title" style="color:var(--v2-txt,#e2e8f0)">Bitunix · 策略配置</div>
+      <label>网格类型</label>
+      <div class="modes" id="bu-modes">
+        <div class="mode-btn sel" data-mode="neutral">中性<small>双向震荡</small></div>
+        <div class="mode-btn" data-mode="long">做多<small>低买高止</small></div>
+        <div class="mode-btn" data-mode="short">做空<small>高空低止</small></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+        <span class="muted">风格</span>
+        <div class="risk-toggle" id="bu-risk-toggle">
+          <span class="risk-btn sel" data-risk="steady">稳健</span>
+          <span class="risk-btn" data-risk="aggressive">激进</span>
+        </div>
+        <span class="muted" id="bu-risk-hint">成交少·更安全</span>
+      </div>
+      <button class="btn btn-smart" id="bu-smart-fill">🎯 智能填充参数</button>
+      <div class="muted" id="bu-smart-note" style="margin:5px 0 2px"></div>
+      <div class="row">
+        <div><label>下边界</label><input id="bu-lower" type="number" step="any"></div>
+        <div><label>上边界</label><input id="bu-upper" type="number" step="any"></div>
+      </div>
+      <div class="row">
+        <div><label>网格数量</label><input id="bu-grid-count" type="number" value="20" min="2"></div>
+        <div><label>每格数量(币)</label><input id="bu-size-base" type="number" step="any" value="0.001"></div>
+      </div>
+      <div class="row">
+        <div><label>杠杆 (x)</label><input id="bu-leverage" type="number" value="3" min="1"></div>
+        <div>
+          <label>区间外止损策略</label>
+          <select id="bu-auto-stop">
+            <option value="close" selected>冲破区间平仓</option>
+            <option value="recover">只减仓回收阶梯</option>
+          </select>
+        </div>
+      </div>
+      <div class="risk-preview" id="bu-risk-preview"></div>
+      <button class="btn btn-start" id="bu-start-btn">启动 Bitunix 网格</button>
+      <button class="btn btn-stop" id="bu-stop-btn" disabled>停止 + 撤单 + 平仓</button>
+      <button class="btn btn-ghost" id="bu-adjust-btn" disabled style="margin-top:8px">调整区间（不停止网格）</button>
+      <button class="btn btn-ghost" id="bu-cancel-orders-btn" style="margin-top:8px;border-color:var(--yel);color:var(--yel)">撤销所有挂单（保留持仓）</button>
     </div>
   </div>
 
-  <div class="panel" style="margin-top:14px">
-    <div class="panel-title" style="color:var(--v2-txt,#e2e8f0)">Bitunix · 账户状态</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px">
-      <div><div class="muted" style="font-size:11px">运行状态</div><div id="bu-st-run" style="font-size:15px;font-weight:600">—</div></div>
-      <div><div class="muted" style="font-size:11px">最新价</div><div id="bu-st-price" style="font-size:15px;font-weight:600">—</div></div>
-      <div><div class="muted" style="font-size:11px">账户余额</div><div id="bu-st-bal" style="font-size:15px;font-weight:600">—</div></div>
-      <div><div class="muted" style="font-size:11px">权益</div><div id="bu-st-eq" style="font-size:15px;font-weight:600">—</div></div>
-      <div><div class="muted" style="font-size:11px">已实现盈亏</div><div id="bu-st-rpnl" style="font-size:15px;font-weight:600">—</div></div>
-      <div><div class="muted" style="font-size:11px">未实现盈亏</div><div id="bu-st-upnl" style="font-size:15px;font-weight:600">—</div></div>
-      <div><div class="muted" style="font-size:11px">挂单数</div><div id="bu-st-orders" style="font-size:15px;font-weight:600">—</div></div>
-      <div><div class="muted" style="font-size:11px">当前市场</div><div id="bu-st-mkt" style="font-size:15px;font-weight:600">—</div></div>
+  <div>
+    <div class="panel" id="bu-orphan-prompt" style="display:none;margin-bottom:14px;border:1px solid var(--yel)">
+      <div class="panel-title" style="color:var(--yel)">⚠ 检测到未托管持仓 · 请选择处理方式</div>
+      <div id="bu-orphan-info" class="muted" style="margin-bottom:10px;line-height:1.5"></div>
+      <button class="btn btn-ghost" id="bu-orphan-recover" style="border-color:var(--yel);color:var(--yel)">① 只减仓回收阶梯</button>
+      <label style="display:block;font-size:11px;color:var(--mut2);margin-top:6px"><input type="checkbox" id="bu-orphan-above-entry" style="width:auto;margin-right:6px;vertical-align:middle">回收仅在成本价以上减仓</label>
+      <button class="btn btn-ghost" id="bu-orphan-regrid" style="margin-top:8px">② 按现价重开网格</button>
+      <button class="btn btn-stop" id="bu-orphan-close" style="margin-top:8px">③ 市价平仓</button>
     </div>
-    <div class="muted" style="margin-top:12px;font-size:12px">
-      Round 127 UI 精简，完整策略控制台走 Autopilot 托管。手动起单/撤单请等 Round 128 或用 <code>curl</code> 打 <code>/api/bu/start</code> / <code>/api/bu/stop</code>。
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">Bitunix · 账户状态</div>
+      <div class="grid-2" style="gap:10px;margin-bottom:10px">
+        <div><div class="kv"><span class="lbl">运行状态</span><span class="val" id="bu-st-run">未运行</span></div>
+          <div class="kv"><span class="lbl">最新价</span><span class="val" id="bu-st-price">—</span></div>
+          <div class="kv"><span class="lbl">账户余额</span><span class="val" id="bu-st-bal">—</span></div>
+          <div class="kv"><span class="lbl">权益</span><span class="val" id="bu-st-eq">—</span></div></div>
+        <div><div class="kv"><span class="lbl">持仓</span><span class="val" id="bu-st-pos">—</span></div>
+          <div class="kv"><span class="lbl">持仓均价</span><span class="val" id="bu-st-entry">—</span></div>
+          <div class="kv"><span class="lbl">已实现盈亏</span><span class="val" id="bu-st-rpnl">—</span></div>
+          <div class="kv"><span class="lbl">未实现盈亏</span><span class="val" id="bu-st-upnl">—</span></div></div>
+      </div>
+      <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="bu-st-total">—</span></div>
+      <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="bu-st-orders">—</span></div>
+      <button class="btn btn-ghost" id="bu-reset-btn" style="margin-top:8px;font-size:12px">重置统计（盈亏/成交量清零）</button>
+      <button class="btn btn-ghost" id="bu-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="bu-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
+      <button class="btn btn-ghost" id="bu-debug-btn" style="margin-top:8px;font-size:12px">🔍 诊断 Bitunix 挂单（raw API 响应）</button>
     </div>
-    <button class="btn btn-ghost" style="margin-top:12px" onclick="switchTab('autopilot')">前往 Autopilot 托管 Bitunix →</button>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
+      <div id="bu-range-warn"></div>
+      <div class="chartbox"><canvas id="bu-chart"></canvas></div>
+    </div>
+    <div class="grid-2" style="gap:14px">
+      <div class="panel">
+        <div class="panel-title">成交记录</div>
+        <table><thead><tr><th>时间</th><th>方向</th><th>价格</th><th>数量</th></tr></thead><tbody id="bu-fills"></tbody></table>
+      </div>
+      <div class="panel">
+        <div class="panel-title">运行日志</div>
+        <div class="log" id="bu-alerts"><div class="log-item muted">暂无日志</div></div>
+      </div>
+    </div>
   </div>
+</div>
 </div>
 </div>
 
@@ -2532,6 +2627,7 @@ input:focus, select:focus {
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('pl', this)">分析 Perpl</button>
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('sx', this)">分析 StandX</button>
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('bg', this)">分析 Bitget</button>
+      <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('bu', this)">分析 Bitunix</button>
     </div>
     <div id="ai-analyze-box" class="ai-box muted" style="margin-top:10px">综合 4小时/1小时/15分钟 三个周期的指标判断市况，给出区间/格数/间距建议。分析的是该所当前配置的市场。</div>
   </div>
@@ -3374,6 +3470,7 @@ const onCtrl = makeExchangeCtrl('on', 'on-chart');
 const plCtrl = makeExchangeCtrl('pl', 'pl-chart');
 const sxCtrl = makeExchangeCtrl('sx', 'sx-chart');
 const bgCtrl = makeExchangeCtrl('bg', 'bg-chart');
+const buCtrl = makeExchangeCtrl('bu', 'bu-chart');
 
 // ── 总览 SSE + 程序运行状态（后端连接心跳）─────────────────────────────────────
 // 服务器每秒推送一次总览数据。只要心跳正常即视为"正常运行"；心跳停止
@@ -4219,7 +4316,7 @@ aiRefreshStatus();
 setInterval(aiRefreshStatus, 30000);
 
 // ── 🚀 Autopilot UI ─────────────────────────────────────────────────────────
-const AP_EX = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget' };
+const AP_EX = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix' };
 const AP_ACTION_ICON = {
   none:'—', start:'🟢', started:'🟢', stop:'🛑', adjusted:'🔄',
   skip:'⏭', skipped:'⏭', error:'❌', emergency_stop:'🚨',
