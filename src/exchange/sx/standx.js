@@ -656,12 +656,20 @@ export class StandXExchange extends EventEmitter {
     }
     this._saveOrders();   // Round 115：批量清完写盘
 
-    // 最后 finalCheck
+    // Round 122：StandX /api/cancel_orders 官方 doc 明确 asynchronous：
+    //   "A successful response indicates the cancellation request has been
+    //    accepted, not that the orders have been cancelled."
+    // 意思是我们 POST 后 code=0，但 chain 上要好几秒才真的清。immediately
+    // finalCheck 看到残留完全正常，不该 throw 挡 Autopilot 起单。
+    // 改成 soft warning：log 告知 + return { cancelled, residual } 让上层
+    // 决定是否等下轮再撤。Autopilot 下 tick 会再触发一次 pre-cancel。
     const finalCheck = await this.fetchOpenOrders(marketIdN).catch(() => []);
     if (finalCheck.length > 0) {
-      throw new Error(`StandX cancelAll ${symbol}：6 轮 + batch 后链上仍剩 ${finalCheck.length} 单未撤（请到 standx.com Cancel All，或用 UI 上"诊断 StandX 挂单"看 API 字段名）`);
+      console.log(`[StandX] cancelAll ${symbol}：async 已 POST, chain 残留 ${finalCheck.length} 单待 StandX 处理（几秒后应清）`);
     }
-    return true;
+    // 不 throw —— async cancel 需要时间，硬 throw 会让 Autopilot 一直 skip
+    // 起单，用户 Perpl-style 死锁场景（Round 121 之前 Perpl 也是这样）。
+    return { residual: finalCheck.length };
   }
 
   /**
