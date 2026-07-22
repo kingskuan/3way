@@ -935,8 +935,22 @@ export class GridBot {
         }
         continue;
       }
+      // Round 125：async cancel API (StandX 等) 冷却窗口。同一 orderId 60 秒
+      // 内不重复发 cancel，避免 reconcile 每 30 秒把同批 duplicate 反复 signing
+      // → StandX 侧 rate-limit / 吞消息 → 100 单永远撤不干净循环。
+      const cancelKey = String(o.orderId);
+      if (!this._cancelAttempts) this._cancelAttempts = new Map();
+      const lastAttempt = this._cancelAttempts.get(cancelKey);
+      if (lastAttempt && (now - lastAttempt) < 60_000) continue;   // 冷却中，跳过
+      this._cancelAttempts.set(cancelKey, now);
       try { await this.ex.cancelOrder(this.config.marketId, o.orderId); this.active.delete(String(o.orderId)); trimmed++; }
-      catch { /* leave it; next cycle retries */ }
+      catch { /* leave it; next cycle retries after cooldown */ }
+    }
+    // 清 5 分钟以上的老 cancel 记录，防内存增长
+    if (this._cancelAttempts && this._cancelAttempts.size > 200) {
+      for (const [k, t] of this._cancelAttempts) {
+        if (now - t > 5 * 60_000) this._cancelAttempts.delete(k);
+      }
     }
     if (recovery) this._recoveryOccupied = occupied;
 
