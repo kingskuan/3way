@@ -79,19 +79,27 @@ export class BitunixExchange extends EventEmitter {
     };
   }
 
-  // queryParams 序列化：Bitunix 特色 —— 无分隔符直接拼 key1value1key2value2
-  // Round 128 root-cause fix：Round 127 用 URL 惯例 "key=v&key2=v2" → 10007 Signature Error。
-  // BitunixOfficial/open-api Node SDK openApiHttpSign.js:87-97 明确写：
-  //   Object.keys(params).sort().map(key => key + params[key]).join('')
-  _serializeParams(params) {
+  // Round 129 fix：URL 和 sign 需要**两套不同**的序列化：
+  //   · URL 走标准 URL query：?key=value&key2=value2（否则服务端解析不到 param）
+  //   · Sign 走 Bitunix 特色：keyvaluekey2value2（无 = 无 &，SDK openApiHttpSign.js sortParams）
+  // Round 128 混用了 → URL `?marginCoinUSDT` → 服务端拿到 empty params →
+  // 服务端签自己的 empty，我方签 `marginCoinUSDT` → 10007
+  _urlQueryString(params) {
+    if (!params || Object.keys(params).length === 0) return '';
+    return Object.keys(params)
+      .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
+      .join('&');
+  }
+  _signParamsString(params) {
     if (!params || Object.keys(params).length === 0) return '';
     return Object.keys(params).sort().map((k) => `${k}${params[k]}`).join('');
   }
 
   async _reqGet(pathBase, params = {}, timeoutMs = 10000) {
-    const qs = this._serializeParams(params);
-    const url = qs ? `${BASE_URL}${pathBase}?${qs}` : `${BASE_URL}${pathBase}`;
-    const headers = this._sign(qs, '');
+    const urlQs = this._urlQueryString(params);
+    const signQs = this._signParamsString(params);
+    const url = urlQs ? `${BASE_URL}${pathBase}?${urlQs}` : `${BASE_URL}${pathBase}`;
+    const headers = this._sign(signQs, '');
     const res = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(timeoutMs) });
     return this._parseResp(res, 'GET', pathBase);
   }
@@ -122,8 +130,8 @@ export class BitunixExchange extends EventEmitter {
   }
 
   async _pubGet(pathBase, params = {}, timeoutMs = 8000) {
-    // 公开端点不用签名（rate limit 10 req/s/IP）
-    const qs = this._serializeParams(params);
+    // 公开端点不用签名（rate limit 10 req/s/IP）—— 走 URL 标准 query
+    const qs = this._urlQueryString(params);
     const url = qs ? `${BASE_URL}${pathBase}?${qs}` : `${BASE_URL}${pathBase}`;
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
