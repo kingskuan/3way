@@ -57,12 +57,13 @@ const STYLES = {
     sizeFractionOfBalance: 0.10,
     maxLeverage: 15,   // Round 81：用户要 15x（Round 37 是 10x, 更早 8x）。
                        // 15x × 3% 区间边缘 = 45% 亏损，护栏 dailyLossPctLimit 必须
-                       // 相应放宽到 8%（原 5%）才能给网格留出跑动空间——否则
-                       // 45%/5% = 网格走到 1/9 区间就熔断锁死，等于永远起不来。
-                       // 8% dailyLoss 触发大约对应网格走到 1/5.6 区间——仍在
-                       // 早期就能拦住雪崩，同时给正常震荡足够呼吸空间。
+                       // 放宽给 15x 网格留跑动空间。
+                       // Round 123：8% → 12%。Round 119 每格 $30 (0.10 fraction)
+                       // 让 total notional × 3x，一次 4% 反向 = 8% equity loss 就
+                       // 触发熔断（SX 03:09 就这样炸了）。12% 允许 6% 反向单边
+                       // 才熔断，对应网格走到 1/3 区间——仍在 exceed 前拦住雪崩。
                        // 单币 maxLeverage 上限仍由 exchange 决定（很多币 <=20x）。
-    dailyLossPctLimit: 8,
+    dailyLossPctLimit: 12,
     consecutiveLossLimit: 4,
     outOfRangeAction: 'recover',
   },
