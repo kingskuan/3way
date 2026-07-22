@@ -1168,7 +1168,7 @@ export class GridBot {
       returnPct,
       equity,
       balance,
-      volume: this.stats.volume,
+      volume: Math.max(0, round2((this.stats.volume || 0) - (this.stats.volumeBaseline || 0))),
       theoreticalProfit: round2(this.stats.gridProfit),
       startBalance: this.startBalance != null ? round2(this.startBalance) : null,
       fills: this.fills.slice(0, 20),
