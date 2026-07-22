@@ -269,17 +269,24 @@ export class BitunixExchange extends EventEmitter {
   }
 
   /**
-   * Round 75 兼容：返 exchange-side 真实 volume。Bitunix 目前用 pending orders 拉不到
-   * 累积 vol；用 tickers 里的 baseVol × price 近似（跟 Bitget 同样简化处理）。
+   * Round 136：修 —— 之前拉全市场 tickers.quoteVol 相加返 Bitunix **全站**累计成交量
+   * (~47.2 亿)，通过 bot._syncExchangeStats 的 Math.max 污染了 QnV 的 stats.volume
+   * 显示。改为拉 **自己**近 30 天 trade history 累积（跟 Bitget getStats 同套路，SDK
+   * 里 GetHistoryTradesRequest 记录了参数）。
    */
   async getStats() {
     try {
-      const tickers = await this._pubGet('/api/v1/futures/market/tickers');
-      const list = Array.isArray(tickers) ? tickers : [];
+      const endTime = Date.now();
+      const startTime = endTime - 30 * 24 * 3600_000;   // 近 30 天
+      const r = await this._reqGet('/api/v1/futures/trade/get_history_trades', {
+        marginCoin: MARGIN_COIN, startTime, endTime, limit: 500,
+      });
+      const list = r?.tradeList || r?.list || (Array.isArray(r) ? r : []);
       let vol = 0;
       for (const t of list) {
-        const q = Number(t.quoteVol || 0);
-        if (q > 0) vol += q;
+        const qty = Number(t.qty || t.tradeQty || t.baseVolume || 0);
+        const price = Number(t.price || t.avgPrice || 0);
+        if (qty > 0 && price > 0) vol += qty * price;
       }
       this.stats = { volume: vol };
       return this.stats;
