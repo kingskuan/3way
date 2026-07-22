@@ -986,6 +986,23 @@ await Promise.all([
 // 那时 bot.running 都还是 false）
 autopilot.adoptRunningBots();
 
+// Round 137：强制 boot 时对所有 bot 拉一次 exchange volume，释放历史污染。
+// Round 136 的异常检测（stats.volume > 100 × exchange.volume 则用 exchange）
+// 依赖 _syncExchangeStats 跑起来。但它只在 _startReconcileTimer 里绑（需要 bot
+// running）。Bitunix 从没 run 过 → 4.7B 一直卡。这里 boot 时强制跑一次，
+// 让 Round 136 anomaly check 有机会执行。
+await Promise.all([
+  ['de', deBot], ['ex', exBot], ['rs', rsBot], ['on', onBot],
+  ['pl', plBot], ['sx', sxBot], ['bg', bgBot], ['bu', buBot],
+].map(async ([k, bot]) => {
+  if (typeof bot?.ex?.getStats !== 'function') return;
+  try {
+    await bot._syncExchangeStats();
+    const v = bot.stats?.volume;
+    if (Number.isFinite(v)) console.log(`[启动 volume sync] ${k.toUpperCase()} stats.volume=${v}`);
+  } catch { /* transient, don't block startup */ }
+}));
+
 // After init, surface any LEFTOVER position so the dashboard can prompt the user
 // (recovery ladder / re-grid / market close). Decibel & Extended RE-NUMBER their
 // marketIds every run, so the persisted numeric id may point at the wrong market
