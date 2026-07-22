@@ -1003,16 +1003,23 @@ await Promise.all([
   } catch { /* transient, don't block startup */ }
 }));
 
-// Round 139：Bitunix 一次性 migration — `stats.volume` 是 API key 关联前的账户
-// 历史 (get_history_trades 拉 30 天窗口)，不是 QnV 起的单。用户 spec 要求"从
-// 加入起算"。首次 boot 时 baseline = 当前 stats.volume，getState 显示 max(0,
-// volume - baseline) = 0。以后新交易累积自动加进来。
-// 未来加新交易所也可以在这里手动加一行做同样迁移，或改成通用逻辑。
-if (buBot?.stats && (buBot.stats.volumeBaseline == null || buBot.stats.volumeBaseline === 0)) {
-  const old = buBot.stats.volume || 0;
-  if (old > 0) {
-    buBot.stats.volumeBaseline = old;
-    console.log(`[Bitunix migration] volumeBaseline=${old} (显示归零，未来新交易累积)`);
+// Round 140：Ondo/Perpl/Bitget/Bitunix 一次性 migration — `stats.volume` 是
+// 账户历史成交（getStats 拉 exchange 侧 30 天窗口），包含 API key 关联前的
+// 手动 / 其他 API 交易。QC 数据：
+//   · Ondo    ETH-USD.P vol=2345 但 buys=0 sells=0，纯历史
+//   · Perpl   HYPE-PERP vol=2080，40 rungs 真实，其余历史
+//   · Bitget  ETHUSDT   vol=16156，28 rungs ≈ $1.7k 真实，其余 $14k 历史
+//   · Bitunix ADAUSDT   vol=405539，1 sell 真实，其余全历史
+// 首次 boot 时 baseline = 当前 stats.volume，getState 显示 max(0, volume -
+// baseline) = 0。以后新交易累积自动加进来。SX/EX/RS 都是 fill event 本地
+// 累积的真实数据，不做 migration。
+for (const [k, bot] of [['on', onBot], ['pl', plBot], ['bg', bgBot], ['bu', buBot]]) {
+  if (bot?.stats && (bot.stats.volumeBaseline == null || bot.stats.volumeBaseline === 0)) {
+    const old = bot.stats.volume || 0;
+    if (old > 0) {
+      bot.stats.volumeBaseline = old;
+      console.log(`[${k.toUpperCase()} migration] volumeBaseline=${old} (显示归零，未来新交易累积)`);
+    }
   }
 }
 
