@@ -496,22 +496,39 @@ export class StandXExchange extends EventEmitter {
     // 401/400 → 所有尝试失败 → 用户按撤单一直失败。加上 symbol 后正常。
     // 同时 fetchOpenOrders 返的 orderId 可能是 numeric id 或 cl_ord_id，试全
     // 顺序：symbol+cl_ord_id > symbol+client_id > symbol+order_id > symbol+id
+    // Round 126：字段优先级根据 id 形状决定。
+    //   · fetchOpenOrders 返的 orderId 优先取 exchange numeric id（o.id / o.order_id）
+    //   · 我方 placeLimitOrder 返的 orderId 是 cl_ord_id（字符串 sx-XXX-XXX）
+    // 之前先试 cl_ord_id 再 fallback order_id 是错的——对纯数字 id，StandX 返
+    // "cl_ord_id not found"，我方 regex 当"已撤"直接 break，从不 fallback 到
+    // order_id → 链上 orphan 永远撤不掉（57 单循环 root cause）。
+    // 新规则：纯数字 → 先 order_id/id，再 cl_ord_id 兜底；带字母/横杠 → 先 cl_ord_id/client_id。
+    const isNumericId = /^\d+$/.test(clOrdId);
     const attempts = [];
     if (symbol) {
-      attempts.push({ symbol, cl_ord_id: clOrdId });
-      attempts.push({ symbol, client_id: clOrdId });
-      if (/^\d+$/.test(clOrdId)) {
+      if (isNumericId) {
         attempts.push({ symbol, order_id: Number(clOrdId) });
         attempts.push({ symbol, id: Number(clOrdId) });
+        attempts.push({ symbol, cl_ord_id: clOrdId });
+        attempts.push({ symbol, client_id: clOrdId });
+      } else {
+        attempts.push({ symbol, cl_ord_id: clOrdId });
+        attempts.push({ symbol, client_id: clOrdId });
       }
     }
     // Fallback: 无 symbol 也试一遍（若上面全 fail）
+    if (isNumericId) {
+      attempts.push({ order_id: Number(clOrdId) });
+      attempts.push({ id: Number(clOrdId) });
+    }
     attempts.push({ cl_ord_id: clOrdId });
-    if (/^\d+$/.test(clOrdId)) attempts.push({ order_id: Number(clOrdId) });
-    else attempts.push({ client_id: clOrdId });
+    if (!isNumericId) attempts.push({ client_id: clOrdId });
 
-    // Round 58：首次 cancel_order 调用的原始错误 log 一次，帮定位真实 API 拒绝原因
+    // Round 126：'not found' / 'already cancelled' 不再 short-circuit break——
+    // 只在 **全部字段名都试过后**才认定真的没了。之前 first attempt "not found"
+    // 立刻 break 是 orphan 假撤根因。
     let firstErrLogged = !!this._cancelErrLogged;
+    let sawNotFound = false;
     for (const body of attempts) {
       try {
         const r = await this._authPostSigned('/api/cancel_order', body, 4000);
@@ -522,9 +539,8 @@ export class StandXExchange extends EventEmitter {
         }
         if (r?.code === 0) { cancelled = true; break; }
         const msg = String(r?.message || r?.msg || '');
-        // Round 55: 只 match"确定已消失"关键词（不含单独的 |cancel 避免宽泛匹配）
         if (/not\s?found|already\s*(cancel|fill|close|done)|filled|closed/i.test(msg)) {
-          cancelled = true; break;
+          sawNotFound = true;   // 记住，但继续试下一字段名
         }
         lastErr = `code=${r?.code} ${msg}`.trim();
       } catch (e) {
@@ -533,10 +549,13 @@ export class StandXExchange extends EventEmitter {
           this._cancelErrLogged = true;
           try { console.log(`[StandX] cancel_order 首次尝试 body=${JSON.stringify(body)} 抛错: ${e?.message || e}`); } catch {}
         }
-        if (/not\s?found|already\s*(cancel|fill|close)|filled|closed/i.test(e.message)) { cancelled = true; break; }
+        if (/not\s?found|already\s*(cancel|fill|close)|filled|closed/i.test(e.message)) sawNotFound = true;
         lastErr = e?.message || String(e);
       }
     }
+    // 走完全部 attempts：如果每个都 "not found"（sawNotFound=true 且没 code=0）
+    // → 单确实不存在，视为已撤
+    if (!cancelled && sawNotFound) cancelled = true;
     if (cancelled) {
       this.orders.delete(String(orderId));
       this._saveOrders();   // Round 115：cancel 后写盘
