@@ -2367,6 +2367,8 @@ input:focus, select:focus {
 <!-- ═══════════════════════════════════════════════════════════ -->
 <div id="tab-bu" class="tab-panel">
 <div class="wrap" style="max-width:1100px">
+  <!-- 宠物：穷奇 -->
+  <div class="panel bu pet-card" id="bu-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
   <div class="panel" style="margin-top:4px;border-top:2px solid var(--bu-color)">
     <div class="panel-title" style="color:var(--bu-color)">🌌 Bitunix · USDT-M 永续（LIVE）</div>
     <div class="muted" style="line-height:1.7;padding:6px 2px 0">
@@ -4411,6 +4413,7 @@ setInterval(apRefresh, 15000);   // 每 15s 刷一次状态
 const PET_COLORS = {
   de:'var(--de-color,#f59e0b)', ex:'var(--ex-color,#3b82f6)', rs:'var(--rs-color,#10b981)',
   on:'var(--on-color,#06b6d4)', pl:'var(--pl-color,#ec4899)', sx:'#8b5cf6', bg:'var(--bg-color,#f97316)',
+  bu:'var(--bu-color,#8b5cf6)',
 };
 function petFmtNum(n) {
   if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
