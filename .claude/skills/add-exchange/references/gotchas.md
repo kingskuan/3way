@@ -2,18 +2,6 @@
 
 Each entry: **[Round N]** what went wrong, why, and how to prevent it next time.
 
-## Sign vs URL query serialization mismatch
-
-**[Round 127→128→129 chain, Bitunix]**. Bitunix wants two different string formats for the same params:
-- URL: `?marginCoin=USDT` (standard URL query)
-- Sign input: `marginCoinUSDT` (no `=`, no `&`, sorted)
-
-Round 127 used URL format for both → sign wrong → `[10007] Signature Error`.
-Round 128 flipped to sign format for both → URL missing `=` → server couldn't parse `marginCoin` → still `10007`.
-Round 129 finally split them into two functions and it worked.
-
-**Prevention**: Before writing `_sign`, `grep -n "sortParams\|signInput" <sdk>/Demo/**/*.{js,py,go,java}` and read the SDK's implementation verbatim. If the SDK has two distinct functions (one for URL, one for sign), so should you. If it uses `axios({params: ...})` for the URL, that's a hint the URL goes through standard URL-encoding while sign is bespoke.
-
 ## response `code` is not always `0`
 
 **[Never explicitly broke, but almost did]**. Bitget's success code is the string `"00000"`, not the number `0`. Bitunix is number `0`. StandX is `0`. `if (j?.code !== 0)` succeeds for Bitget even on success.
@@ -52,6 +40,40 @@ Round 129 finally split them into two functions and it worked.
 **[Round 130a, Bitunix]**. `petRenderCard(k)` does `document.getElementById(k+"-pet-card")`; if missing, silent return. Round 127 wrote a minimal Bitunix tab that omitted the div → pet just never appeared, no console error. User had to notice.
 
 **Prevention**: Every new tab panel starts with the pet-card div. It's in `wiring-checklist.md` step 6e as a must.
+
+## The "精简 UI" anti-pattern
+
+**[Round 127→131, Bitunix, 4-day gap]**. Wrote a minimal Bitunix tab ("完整控制台走 Autopilot") to save 100 lines of HTML. Consequences:
+
+1. `makeExchangeCtrl('bu', 'bu-chart')` couldn't be called (needs `bu-chart`, `bu-market`, `bu-interval`, `bu-refresh-trend`, ~20 more DOM ids). So it wasn't called.
+2. `loadMarkets()` never ran for bu — the function that hits `/api/bu/markets` and updates `hdr-bu` badge from response.mode.
+3. UI header药丸 showed `BU: PAPER` even though backend was fully `mode: 'live'`, `dataSource: 'real'`, `balance: 319.96`. User thought the exchange was broken.
+
+**Prevention**: **Never write a minimal / stub tab**. Duplicate the whole `<div id="tab-bg">` (~120 lines), search-replace `bg` → `<prefix>`. The extra ~2KB of HTML is worth avoiding a Round N+1 fix commit. `wiring-checklist.md` step 6e now spells this out explicitly with the required DOM contract.
+
+Companion misses in Round 127 (all fixed together in Round 131):
+- `AP_EX` map missing `bu:'Bitunix'` → Autopilot's "托管哪些 DEX" grid didn't offer Bitunix even though the backend `perExchange.bu` config was ready.
+- AI 分析 button row is hard-coded, not iterated over KEYS. `"分析 Bitunix"` needs manual `<button>` entry.
+- `makeExchangeCtrl` invocation itself (see prevention above).
+
+**Rule of thumb**: after wiring, view every existing exchange page in the running app to confirm your new exchange appears wherever the old ones do — Autopilot勾选, AI分析 buttons, hover-details header dropdown, overview card, tab dropdown, swipe order.
+
+## Signature: two different serializations for URL vs sign
+
+**[Round 127→128→129 chain, Bitunix, 3 rounds to fix]**. Bitunix's SDK uses two separate serialization formats for the same params object:
+- URL query: standard `?key=value&key2=value2`
+- Sign input: `keyvaluekey2value2` (sorted, no separators)
+
+Round 127 used URL format for both → 10007 Signature Error.
+Round 128 flipped to sign format for both → URL couldn't parse marginCoin → still 10007.
+Round 129 finally split into two functions.
+
+**Prevention**: Look at the SDK's private client code (not the docs page). If you see something like `axios({params: obj, ...})` followed by a separate `sortParams(obj)` call in the header logic, that means URL and sign are two separate paths. Mirror that pattern from day one:
+```js
+_urlQueryString(params) { /* standard ?k=v& — for URL only */ }
+_signParamsString(params) { /* SDK's sortParams — for sign only */ }
+```
+Never use a single function for both.
 
 ## Health signal drift
 
