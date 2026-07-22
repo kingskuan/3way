@@ -116,8 +116,21 @@ class Pets {
         this.state[k].seenVol = v;
         changed = true;
       } else if (v < seen) {
-        // bot 统计被重置：只对齐 seenVol，不动 feed（宠物养料不能倒退）
-        this.state[k].seenVol = v;
+        // Round 138：区分两种"下降"：
+        //   (a) bot 手动重置统计（用户点"重置"）→ seen 归 0，v 也归 0，diff 完整
+        //       但 feed 保留（宠物不因用户重置掉级）
+        //   (b) bot volume 数据污染被后端 anomaly heal（Round 137 Bitunix 4.7B → 0）
+        //       → seen 是巨大污染值，v 是修正后小值。这时 feed 也是被污染的。
+        //       heal 掉：feed = v, seenVol = v。
+        // 规则：如果 v < seen × 0.01（下降 >100×）→ 判定污染 heal
+        const polluted = seen > 0 && v < seen * 0.01;
+        if (polluted) {
+          this.state[k].feed = v;
+          this.state[k].seenVol = v;
+        } else {
+          // 常规重置：只对齐 seenVol，不动 feed（养料不倒退）
+          this.state[k].seenVol = v;
+        }
         changed = true;
       }
     }
