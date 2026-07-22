@@ -3769,7 +3769,7 @@ function renderOverview(data) {
   $('tot-volume').textContent = fmt(totVolume);
   $('tot-rungs').textContent = totRungs;
   // 分所交易量 + 权益 tooltip 数据
-  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget' };
+  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix' };
   const perEx = ['de','ex','rs','on','pl','sx','bg','bu'].map(p => {
     const v = data[p]?.volume;
     const eq = data[p]?.equity;

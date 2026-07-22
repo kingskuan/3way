@@ -1066,13 +1066,28 @@ export class GridBot {
    * Round 75：拉 exchange 侧真实 volume 覆盖 stats.volume。
    * 用 max(local, exchange) 保护本地已累计的（尤其 Extended/RISEx fill 正常的
    * 所），避免 exchange API 短期漂移把本地准确数字覆盖成偏小值。
+   *
+   * Round 136：加异常检测 —— 之前 Bitunix.getStats 错返全站 quoteVol (~47.2 亿)，
+   * 通过 Math.max 永远卡在 4.7B 不下来。修 getStats 后新值会正常但 max 保护
+   * 让老污染数据永远不释放。规则：exchange 值 < local × 0.01（即差 100 倍以上）
+   * 且 exchange 值合理（<账户余额 × 10000）→ 认为 local 是历史污染，用 exchange
+   * 值覆盖。正常波动（漂移）不会触发。
    */
   async _syncExchangeStats() {
     try {
       const s = await this.ex.getStats();
-      if (s && Number.isFinite(s.volume) && s.volume > 0) {
+      if (s && Number.isFinite(s.volume) && s.volume >= 0) {
         const before = this.stats.volume || 0;
-        this.stats.volume = Math.max(before, round2(s.volume));
+        const bal = Number(this.ex.balance) || 0;
+        const sane = s.volume < Math.max(bal * 10000, 1e7);   // 合理上限
+        const polluted = before > s.volume * 100 && s.volume >= 0;
+        let next;
+        if (sane && polluted) {
+          next = round2(s.volume);   // 信 exchange，释放历史污染
+        } else {
+          next = Math.max(before, round2(s.volume));   // 原逻辑
+        }
+        this.stats.volume = next;
         if (this.stats.volume !== before) this._changed();
       }
     } catch { /* transient */ }
