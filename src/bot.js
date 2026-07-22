@@ -740,14 +740,36 @@ export class GridBot {
     const mId = Number(marketId);
     if (typeof this.ex.closePosition !== 'function') return false;
     if (!this.ex.getPosition?.(mId)) { await this.ex.closePosition(mId).catch(() => {}); return true; }
+    // Round 135：直接 async fetchPositions() 拿真相，不用 sync getPosition() 缓存。
+    // 之前用缓存：SX poll ~15s 一次，8s 窗口内可能根本没轮到 refresh → 缓存
+    // 是 stale → 3 次都读 stale 数据 → 假报"仓位仍在"。用户 21:35 SX 平仓
+    // 其实成功了，QnV 报 "❌ 已尝试 3 次平仓但仓位仍未平掉" 是假警。
+    const confirmClosed = async () => {
+      if (typeof this.ex.fetchPositions !== 'function') {
+        // 适配器没实现 fetchPositions，退化用 sync 缓存
+        const pos = this.ex.getPosition?.(mId);
+        return !pos || !pos.sizeBase;
+      }
+      try {
+        const list = await this.ex.fetchPositions();
+        // 同步刷新 exchange 的 positions Map，让 getPosition() 也拿到真相
+        if (this.ex.positions && typeof this.ex.positions.set === 'function') {
+          this.ex.positions.delete(mId);
+          for (const p of list) {
+            if (p.marketId != null) this.ex.positions.set(Number(p.marketId), p);
+          }
+        }
+        const p = list.find((x) => Number(x.marketId) === mId);
+        return !p || !p.sizeBase;
+      } catch { return false; }
+    };
     for (let attempt = 1; attempt <= 3; attempt++) {
       try { await this.ex.closePosition(mId); }
       catch (e) { this._alert('平仓指令发送失败: ' + (e?.message || e)); }
       const t0 = Date.now();
-      while (Date.now() - t0 < 8000) { // wait for the adapter's position poll to reflect it
-        await sleep(1000);
-        const pos = this.ex.getPosition?.(mId);
-        if (!pos || !pos.sizeBase) { this._alert('✅ 已确认仓位已平。'); return true; }
+      while (Date.now() - t0 < 8000) {
+        await sleep(1500);   // 每 1.5s 拉一次，别把交易所 rate limit 打爆
+        if (await confirmClosed()) { this._alert('✅ 已确认仓位已平。'); return true; }
       }
       if (attempt < 3) this._alert(`⚠️ 平仓后仓位仍在（第 ${attempt} 次），按最新价重试市价平仓…`);
     }
