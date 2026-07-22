@@ -396,6 +396,12 @@ class Autopilot {
           agreement,
           _detail: t15m ? `1h=${t1h.recommended}(${t1h.strength}) · 15m=${t15m.recommended}(${t15m.strength})` : `1h-only=${t1h.recommended}(${t1h.strength})`,
         };
+        // Round 133：近 1h 走势（不用再单独拉一次 K 线），供下游候选筛选用
+        const lastBar = c1h[c1h.length - 1];
+        const prevBar = c1h[c1h.length - 2];
+        const hour1DropPct = prevBar && prevBar.close > 0
+          ? (lastBar.close - prevBar.close) / prevBar.close * 100
+          : 0;
         candidates.push({
           marketId: m.marketId, name: m.displayName, price: m.lastPrice,
           minOrderSize: m.minOrderSize, stepSize: m.stepSize, maxLeverage: m.maxLeverage,
@@ -403,6 +409,7 @@ class Autopilot {
           strength: trend.strength, atrPct: trend.atrPct,
           agreement: trend.agreement,   // Round 124：两个时间框架是否一致
           tfDetail: trend._detail,      // Round 124：AI 能看到 1h + 15m 分别的判断
+          hour1DropPct,                 // Round 133：负值 = 近 1h 下跌
         });
       } catch { /* skip */ }
     }
@@ -488,6 +495,13 @@ class Autopilot {
     for (const c of rankedList) {
       const price = c.price || 0;
       if (!(price > 0)) { rejections.push(`${c.name}:无价格`); continue; }
+      // Round 133：近 1h 跌 >2% 跳过这个候选（不整轮 return，往下一个试）。
+      // 之前 Round 20 在 rankedList 循环外单独 check，一个候选跌就整轮 skip；
+      // 结果 Bitunix 因 ADAUSDT 跌 6% 一整个 tick 都没起，剩 4 个不下跌的没试。
+      if (c.hour1DropPct != null && c.hour1DropPct < -2) {
+        rejections.push(`${c.name}:近1h跌${c.hour1DropPct.toFixed(2)}%`);
+        continue;
+      }
       const rangePct = s.rangePct;
       // stepPrice 是价格 tick（每档差多少），stepSize 是订单量 tick（每张多少）——
       // lower/upper 必须对齐 stepPrice！之前用 stepSize 对齐，Ondo 报
@@ -572,20 +586,8 @@ class Autopilot {
     const sizeBase = pickedSizeBase, gridCount = pickedGridCount;
     const leverage = pickedLeverage;
 
-    // 市况前置 check：起单前看最近 1h 走势——如果强下跌趋势就跳过。中性网格
-    // 在明显单边行情里 = 主动送死；Perpl 已经因为这个熔断过几次。
-    try {
-      const candles = await ex.getCandles(pick.marketId, 3600, 2);
-      if (candles?.length >= 2) {
-        const first = candles[0].close, last = candles[candles.length - 1].close;
-        if (first > 0 && (last - first) / first * 100 < -2) {
-          const dropPct = ((last - first) / first * 100).toFixed(2);
-          this._log(key, 'skip', `${pick.name} 近 1h 跌 ${dropPct}%，跳过本轮起单等市场稳定`);
-          return;
-        }
-      }
-    } catch { /* 拿不到 K 线不阻塞起单，Autopilot 之前的 fallback 已处理 */ }
-
+    // Round 133：Round 20 的市况前置 check 已内移到候选循环里（if hour1DropPct < -2 continue），
+    // 让 pick fallback 到 rankedList 下一个不下跌的候选，而不是整轮 return skip。
     try {
       // Round 51 pre-flight：起单前显式 cancelAll 清链上残留。用户报告 StandX
       // 一键停止后本地 map 清了但链上还挂着 24 单，autopilot 再起 24 单 =
