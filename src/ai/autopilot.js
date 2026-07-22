@@ -335,13 +335,25 @@ class Autopilot {
         await bot.stop({ closePosition: true }).catch(() => {});
         st.startedByAutopilot = false;
       } else {
-        // Round 88：仍在区间内 → 检查是否需要"收窄区间"应对趋势反转。
-        // conservative 已经全平（outOfRangeAction=close），只对 balanced/aggressive
-        // 做这个中间态干预。narrowed 就 skip 本 tick（等下一 tick 再评估）。
-        const narrowed = await this._maybeNarrowRange(key, cur, ex).catch(() => false);
-        if (narrowed) return;
-        this._log(key, 'skip', `${cur.config.displayName} 网格运行中，指标正常，保持`);
-        return;
+        // Round 121：30 分钟未成交 → 停 bot + 换币重选
+        // 用最近 fill 时间 vs 起单时间的更晚者做基准。cur.fills 已按时间倒序（fills[0] 最新）。
+        const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
+        const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
+        if (lastActivity > 0 && noFillMinutes >= 30) {
+          this._log(key, 'stop-idle', `${cur.config.displayName} ${noFillMinutes} 分钟无成交，停网格换币重选`);
+          await bot.stop({ closePosition: true }).catch(() => {});
+          st.startedByAutopilot = false;
+          st.startedAt = 0;
+          // 继续往下走选币逻辑，直接重开
+        } else {
+          // Round 88：仍在区间内 → 检查是否需要"收窄区间"应对趋势反转。
+          // conservative 已经全平（outOfRangeAction=close），只对 balanced/aggressive
+          // 做这个中间态干预。narrowed 就 skip 本 tick（等下一 tick 再评估）。
+          const narrowed = await this._maybeNarrowRange(key, cur, ex).catch(() => false);
+          if (narrowed) return;
+          this._log(key, 'skip', `${cur.config.displayName} 网格运行中，指标正常，保持（无成交 ${noFillMinutes} 分钟）`);
+          return;
+        }
       }
     } else if (st.startedByAutopilot) {
       // Bot 停了（用户手动停 / 崩了 / 上一轮自己停的），清标志
@@ -591,6 +603,7 @@ class Autopilot {
       // lastDecisionAt 已在函数入口刷新（Round 50），这里不再重复设置
       st.lastAppliedEquity = cur.equity;
       st.startedByAutopilot = true;
+      st.startedAt = Date.now();   // Round 121：给 no-fill-timeout 30 分钟计时起点
       this._log(key, 'start', st.lastActionReason);
       const successHint = (actual < gridCount * 0.75) ? `⚠ 起单成功率低：${actual}/${gridCount}${failReason}\n` : '';
       notify(`【网格 Autopilot·${EXNAMES[key]}】已启动：${pick.name}\n${successHint}模式：${_modeLabel(mode)} · 区间 ${lower} ~ ${upper}\n${gridCount} 格 × ${sizeBase} · ${leverage}x 杠杆\nAI：${aiReasoning || '规则排序'}`).catch(() => {});
@@ -754,5 +767,6 @@ function _freshExState() {
     pausedReason: '',
     startedByAutopilot: false,
     lastNarrowAt: 0,          // Round 88 收窄区间冷却
+    startedAt: 0,             // Round 121：Autopilot 起单时间戳，用于 no-fill-timeout 计算
   };
 }
