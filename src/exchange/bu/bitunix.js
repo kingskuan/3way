@@ -79,14 +79,13 @@ export class BitunixExchange extends EventEmitter {
     };
   }
 
-  // queryParams 序列化：sorted by key ascending, no separators between k/v
-  // Bitunix doc："sorted ascending by key" —— 实践上大部分 CEX 用 URL-encoded key=value&key2=v2
-  // 直接照 URL query 顺序 sort 后拼 key1value1key2value2（无 &=）也见过。
-  // 我方走"key1=value1&key2=value2 sorted by key"的常规做法；错了就改。
+  // queryParams 序列化：Bitunix 特色 —— 无分隔符直接拼 key1value1key2value2
+  // Round 128 root-cause fix：Round 127 用 URL 惯例 "key=v&key2=v2" → 10007 Signature Error。
+  // BitunixOfficial/open-api Node SDK openApiHttpSign.js:87-97 明确写：
+  //   Object.keys(params).sort().map(key => key + params[key]).join('')
   _serializeParams(params) {
     if (!params || Object.keys(params).length === 0) return '';
-    const keys = Object.keys(params).sort();
-    return keys.map((k) => `${k}=${params[k]}`).join('&');
+    return Object.keys(params).sort().map((k) => `${k}${params[k]}`).join('');
   }
 
   async _reqGet(pathBase, params = {}, timeoutMs = 10000) {
@@ -314,12 +313,17 @@ export class BitunixExchange extends EventEmitter {
       : Number(o.sizeBase);
     const qtyDecimals = stepSize > 0 ? Math.max(0, -Math.floor(Math.log10(stepSize))) : 8;
 
+    // Round 128：从 SDK openApiHttpFuturePrivate.js:132-158 对齐字段：
+    //   symbol / side / orderType / qty / tradeSide (OPEN|CLOSE, default OPEN)
+    //   / effect (GTC/POST_ONLY/IOC/FOK, default GTC) / reduceOnly / [price] / [clientId]
+    // tradeSide 之前漏了；reduceOnly 走 CLOSE 侧
     const body = {
       symbol,
       qty: qtySnapped.toFixed(qtyDecimals),
       price: priceSnapped.toFixed(priceDecimals),
       side: (o.side || 'buy').toUpperCase(),   // "BUY"/"SELL"
       orderType: 'LIMIT',
+      tradeSide: o.reduceOnly ? 'CLOSE' : 'OPEN',
       effect: 'GTC',
       reduceOnly: !!o.reduceOnly,
     };
@@ -359,11 +363,14 @@ export class BitunixExchange extends EventEmitter {
   async cancelAll(marketId) {
     const symbol = this.markets.get(Number(marketId))?.displayName;
     if (!symbol) return true;
-    // 拉 exchange-side 真实 open orders 逐单撤（Bitunix 无一键撤全 symbol 端点）
+    // Round 128：先试一键 cancel_all_orders（Java SDK path CANCEL_ALL_ORDERS），
+    // 失败或残留再退化为 batch cancel_orders 逐单撤。
+    try {
+      await this._reqPost('/api/v1/futures/trade/cancel_all_orders', { symbol });
+    } catch { /* 兜底逐单撤 */ }
     const exchangeOrders = await this.fetchOpenOrders(Number(marketId)).catch(() => []);
     const oids = exchangeOrders.map((o) => String(o.orderId)).filter(Boolean);
     if (oids.length > 0) {
-      // 分批 batch cancel（每批 20 单，防 body 太大）
       const CHUNK = 20;
       for (let i = 0; i < oids.length; i += CHUNK) {
         const chunk = oids.slice(i, i + CHUNK);
@@ -372,10 +379,9 @@ export class BitunixExchange extends EventEmitter {
             symbol,
             orderList: chunk.map((oid) => ({ orderId: oid })),
           });
-        } catch { /* skip chunk，下面本地 map 也清 */ }
+        } catch { /* skip chunk */ }
       }
     }
-    // 清本地跟踪
     for (const [id, o] of this.orders) {
       if (o.marketId === Number(marketId)) this.orders.delete(id);
     }
@@ -440,7 +446,8 @@ export class BitunixExchange extends EventEmitter {
   async closePosition(marketId) {
     const symbol = this.markets.get(Number(marketId))?.displayName;
     if (!symbol) return { closed: false, error: 'unknown market' };
-    // 无 flash-close 端点；用 fetchPositions 拿 positionId + qty，market 单反向 reduceOnly
+    // Round 128：Bitunix 有官方一键平仓 flash_close_position（Java SDK 路径 FLASH_CLOSE_POSITION），
+    // 不用再自己组 market 反向单。拿 positionId 直接 flash-close。
     try {
       const positions = await this.fetchPositions();
       const pos = positions.find((p) => p.marketId === Number(marketId));
@@ -448,22 +455,28 @@ export class BitunixExchange extends EventEmitter {
         this.positions.delete(Number(marketId));
         return { closed: true, empty: true, size: 0 };
       }
-      const closeSide = pos.sizeBase > 0 ? 'SELL' : 'BUY';
-      const absSize = Math.abs(pos.sizeBase);
-      // 用 market 单快平；orderType=MARKET 时不需要 price
-      const body = {
-        symbol,
-        qty: String(absSize),
-        side: closeSide,
-        orderType: 'MARKET',
-        reduceOnly: true,
-      };
+      const body = { symbol };
       if (pos.positionId) body.positionId = pos.positionId;
-      await this._reqPost('/api/v1/futures/trade/place_order', body);
+      try {
+        await this._reqPost('/api/v1/futures/trade/flash_close_position', body);
+      } catch (e) {
+        // 兜底：flash close 不 work 就走 market 反向 reduceOnly
+        const closeSide = pos.sizeBase > 0 ? 'SELL' : 'BUY';
+        const fallback = {
+          symbol,
+          qty: String(Math.abs(pos.sizeBase)),
+          side: closeSide,
+          orderType: 'MARKET',
+          tradeSide: 'CLOSE',
+          reduceOnly: true,
+        };
+        if (pos.positionId) fallback.positionId = pos.positionId;
+        await this._reqPost('/api/v1/futures/trade/place_order', fallback);
+      }
       this.positions.delete(Number(marketId));
       return { closed: true, count: 1 };
     } catch (e) {
-      if (/no position|no.?position|does not exist/i.test(e.message)) {
+      if (/no position|no.?position|does not exist|30004/i.test(e.message)) {
         this.positions.delete(Number(marketId));
         return { closed: true, empty: true };
       }
