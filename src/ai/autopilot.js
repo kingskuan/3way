@@ -402,6 +402,12 @@ class Autopilot {
         const hour1DropPct = prevBar && prevBar.close > 0
           ? (lastBar.close - prevBar.close) / prevBar.close * 100
           : 0;
+        // Round 140：hour1Vol —— 最近 1h 该市场自身成交量（USDT notional）。
+        // 避开死鱼盘（Ondo ETH-USD.P 型），bot 挂了单也不会成交。
+        // 用最近 4 根 c1h 平均 × close 估 hourly notional，防单根 outlier。
+        const recent = c1h.slice(-4);
+        const avgBaseVol = recent.reduce((s, b) => s + (Number(b.volume) || 0), 0) / Math.max(1, recent.length);
+        const hour1Vol = avgBaseVol * (lastBar.close || 0);
         candidates.push({
           marketId: m.marketId, name: m.displayName, price: m.lastPrice,
           minOrderSize: m.minOrderSize, stepSize: m.stepSize, maxLeverage: m.maxLeverage,
@@ -410,6 +416,7 @@ class Autopilot {
           agreement: trend.agreement,   // Round 124：两个时间框架是否一致
           tfDetail: trend._detail,      // Round 124：AI 能看到 1h + 15m 分别的判断
           hour1DropPct,                 // Round 133：负值 = 近 1h 下跌
+          hour1Vol,                     // Round 140：市场自身近 1h 成交量 USDT
         });
       } catch { /* skip */ }
     }
@@ -445,6 +452,18 @@ class Autopilot {
       else c.score += 1;
       if (c.atrPct != null && c.atrPct >= 0.5 && c.atrPct <= 3.0) c.score += 2;   // 波动率适中
       if (Number(c.strength) >= 0.4 && c.recommended !== 'neutral') c.score += 3; // 强趋势加分
+      // Round 140：hour1Vol 打分 —— 避开死鱼盘（Ondo ETH-USD.P 型，QC 数据显示
+      // 挂网格 26 分钟一次没成交）。分档：
+      //   > $1M/h → +3 (深水市场，好网格)
+      //   > $100k/h → +2
+      //   > $10k/h → +1
+      //   < $10k/h → 0（不加分，容易成为死鱼）
+      // 该市场自身活跃度直接决定挂单能否被吃。
+      if (c.hour1Vol != null) {
+        if (c.hour1Vol > 1_000_000) c.score += 3;
+        else if (c.hour1Vol > 100_000) c.score += 2;
+        else if (c.hour1Vol > 10_000) c.score += 1;
+      }
     }
     candidates.sort((a, b) => b.score - a.score);
     const shortlist = candidates.slice(0, 5);
@@ -500,6 +519,12 @@ class Autopilot {
       // 结果 Bitunix 因 ADAUSDT 跌 6% 一整个 tick 都没起，剩 4 个不下跌的没试。
       if (c.hour1DropPct != null && c.hour1DropPct < -2) {
         rejections.push(`${c.name}:近1h跌${c.hour1DropPct.toFixed(2)}%`);
+        continue;
+      }
+      // Round 140：死鱼盘 skip —— 若市场自身近 1h 成交 < $5k，中性网格挂两侧
+      // 大概率吃不到，浪费保证金 + 30 分钟 idle 才会 stop-idle 换币。前置拒。
+      if (c.hour1Vol != null && c.hour1Vol > 0 && c.hour1Vol < 5000) {
+        rejections.push(`${c.name}:1h 成交仅 $${c.hour1Vol.toFixed(0)}，市场太冷`);
         continue;
       }
       const rangePct = s.rangePct;
