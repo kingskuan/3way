@@ -84,7 +84,10 @@ There are **~9 files** to touch outside the adapter. Missing any one silently br
    - Header: badge + dot in `hdr-details-wrap`
    - Tab button: `switchTab('<prefix>')`
    - Overview card: full `ov-<prefix>-*` block
-   - Tab panel: `<div id="tab-<prefix>">` with pet-card `<div id="<prefix>-pet-card">` **← forgetting this was Round 130a bug**
+   - Tab panel: `<div id="tab-<prefix>">` — **DO NOT write a minimal / 精简 version.** Duplicate the whole `<div id="tab-bg">` (~120 lines), replace `bg` → `<prefix>` / `Bitget` → `<Exchange>` / `--bg-color` → `--<prefix>-color`. Round 127→131 chain (Bitunix) burned 4 days because a精简 tab omitted the DOM `makeExchangeCtrl(prefix, chartId)` needs → `loadMarkets` never ran → `hdr-<prefix>` badge stuck on PAPER even though backend was fully LIVE. Include the pet-card `<div id="<prefix>-pet-card">` at top (Round 130a).
+   - `const <prefix>Ctrl = makeExchangeCtrl('<prefix>', '<prefix>-chart');` — right after the `bgCtrl` line. This is what actually updates the header badge.
+   - `AP_EX` map add `<prefix>:'<Exchange>'` — otherwise Autopilot's per-DEX picker skips your new exchange.
+   - AI 分析 button row — hard-coded, not iterated. Add `<button onclick="aiAnalyze('<prefix>', this)">分析 <Exchange></button>`.
    - JS constants: `AI_EXNAME` map, `NUM_SELECTORS` array, `TAB_ORDER`, `SWIPE_ORDER`, `PET_COLORS` map, all `['de','ex',...,'<prefix>']` keys arrays (there are ~13 of them — do `grep -n "'de','ex','rs','on','pl','sx','bg'" public/index.html` to find them all, then `sed` in bulk)
 
 `references/wiring-checklist.md` has the exact search/replace patterns.

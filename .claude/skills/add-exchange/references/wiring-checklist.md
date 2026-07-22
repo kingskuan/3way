@@ -118,11 +118,34 @@ Duplicate the whole `<div class="ov-card bg">...</div>` block, replace every `bg
 
 ### 6e. Tab panel (search for `<div id="tab-bg"`)
 
-Duplicate the whole panel, or write a minimal one like Round 127 did. **REMEMBER** the pet-card:
+**Do NOT write a minimal/精简 UI version** — Round 127 tried this and had to be re-done in Round 131. The `makeExchangeCtrl(prefix, chartId)` factory (see 6g below) needs a specific set of DOM elements to exist, or `loadMarkets()` throws silently and `hdr-<prefix>` badge stays PAPER forever even when the backend is `mode: 'live'`.
+
+**Just duplicate the whole `<div id="tab-bg">` panel** (~120 lines) and search-replace `bg` → `<prefix>` / `Bitget` → `<Exchange>` / `--bg-color` → `--<prefix>-color`. All the DOM elements needed by `makeExchangeCtrl` come along for free.
+
+**REMEMBER** the pet-card at the top:
 ```html
 <div class="panel <prefix> pet-card" id="<prefix>-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
 ```
 Round 130a bug: forgetting this = no pet renders.
+
+The full duplicated tab must contain at minimum these element IDs (this is the contract `makeExchangeCtrl` expects):
+```
+<prefix>-market            <prefix>-interval        <prefix>-refresh-trend
+<prefix>-rec-box           <prefix>-rec-tag         <prefix>-rec-detail   <prefix>-apply-rec
+<prefix>-modes             <prefix>-risk-toggle     <prefix>-risk-hint    <prefix>-smart-fill  <prefix>-smart-note
+<prefix>-lower             <prefix>-upper           <prefix>-grid-count   <prefix>-size-base
+<prefix>-leverage          <prefix>-auto-stop       <prefix>-risk-preview
+<prefix>-start-btn         <prefix>-stop-btn        <prefix>-adjust-btn   <prefix>-cancel-orders-btn
+<prefix>-st-run            <prefix>-st-price        <prefix>-st-bal       <prefix>-st-eq
+<prefix>-st-pos            <prefix>-st-entry        <prefix>-st-rpnl      <prefix>-st-upnl
+<prefix>-st-total          <prefix>-st-orders
+<prefix>-reset-btn         <prefix>-reconnect-btn   <prefix>-emergency-cleanup-btn   <prefix>-debug-btn
+<prefix>-chart             <prefix>-range-warn      <prefix>-fills        <prefix>-alerts
+<prefix>-orphan-prompt     <prefix>-orphan-info     <prefix>-orphan-recover
+<prefix>-orphan-above-entry  <prefix>-orphan-regrid <prefix>-orphan-close
+```
+
+### 6f. JavaScript constants (search for the exact strings below)
 
 ### 6f. JavaScript constants (search for the exact strings below)
 
@@ -132,11 +155,28 @@ After the sed, `grep -c "'<prefix>'" public/index.html` should return ~13. If an
 
 Then also manually:
 - `AI_EXNAME` map — add `<prefix>:'<Exchange>'`
+- `AP_EX` map — add `<prefix>:'<Exchange>'`. **Missing this = Autopilot 页勾选卡列表不出现新家 (Round 131 bug)**
 - `NUM_SELECTORS` array — for each `#ov-*-pnl`, `#ov-*-bal`, `#ov-*-eq`, `#ov-*-price`, `#ov-*-rpnl`, `#ov-*-upnl`, `#ov-*-vol`, `#ov-*-rungs`, `#*-st-price`, `#*-st-bal`, `#*-st-eq` — add the `<prefix>` variant. That's 11 additions.
 - `TAB_ORDER` const — add `'<prefix>'` between `'bg'` and `'autopilot'`
 - `SWIPE_ORDER` const — add `'<prefix>'` at the end
 - `PET_COLORS` map — add `<prefix>:'var(--<prefix>-color,#<hex>)'`
 - `updateHdrSummary()` local `keys` array — add `'<prefix>'`
+
+### 6g. Wire the exchange controller factory
+
+Search for `const bgCtrl = makeExchangeCtrl` and add right after:
+```js
+const <prefix>Ctrl = makeExchangeCtrl('<prefix>', '<prefix>-chart');
+```
+
+**This is what actually updates the `hdr-<prefix>` badge from PAPER to LIVE**. `makeExchangeCtrl(prefix)` internally calls `loadMarkets()` which reads the mode from `/api/<prefix>/markets` and sets the badge class. Round 127 skipped this call because the精简 tab-bu didn't have the DOM the factory needs, and the badge stayed PAPER for 4 days until Round 131.
+
+### 6h. AI 分析 button (hard-coded, not iterated)
+
+Search for `onclick="aiAnalyze('bg', this)"`. Add right after:
+```html
+<button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('<prefix>', this)">分析 <Exchange></button>
+```
 
 ## 7. Environment variables (Railway)
 
