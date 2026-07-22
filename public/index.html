@@ -33,6 +33,7 @@
   --pl-color: #a855f7;   /* Perpl: 紫（跟主 accent 的 --pur 错开，更淡） */
   --sx-color: #14b8a6;   /* StandX: 青绿 */
   --bg-color: #f97316;   /* Bitget: 橙 */
+  --bu-color: #8b5cf6;   /* Bitunix: 紫（跟 pl 淡紫错开，更深） */
   --de-bg: #f59e0b18;
   --ex-bg: #3b82f618;
   --rs-bg: #22c55e18;
@@ -40,6 +41,7 @@
   --pl-bg: #a855f718;
   --sx-bg: #14b8a618;
   --bg-bg: #f9731618;
+  --bu-bg: #8b5cf618;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -1153,6 +1155,7 @@ input:focus, select:focus {
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-pl-dot"></span><span id="hdr-pl" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">PL: PAPER</span></div>
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-sx-dot"></span><span id="hdr-sx" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">SX: PAPER</span></div>
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-bg-dot"></span><span id="hdr-bg" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">BG: PAPER</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-bu-dot"></span><span id="hdr-bu" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">BU: PAPER</span></div>
     </div>
   </div>
   <div class="header-right">
@@ -1172,6 +1175,7 @@ input:focus, select:focus {
   <button class="tab-btn" onclick="switchTab('pl')"><span class="dot-pl">●</span> Perpl</button>
   <button class="tab-btn" onclick="switchTab('sx')"><span style="color:var(--v2-mut)">●</span> StandX</button>
   <button class="tab-btn" onclick="switchTab('bg')"><span style="color:var(--bg-color)">●</span> Bitget</button>
+  <button class="tab-btn" onclick="switchTab('bu')"><span style="color:var(--bu-color)">●</span> Bitunix</button>
   <button class="tab-btn" onclick="switchTab('autopilot')">🚀 Autopilot</button>
   <button class="tab-btn" onclick="switchTab('ai')">🤖 AI</button>
   <button class="tab-btn" onclick="switchTab('settings')">⚙ IP配置</button>
@@ -1412,6 +1416,32 @@ input:focus, select:focus {
       <div id="ov-bg-ai" class="ai-box muted" style="display:none;margin-top:8px;font-size:12px"></div>
       <div id="ov-bg-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
       <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="switchTab('bg')">进入 Bitget 控制台 →</button>
+    </div>
+
+    <!-- Bitunix (Round 127 · LIVE 首发) -->
+    <div class="ov-card bu">
+      <div class="ov-exname" style="color:var(--bu-color)">
+        <span class="run-dot" id="ov-bu-dot"></span>
+        Bitunix · USDT-M 永续
+        <span id="ov-bu-badge" class="badge badge-paper" style="margin-left:auto">PAPER</span>
+      </div>
+      <div id="ov-bu-health" class="exhealth eh-idle">—</div>
+      <div class="ov-pnl" id="ov-bu-pnl">—</div>
+      <div class="ov-sub" id="ov-bu-ret">收益率 —</div>
+      <div style="margin-top:10px">
+        <div class="ov-stat"><span class="lbl">余额</span><span class="val" id="ov-bu-bal">—</span></div>
+        <div class="ov-stat"><span class="lbl">权益</span><span class="val" id="ov-bu-eq">—</span></div>
+        <div class="ov-stat"><span class="lbl">已实现</span><span class="val" id="ov-bu-rpnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">未实现</span><span class="val" id="ov-bu-upnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">交易量</span><span class="val" id="ov-bu-vol">—</span></div>
+        <div class="ov-stat"><span class="lbl">完成网格</span><span class="val" id="ov-bu-rungs">—</span></div>
+        <div class="ov-stat"><span class="lbl">最新价</span><span class="val" id="ov-bu-price">—</span></div>
+        <div class="ov-stat"><span class="lbl">当前市场</span><span class="val" id="ov-bu-mkt">—</span></div>
+      </div>
+      <div id="ov-bu-gridcfg" class="gridcfg" style="display:none"></div>
+      <div id="ov-bu-ai" class="ai-box muted" style="display:none;margin-top:8px;font-size:12px"></div>
+      <div id="ov-bu-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
+      <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="switchTab('bu')">进入 Bitunix 控制台 →</button>
     </div>
   </div>
 
@@ -2333,6 +2363,40 @@ input:focus, select:focus {
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Bitunix (Round 127 · LIVE 首发 · 精简 UI，全控走 Autopilot) -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div id="tab-bu" class="tab-panel">
+<div class="wrap" style="max-width:1100px">
+  <div class="panel" style="margin-top:4px;border-top:2px solid var(--bu-color)">
+    <div class="panel-title" style="color:var(--bu-color)">🌌 Bitunix · USDT-M 永续（LIVE）</div>
+    <div class="muted" style="line-height:1.7;padding:6px 2px 0">
+      💡 Bitunix 是主流 CEX，USDT-M 永续（BTC/ETH/SOL/BNB/DOGE/XRP + 更多主流币），结算币 <code>USDT</code>，主流杠杆 100-125x。<br>
+      ✅ Round 127（当前）：LIVE 打通（double-SHA256 auth · 3s REST 轮询 · 下单/撤单/平仓/杠杆/持仓/K 线全接入）。Autopilot 能真起。<br>
+      🚀 实盘 <code>BU_MODE=live</code> 需要 <code>BU_API_KEY</code> + <code>BU_API_SECRET</code>（bitunix.com → API Management → Create API）。
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-title" style="color:var(--v2-txt,#e2e8f0)">Bitunix · 账户状态</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px">
+      <div><div class="muted" style="font-size:11px">运行状态</div><div id="bu-st-run" style="font-size:15px;font-weight:600">—</div></div>
+      <div><div class="muted" style="font-size:11px">最新价</div><div id="bu-st-price" style="font-size:15px;font-weight:600">—</div></div>
+      <div><div class="muted" style="font-size:11px">账户余额</div><div id="bu-st-bal" style="font-size:15px;font-weight:600">—</div></div>
+      <div><div class="muted" style="font-size:11px">权益</div><div id="bu-st-eq" style="font-size:15px;font-weight:600">—</div></div>
+      <div><div class="muted" style="font-size:11px">已实现盈亏</div><div id="bu-st-rpnl" style="font-size:15px;font-weight:600">—</div></div>
+      <div><div class="muted" style="font-size:11px">未实现盈亏</div><div id="bu-st-upnl" style="font-size:15px;font-weight:600">—</div></div>
+      <div><div class="muted" style="font-size:11px">挂单数</div><div id="bu-st-orders" style="font-size:15px;font-weight:600">—</div></div>
+      <div><div class="muted" style="font-size:11px">当前市场</div><div id="bu-st-mkt" style="font-size:15px;font-weight:600">—</div></div>
+    </div>
+    <div class="muted" style="margin-top:12px;font-size:12px">
+      Round 127 UI 精简，完整策略控制台走 Autopilot 托管。手动起单/撤单请等 Round 128 或用 <code>curl</code> 打 <code>/api/bu/start</code> / <code>/api/bu/stop</code>。
+    </div>
+    <button class="btn btn-ghost" style="margin-top:12px" onclick="switchTab('autopilot')">前往 Autopilot 托管 Bitunix →</button>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
 <!-- TAB: 🚀 Autopilot — AI 无脑一键托管 -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <div id="tab-autopilot" class="tab-panel">
@@ -2617,10 +2681,10 @@ const RISK = {
 };
 
 // ── Tab 切换 ────────────────────────────────────────────────────────────────
-const TAB_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','autopilot','ai','settings'];
+const TAB_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu','autopilot','ai','settings'];
 // Round 89：只在 DEX 部分（总览 + 7 家）滑动切换。Autopilot/AI/IP 配置
 // 用户是明确要"进去"的，不参与滑动，避免误触。
-const SWIPE_ORDER = ['overview','de','ex','rs','on','pl','sx','bg'];
+const SWIPE_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu'];
 let _currentTab = 'overview';
 
 function switchTab(name) {
@@ -3338,7 +3402,7 @@ function updateConnStatus() {
   el.className = 'conn ' + cls;
   txt.textContent = label;
   el.title = '后端连接状态' + (lastBeat ? `（最后更新 ${Math.round(age / 1000)} 秒前）` : '');
-  if (lastBeat && age >= 10000) ['de','ex','rs','on','pl','sx','bg'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
+  if (lastBeat && age >= 10000) ['de','ex','rs','on','pl','sx','bg','bu'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
 }
 setInterval(updateConnStatus, 1000);
 updateConnStatus();
@@ -3381,7 +3445,7 @@ const MODE_LABEL = { neutral: '中性', long: '做多', short: '做空' };
 const TREND_LABEL = { up: '上升', down: '下降', range: '震荡' };
 
 async function scanTrends() {
-  for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg']) {
+  for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu']) {
     const box = $(`ov-${p}-trend`);
     if (!box) continue;
     const d = lastOverview[p];
@@ -3479,7 +3543,7 @@ function hdrDetailsToggle() {
 }
 // 从 5 个个体 badge 的 mode（live/paper）+ dot 状态汇总出药丸
 function updateHdrSummary() {
-  const keys = ['de','ex','rs','on','pl','sx','bg'];
+  const keys = ['de','ex','rs','on','pl','sx','bg','bu'];
   const items = keys.map(k => {
     const b = $('hdr-' + k);
     return { k, live: b && b.className.includes('badge-live') };
@@ -3537,7 +3601,7 @@ function renderOverview(data) {
   let totEquity = 0, totBalance = 0, totPnl = 0, totRealized = 0, totUnrealized = 0, totVolume = 0, totRungs = 0;
   let running = 0;
 
-  ['de','ex','rs','on','pl','sx','bg'].forEach(p => {
+  ['de','ex','rs','on','pl','sx','bg','bu'].forEach(p => {
     const d = data[p];
     if (!d) return;
     if (d.balance != null) totBalance += d.balance;
@@ -3607,7 +3671,7 @@ function renderOverview(data) {
   $('tot-rungs').textContent = totRungs;
   // 分所交易量 + 权益 tooltip 数据
   const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget' };
-  const perEx = ['de','ex','rs','on','pl','sx','bg'].map(p => {
+  const perEx = ['de','ex','rs','on','pl','sx','bg','bu'].map(p => {
     const v = data[p]?.volume;
     const eq = data[p]?.equity;
     return {
@@ -3651,7 +3715,7 @@ function renderOverview(data) {
   const totMode = $('tot-modes'); if (totMode) totMode.textContent = '';
 
   // Hero 卡的 demo/live 计数（就算 Live 是 0 也照样显示）
-  const modesArr = ['de','ex','rs','on','pl','sx','bg'].map(p => (data[p]?.mode || 'paper').toLowerCase());
+  const modesArr = ['de','ex','rs','on','pl','sx','bg','bu'].map(p => (data[p]?.mode || 'paper').toLowerCase());
   const demoN = modesArr.filter((m) => m === 'paper').length;
   const liveN = modesArr.filter((m) => m === 'live').length;
   const el = $('tot-mode-summary');
@@ -3768,7 +3832,7 @@ function aiVendorChange() {
   for (const m of v.models) { const o = document.createElement('option'); o.value = m; dl.appendChild(o); }
   $('ai-cfg-status').textContent = `已按 ${v.name} 预填接口地址和推荐模型（模型可下拉换或手动输入），填好 API Key 后点「保存配置」。`;
 }
-const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget' };
+const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix' };
 const AI_ACTION_LABEL = {
   adjust_range:'调整网格区间', stop_grid:'停止网格', cancel_orders:'撤销全部挂单（保留持仓）',
   close_position:'市价平仓', reconnect:'重连 DEX', start_recovery:'启动只减仓回收阶梯', start_grid:'启动网格',
@@ -3884,7 +3948,7 @@ async function aiRefreshStatus() {
       }
       if (document.activeElement !== $('ov-ai-mkt-min')) $('ov-ai-mkt-min').placeholder = s.marketMin;
       if (document.activeElement !== $('ov-ai-sent-min')) $('ov-ai-sent-min').placeholder = s.sentinelMin;
-      for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg']) {
+      for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu']) {
         const el = $(`ov-${p}-ai`);
         const per = s.sentinel && s.sentinel.per ? s.sentinel.per[p] : null;
         if (el && per) {
@@ -4434,7 +4498,7 @@ async function petsRefresh() {
     const j = await r.json();
     const species = j.species || {};
     const pets = j.pets || {};
-    for (const k of ['de','ex','rs','on','pl','sx','bg']) {
+    for (const k of ['de','ex','rs','on','pl','sx','bg','bu']) {
       const entry = pets[k];
       const sp = species[k];
       if (entry && sp) petRenderCard(k, entry, sp, j.thresholds);
@@ -4452,17 +4516,17 @@ setInterval(petsRefresh, 60_000);
 const NUM_SELECTORS = [
   '#tot-equity', '#tot-pnl', '#tot-balance', '#tot-realized',
   '#tot-unrealized', '#tot-volume', '#tot-rungs',
-  '#ov-de-pnl', '#ov-ex-pnl', '#ov-rs-pnl', '#ov-on-pnl', '#ov-pl-pnl', '#ov-sx-pnl', '#ov-bg-pnl',
-  '#ov-de-bal', '#ov-ex-bal', '#ov-rs-bal', '#ov-on-bal', '#ov-pl-bal', '#ov-sx-bal', '#ov-bg-bal',
-  '#ov-de-eq',  '#ov-ex-eq',  '#ov-rs-eq',  '#ov-on-eq',  '#ov-pl-eq',  '#ov-sx-eq',  '#ov-bg-eq',
-  '#ov-de-price','#ov-ex-price','#ov-rs-price','#ov-on-price','#ov-pl-price','#ov-sx-price','#ov-bg-price',
-  '#ov-de-rpnl','#ov-ex-rpnl','#ov-rs-rpnl','#ov-on-rpnl','#ov-pl-rpnl','#ov-sx-rpnl','#ov-bg-rpnl',
-  '#ov-de-upnl','#ov-ex-upnl','#ov-rs-upnl','#ov-on-upnl','#ov-pl-upnl','#ov-sx-upnl','#ov-bg-upnl',
-  '#ov-de-vol','#ov-ex-vol','#ov-rs-vol','#ov-on-vol','#ov-pl-vol','#ov-sx-vol','#ov-bg-vol',
-  '#ov-de-rungs','#ov-ex-rungs','#ov-rs-rungs','#ov-on-rungs','#ov-pl-rungs','#ov-sx-rungs','#ov-bg-rungs',
-  '#de-st-price','#ex-st-price','#rs-st-price','#on-st-price','#pl-st-price','#sx-st-price','#bg-st-price',
-  '#de-st-bal','#ex-st-bal','#rs-st-bal','#on-st-bal','#pl-st-bal','#sx-st-bal','#bg-st-bal',
-  '#de-st-eq','#ex-st-eq','#rs-st-eq','#on-st-eq','#pl-st-eq','#sx-st-eq','#bg-st-eq',
+  '#ov-de-pnl', '#ov-ex-pnl', '#ov-rs-pnl', '#ov-on-pnl', '#ov-pl-pnl', '#ov-sx-pnl', '#ov-bg-pnl', '#ov-bu-pnl',
+  '#ov-de-bal', '#ov-ex-bal', '#ov-rs-bal', '#ov-on-bal', '#ov-pl-bal', '#ov-sx-bal', '#ov-bg-bal', '#ov-bu-bal',
+  '#ov-de-eq',  '#ov-ex-eq',  '#ov-rs-eq',  '#ov-on-eq',  '#ov-pl-eq',  '#ov-sx-eq',  '#ov-bg-eq',  '#ov-bu-eq',
+  '#ov-de-price','#ov-ex-price','#ov-rs-price','#ov-on-price','#ov-pl-price','#ov-sx-price','#ov-bg-price','#ov-bu-price',
+  '#ov-de-rpnl','#ov-ex-rpnl','#ov-rs-rpnl','#ov-on-rpnl','#ov-pl-rpnl','#ov-sx-rpnl','#ov-bg-rpnl','#ov-bu-rpnl',
+  '#ov-de-upnl','#ov-ex-upnl','#ov-rs-upnl','#ov-on-upnl','#ov-pl-upnl','#ov-sx-upnl','#ov-bg-upnl','#ov-bu-upnl',
+  '#ov-de-vol','#ov-ex-vol','#ov-rs-vol','#ov-on-vol','#ov-pl-vol','#ov-sx-vol','#ov-bg-vol','#ov-bu-vol',
+  '#ov-de-rungs','#ov-ex-rungs','#ov-rs-rungs','#ov-on-rungs','#ov-pl-rungs','#ov-sx-rungs','#ov-bg-rungs','#ov-bu-rungs',
+  '#de-st-price','#ex-st-price','#rs-st-price','#on-st-price','#pl-st-price','#sx-st-price','#bg-st-price','#bu-st-price',
+  '#de-st-bal','#ex-st-bal','#rs-st-bal','#on-st-bal','#pl-st-bal','#sx-st-bal','#bg-st-bal','#bu-st-bal',
+  '#de-st-eq','#ex-st-eq','#rs-st-eq','#on-st-eq','#pl-st-eq','#sx-st-eq','#bg-st-eq','#bu-st-eq',
 ];
 
 function initNumAnimation() {
@@ -4558,7 +4622,7 @@ async function bulkEnableAutopilot(btn) {
   st.textContent = '';
   try {
     const perExchange = {};
-    for (const k of ['de','ex','rs','on','pl','sx','bg']) perExchange[k] = { enabled: true };
+    for (const k of ['de','ex','rs','on','pl','sx','bg','bu']) perExchange[k] = { enabled: true };
     const r = await fetch('/api/autopilot/config', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ masterEnabled: true, perExchange }),
@@ -4590,7 +4654,7 @@ async function bulkReconnectAll(btn) {
   st.textContent = '';
 
   // 打开面板，先全部显示 loading
-  const keys = ['de','ex','rs','on','pl','sx','bg'];
+  const keys = ['de','ex','rs','on','pl','sx','bg','bu'];
   const statuses = {};
   for (const k of keys) statuses[k] = { state: 'loading', mode: lastOverview?.[k]?.mode };
   const paint = () => { body.innerHTML = keys.map((k) => renderReconnectRow(k, statuses[k])).join(''); };
@@ -4654,7 +4718,7 @@ async function bulkResetDemo(btn) {
   const st = $('bulk-status');
   btn.disabled = true; const orig = btn.textContent;
   btn.textContent = '⏳ 重置中…'; st.textContent = '';
-  const keys = ['de','ex','rs','on','pl','sx','bg'];
+  const keys = ['de','ex','rs','on','pl','sx','bg','bu'];
   const results = await Promise.all(keys.map(async (k) => {
     try {
       // 先停网格 + 平仓

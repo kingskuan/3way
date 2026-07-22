@@ -7,6 +7,7 @@
 //   /api/pl/*  → perpl.xyz
 //   /api/sx/*  → StandX
 //   /api/bg/*  → Bitget（Round 82，paper only）
+//   /api/bu/*  → Bitunix（Round 127，LIVE）
 //   /api/overview → 全所总览（余额+盈亏）
 import http from 'node:http';
 import fs from 'node:fs';
@@ -19,6 +20,7 @@ import { createExchange as createOnExchange } from './exchange/on/index.js';
 import { createExchange as createPlExchange } from './exchange/pl/index.js';
 import { createExchange as createSxExchange } from './exchange/sx/index.js';
 import { createExchange as createBgExchange } from './exchange/bg/index.js';
+import { createExchange as createBuExchange } from './exchange/bu/index.js';
 import { GridBot } from './bot.js';
 import { analyzeTrend } from './trend.js';
 import { setupProxies, checkProxy } from './proxy.js';
@@ -70,6 +72,10 @@ if ((cfg.host === '0.0.0.0' || cfg.isCloud) && !cfg.dashboardPassword) {
     if (!cfg.bg.secretKey) missing.push(['Bitget  ', 'BG_SECRET_KEY', '同上（创建时一并显示）']);
     if (!cfg.bg.passphrase) missing.push(['Bitget  ', 'BG_PASSPHRASE', '同上（自己设的口令，创建时和 secret 一起给）']);
   }
+  if (cfg.bu.mode === 'live') {
+    if (!cfg.bu.apiKey) missing.push(['Bitunix ', 'BU_API_KEY', 'bitunix.com → API Management → Create API']);
+    if (!cfg.bu.apiSecret) missing.push(['Bitunix ', 'BU_API_SECRET', '同上（创建时一并显示，只显示一次务必保存）']);
+  }
   if (missing.length) {
     console.error('\n[启动失败] 有交易所被设为 live 实盘模式，但 .env 里还缺以下凭据：\n');
     for (const [ex, key, where] of missing) {
@@ -94,7 +100,7 @@ if (proxyResult.used) {
     console.log('[代理检测] ✓ 代理正常，当前出口 IP: ' + chk.ip);
   } else {
     console.error('[代理检测] ✗ 代理无法联网：' + chk.error);
-    const hasLive = ['de', 'ex', 'rs', 'on', 'pl'].some((k) => cfg[k].mode === 'live');
+    const hasLive = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu'].some((k) => cfg[k].mode === 'live');
     if (hasLive) {
       console.error('  实盘模式已中止启动，以免在断网状态下运行造成挂单失控。');
       process.exit(1);
@@ -114,6 +120,7 @@ const onExchange = createOnExchange(cfg.on);
 const plExchange = createPlExchange(cfg.pl);
 const sxExchange = createSxExchange(cfg.sx);
 const bgExchange = createBgExchange(cfg.bg);
+const buExchange = createBuExchange(cfg.bu);
 
 const deBot = new GridBot(deExchange, { onChange: (s) => saveSnapshot('de', s) });
 const exBot = new GridBot(exExchange, { onChange: (s) => saveSnapshot('ex', s) });
@@ -122,6 +129,7 @@ const onBot = new GridBot(onExchange, { onChange: (s) => saveSnapshot('on', s) }
 const plBot = new GridBot(plExchange, { onChange: (s) => saveSnapshot('pl', s) });
 const sxBot = new GridBot(sxExchange, { onChange: (s) => saveSnapshot('sx', s) });
 const bgBot = new GridBot(bgExchange, { onChange: (s) => saveSnapshot('bg', s) });
+const buBot = new GridBot(buExchange, { onChange: (s) => saveSnapshot('bu', s) });
 
 // Restore cumulative stats / config from the previous run (display continuity).
 // Trading does NOT auto-resume; stray-order cleanup happens after each exchange
@@ -133,29 +141,30 @@ onBot.restore(loadSnapshot('on'));
 plBot.restore(loadSnapshot('pl'));
 sxBot.restore(loadSnapshot('sx'));
 bgBot.restore(loadSnapshot('bg'));
+buBot.restore(loadSnapshot('bu'));
 
 // Belt-and-suspenders: ensure every exchange always has an 'error' listener so a
 // stray emit can never crash the process (the GridBot also attaches one).
-for (const ex of [deExchange, exExchange, rsExchange, onExchange, plExchange, sxExchange, bgExchange]) {
+for (const ex of [deExchange, exExchange, rsExchange, onExchange, plExchange, sxExchange, bgExchange, buExchange]) {
   ex.on('error', (e) => { try { console.error('[DEX 错误] ' + (e?.message || e)); } catch {} });
 }
 
 // ── AI 服务（哨兵/日报/分析/对话/出区间建议）────────────────────────────────
 const aiService = createAiService({
-  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot },
-  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange },
+  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot },
+  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange, bu: buExchange },
 });
 aiService.start();
 
 // ── AI Autopilot（无脑一键：AI 自动选币 + 起网格 + 熔断护栏 + Telegram 复盘）
 const autopilot = createAutopilot({
-  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot },
-  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange },
+  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot },
+  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange, bu: buExchange },
 });
 autopilot.start();
 
 // ── 宠物系统（每家 DEX 一只宠物，交易量累积成养料，6 阶进化）
-const pets = createPets({ bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot } });
+const pets = createPets({ bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot } });
 pets.start();
 
 // SSE 客户端集合（按 DEX 分组）
@@ -166,6 +175,7 @@ const onClients = new Set();
 const plClients = new Set();
 const sxClients = new Set();
 const bgClients = new Set();
+const buClients = new Set();
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
 const MIME = {
@@ -493,6 +503,7 @@ const onHandler = makeExchangeHandler('/api/on', onBot, onExchange, cfg.on, onCl
 const plHandler = makeExchangeHandler('/api/pl', plBot, plExchange, cfg.pl, plClients, 'Perpl');
 const sxHandler = makeExchangeHandler('/api/sx', sxBot, sxExchange, cfg.sx, sxClients, 'StandX');
 const bgHandler = makeExchangeHandler('/api/bg', bgBot, bgExchange, cfg.bg, bgClients, 'Bitget');
+const buHandler = makeExchangeHandler('/api/bu', buBot, buExchange, cfg.bu, buClients, 'Bitunix');
 
 // ── HTTP Basic Auth 中间件（有 DASHBOARD_PASSWORD 才启用） ──────────────────
 // 时间常量比较，避免旁路时间攻击。
@@ -547,6 +558,7 @@ const server = http.createServer(async (request, res) => {
         pl: pick(plBot.getState(), cfg.pl.mode),
         sx: pick(sxBot.getState(), cfg.sx.mode),
         bg: pick(bgBot.getState(), cfg.bg.mode),
+        bu: pick(buBot.getState(), cfg.bu.mode),
       });
     }
 
@@ -567,6 +579,7 @@ const server = http.createServer(async (request, res) => {
         pl: pick(plBot.getState(), cfg.pl.mode),
         sx: pick(sxBot.getState(), cfg.sx.mode),
         bg: pick(bgBot.getState(), cfg.bg.mode),
+        bu: pick(buBot.getState(), cfg.bu.mode),
       };
       res.write(`data: ${JSON.stringify(initial, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))}\n\n`);
       const overviewClients = server._overviewClients;
@@ -645,8 +658,8 @@ const server = http.createServer(async (request, res) => {
     // （用于风控风格换了、Round 109 mode 修复要生效等场景 —— 现有 bot 不停不重开）
     if (p === '/api/autopilot/reset-all-positions' && request.method === 'POST') {
       try {
-        const bots = { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot };
-        const exchanges = { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange };
+        const bots = { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot };
+        const exchanges = { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange, bu: buExchange };
         const results = {};
         await Promise.all(Object.entries(bots).map(async ([k, bot]) => {
           const ex = exchanges[k];
@@ -780,6 +793,9 @@ const server = http.createServer(async (request, res) => {
     if (p.startsWith('/api/bg/')) {
       return await bgHandler(request, res, p.slice('/api/bg'.length), url);
     }
+    if (p.startsWith('/api/bu/')) {
+      return await buHandler(request, res, p.slice('/api/bu'.length), url);
+    }
 
     // ── 静态文件 ──────────────────────────────────────────────────────────
     let file = p === '/' ? '/index.html' : p;
@@ -842,6 +858,10 @@ setInterval(() => {
     const data = `data: ${stringify(bgBot.getState())}\n\n`;
     for (const r of bgClients) { try { r.write(data); } catch { bgClients.delete(r); } }
   }
+  if (buClients.size > 0) {
+    const data = `data: ${stringify(buBot.getState())}\n\n`;
+    for (const r of buClients) { try { r.write(data); } catch { buClients.delete(r); } }
+  }
   if (server._overviewClients.size > 0) {
     const deState = deBot.getState();
     const exState = exBot.getState();
@@ -850,6 +870,7 @@ setInterval(() => {
     const plState = plBot.getState();
     const sxState = sxBot.getState();
     const bgState = bgBot.getState();
+    const buState = buBot.getState();
     const overview = {
       de: pick(deState, cfg.de.mode),
       ex: pick(exState, cfg.ex.mode),
@@ -858,6 +879,7 @@ setInterval(() => {
       pl: pick(plState, cfg.pl.mode),
       sx: pick(sxState, cfg.sx.mode),
       bg: pick(bgState, cfg.bg.mode),
+      bu: pick(buState, cfg.bu.mode),
     };
     const data = `data: ${stringify(overview)}\n\n`;
     for (const r of server._overviewClients) { try { r.write(data); } catch { server._overviewClients.delete(r); } }
@@ -926,6 +948,7 @@ await Promise.all([
   initExchange(plExchange, 'Perpl', cfg.pl),
   initExchange(sxExchange, 'StandX', { mode: cfg.sx.mode, apiUrl: 'https://perps.standx.com', network: cfg.sx.chain || 'bsc' }),
   initExchange(bgExchange, 'Bitget', { mode: cfg.bg.mode, apiUrl: 'https://api.bitget.com' }),
+  initExchange(buExchange, 'Bitunix', { mode: cfg.bu.mode, apiUrl: 'https://fapi.bitunix.com' }),
 ]);
 
 // ── 崩溃恢复 / 续跑 ────────────────────────────────────────────────────────────
@@ -957,6 +980,7 @@ await Promise.all([
   resumeIfWasRunning(plBot, plExchange, 'pl'),
   resumeIfWasRunning(sxBot, sxExchange, 'sx'),
   resumeIfWasRunning(bgBot, bgExchange, 'bg'),
+  resumeIfWasRunning(buBot, buExchange, 'bu'),
 ]);
 // Autopilot 迁移补丁：resume 完之后再认领在跑的托管 bot（构造函数里做为时过早，
 // 那时 bot.running 都还是 false）
