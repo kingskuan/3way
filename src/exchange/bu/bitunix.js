@@ -266,8 +266,14 @@ export class BitunixExchange extends EventEmitter {
                    : '1h';
     const limit = Math.min(200, Math.max(50, n));   // Bitunix 最多 200
     try {
+      // Round 147 Bug 1：Railway 服务器请求 kline 时会拿到 4 天前的老数据
+      // （用户 QC 网格图 K 线到 07-19 停但今天是 07-23），从我环境直接 curl 拿
+      // 到的是当天数据 → Railway 出口有某种缓存。加 startTime/endTime 显式，
+      // URL 每次都不同，绕过 cache。intervalSec × limit 覆盖足够窗口。
+      const endTime = Date.now();
+      const startTime = endTime - intervalSec * 1000 * limit;
       const raw = await this._pubGet('/api/v1/futures/market/kline', {
-        symbol, interval, limit,
+        symbol, interval, limit, startTime, endTime,
       });
       const arr = Array.isArray(raw) ? raw : [];
       // Bitunix 返对象数组 [{open, high, close, low, time, quoteVol, baseVol, type}, ...]
@@ -457,7 +463,7 @@ export class BitunixExchange extends EventEmitter {
     try {
       const j = await this._reqGet('/api/v1/futures/position/get_pending_positions', {});
       const list = Array.isArray(j) ? j : (j?.list || []);
-      return list.map((p) => {
+      const raw = list.map((p) => {
         const size = Number(p.qty || p.size || 0);
         // Bitunix side: "LONG"/"SHORT"
         const signedSize = String(p.side).toUpperCase() === 'SHORT' ? -size : size;
@@ -470,6 +476,32 @@ export class BitunixExchange extends EventEmitter {
           leverage: Number(p.leverage || 0),
         };
       }).filter((p) => p.marketId);
+      // Round 147 Bug 2：Bitunix futures 支持 HEDGE 模式（同 symbol 同时开 LONG+SHORT
+      // 两个独立仓位）。原代码返数组给上层，上层 `this.positions.set(marketId, p)`
+      // 后一条 overwrite 前一条 → QnV 只看到一半仓位、unrealizedPnl 差一大截、
+      // 平仓也只平一边。聚合成 NET signed size + 累加 unrealizedPnl，跟单向模式
+      // 语义一致，下游代码不用改。保留 positionId 数组给 closePosition 用。
+      const byMkt = new Map();
+      for (const p of raw) {
+        const cur = byMkt.get(p.marketId);
+        if (cur) {
+          cur.sizeBase += p.sizeBase;
+          cur.unrealizedPnl += p.unrealizedPnl;
+          if (p.positionId) cur.positionIds.push(p.positionId);
+          // entryPrice 按 notional 加权（|sizeBase|×entry 之和 / 总 |sizeBase|）
+          const wCur = Math.abs(cur.sizeBase - p.sizeBase); // 之前那边
+          const wNew = Math.abs(p.sizeBase);
+          if (wCur + wNew > 0) {
+            cur.entryPrice = (cur.entryPrice * wCur + p.entryPrice * wNew) / (wCur + wNew);
+          }
+        } else {
+          byMkt.set(p.marketId, {
+            ...p,
+            positionIds: p.positionId ? [p.positionId] : [],
+          });
+        }
+      }
+      return [...byMkt.values()];
     } catch { return []; }
   }
 
@@ -485,26 +517,34 @@ export class BitunixExchange extends EventEmitter {
         this.positions.delete(Number(marketId));
         return { closed: true, empty: true, size: 0 };
       }
-      const body = { symbol };
-      if (pos.positionId) body.positionId = pos.positionId;
-      try {
-        await this._reqPost('/api/v1/futures/trade/flash_close_position', body);
-      } catch (e) {
-        // 兜底：flash close 不 work 就走 market 反向 reduceOnly
-        const closeSide = pos.sizeBase > 0 ? 'SELL' : 'BUY';
-        const fallback = {
-          symbol,
-          qty: String(Math.abs(pos.sizeBase)),
-          side: closeSide,
-          orderType: 'MARKET',
-          tradeSide: 'CLOSE',
-          reduceOnly: true,
-        };
-        if (pos.positionId) fallback.positionId = pos.positionId;
-        await this._reqPost('/api/v1/futures/trade/place_order', fallback);
+      // Round 147 Bug 2：hedge 模式下 pos.positionIds 数组含 LONG+SHORT 两个仓位
+      // 的 ID。flash_close_position 每次只关一个 positionId → 循环关全部。
+      const ids = (pos.positionIds && pos.positionIds.length) ? pos.positionIds
+                : (pos.positionId ? [pos.positionId] : [null]);
+      let closedCount = 0;
+      for (const posId of ids) {
+        const body = { symbol };
+        if (posId) body.positionId = posId;
+        try {
+          await this._reqPost('/api/v1/futures/trade/flash_close_position', body);
+          closedCount++;
+        } catch (e) {
+          // 兜底：flash close 不 work 就走 market 反向 reduceOnly（仅这一 leg）
+          const closeSide = pos.sizeBase > 0 ? 'SELL' : 'BUY';
+          const fallback = {
+            symbol,
+            qty: String(Math.abs(pos.sizeBase)),
+            side: closeSide,
+            orderType: 'MARKET',
+            tradeSide: 'CLOSE',
+            reduceOnly: true,
+          };
+          if (posId) fallback.positionId = posId;
+          try { await this._reqPost('/api/v1/futures/trade/place_order', fallback); closedCount++; } catch { /* keep going */ }
+        }
       }
       this.positions.delete(Number(marketId));
-      return { closed: true, count: 1 };
+      return { closed: true, count: closedCount };
     } catch (e) {
       if (/no position|no.?position|does not exist|30004/i.test(e.message)) {
         this.positions.delete(Number(marketId));
