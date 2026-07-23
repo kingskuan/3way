@@ -220,6 +220,10 @@ export class GridBot {
       if (typeof this.ex.closePosition === 'function') {
         try { await this.ex.closePosition(this.config.marketId); } catch { /* best effort */ }
       }
+      // Round 146 Bug 3：切市场清 fills。以前不清 → autopilot Round 121 stop-idle
+      // 停 A → 起 B 后，fills[0].t 仍是 A 市场的老时间戳 → autopilot 下一 tick 立刻
+      // 判"30 分钟无成交"再 rotate → 每 15 分钟轮一次，B 根本没机会跑。
+      this.fills = [];
       this._alert(`切换市场：先清老市场 ${oldName} 挂单+平仓，再起 ${market.displayName}`);
     }
 
