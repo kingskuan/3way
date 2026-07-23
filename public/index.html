@@ -4531,7 +4531,10 @@ function petRenderCard(k, entry, species, thresholds) {
   const fallbackIcon = fallback[entry.level] || '🥚';
   const lvLabel = `Lv ${entry.level + 1} / ${stageNames.length}`;
   const color = PET_COLORS[k] || '#8b5cf6';
-  const imgSrc = `/pets/${k}-lv${entry.level + 1}.png`;
+  // Round 144: cache-bust `?v=144` — Bitunix 图 Round 143 已 push 但用户浏览器 /
+  // Railway CDN 仍 serve Round 134 老图（深紫渐变 + 石座）。加版本 query 强制
+  // 每次改立绘时 bump 一位，浏览器 + CDN 都会拉新的。
+  const imgSrc = `/pets/${k}-lv${entry.level + 1}.png?v=144`;
   let pct = 100, tipText = '已达最高进化！继续吃养料 (累计 ' + petFmtNum(entry.feed) + ')';
   if (entry.nextThreshold != null) {
     const span = entry.nextThreshold - entry.prevThreshold;
