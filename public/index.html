@@ -2565,6 +2565,19 @@ input:focus, select:focus {
     <div id="ap-state" class="grid-2" style="gap:12px"></div>
   </div>
 
+  <!-- Round 156：策略效率仪表盘 —— 8 家一览 gridProfit 理论 vs equityDelta 真实 -->
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-title">📊 策略效率仪表盘 <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--v2-mut)">网格理论利润 vs 账户真实变化，差多少 = fees + adverse + 转账吃掉的</span></div>
+    <div id="ap-efficiency" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px"></div>
+    <div class="muted" style="margin-top:10px;font-size:11px;line-height:1.7">
+      <b>效率 = equityDelta / gridProfit × 100%</b>：<br>
+      🟢 <b>&gt; 60% · 健康</b>：理论利润大部分转成真实 · 手续费/adverse 可控<br>
+      🟡 <b>0-60% · 偏低</b>：赚了但被 fees/滑点吃掉大半 · 参数需调优<br>
+      🔴 <b>&lt; 0 · 严重亏损</b>：网格 fire 但账户在亏 · Round 154 应触发熔断<br>
+      ⚪ <b>N/A</b>：起始余额缺失/gridProfit=0 · 刚起单或转账后需 reset
+    </div>
+  </div>
+
   <!-- 决策日志 -->
   <div class="panel" style="margin-top:14px">
     <div class="panel-title">最近决策日志（最多 30 条）</div>
@@ -4481,6 +4494,43 @@ function apRender(s) {
       ${st.lastDecisionAt ? `<div class="muted" style="font-size:10px;margin-top:4px">决策时间：${apFmtTime(st.lastDecisionAt)}</div>` : ''}
     `;
     stateBox.appendChild(box);
+  }
+
+  // Round 156：策略效率仪表盘
+  // 数据源：lastOverview 里每家的 gridProfit + equityDelta
+  const effBox = $('ap-efficiency');
+  if (effBox) {
+    const rows = [];
+    const overview = window.lastOverview || {};
+    for (const k of ['de','ex','rs','on','pl','sx','bg','bu']) {
+      const d = overview[k] || {};
+      const gp = Number(d.stats?.gridProfit) || 0;
+      const ed = d.equityDelta;
+      let effPct = null, status = 'na', color = 'var(--v2-mut)', icon = '⚪';
+      if (gp > 0 && Number.isFinite(ed)) {
+        effPct = (ed / gp) * 100;
+        if (effPct >= 60) { status = '健康'; color = 'var(--green,#22c55e)'; icon = '🟢'; }
+        else if (effPct >= 0) { status = '偏低'; color = 'var(--yel,#eab308)'; icon = '🟡'; }
+        else { status = '严重亏损'; color = 'var(--red,#ef4444)'; icon = '🔴'; }
+      } else {
+        status = gp === 0 ? '未开始' : 'N/A';
+      }
+      const name = ({de:'Decibel',ex:'Extended',rs:'RISEx',on:'Ondo',pl:'Perpl',sx:'StandX',bg:'Bitget',bu:'Bitunix'})[k];
+      rows.push(`
+        <div style="border:1px solid rgba(148,163,184,0.25);border-radius:8px;padding:10px;background:var(--v2-panel,#111a2e)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span style="font-size:11px;font-weight:600;letter-spacing:.5px">${name}</span>
+            <span style="font-size:11px;color:${color}">${icon} ${status}</span>
+          </div>
+          <div style="font-size:20px;font-weight:700;color:${color};line-height:1.1">${effPct != null ? (effPct >= 0 ? '+' : '') + effPct.toFixed(0) + '%' : '—'}</div>
+          <div style="font-size:10px;color:var(--v2-mut);margin-top:4px">
+            理论 <span style="color:var(--v2-txt)">${gp >= 0 ? '+' : ''}${gp.toFixed(1)}</span> ·
+            真实 <span style="color:var(--v2-txt)">${ed != null ? (ed >= 0 ? '+' : '') + ed.toFixed(1) : '—'}</span>
+          </div>
+        </div>
+      `);
+    }
+    effBox.innerHTML = rows.join('');
   }
 
   // 决策日志
