@@ -1191,6 +1191,9 @@ export class GridBot {
       position: pos ? { sizeBase: round6(pos.sizeBase), entryPrice: round2(pos.entryPrice), unrealizedPnl: round2(pos.unrealizedPnl), leverage: pos.leverage ?? this.config?.leverage ?? null } : null,
       realizedPnl: realized,
       unrealizedPnl: unrealized,
+      // Round 153：账户变化 = equity - startBalance，反映真实亏损/盈利（含手续费/资金费/冲区间实际亏 + 外部转账）
+      // 跟 realizedPnl（网格理论利润 gridProfit）并列，让用户能看出 fees + adverse move 吃了多少
+      equityDelta: (equity != null && this.startBalance != null) ? round2(equity - this.startBalance) : null,
       totalPnl,
       returnPct,
       equity,
