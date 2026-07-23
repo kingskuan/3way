@@ -369,10 +369,17 @@ class Autopilot {
     //   - gridProfit（理论）远大于账户变化的绝对值 = 每格赚的比不上 fees + adverse
     //   - 且账户实际亏损值得注意（≥ startBalance × 5%）
     // 触发即换币（跟其他熔断走同一路径：停 + 24h paused）。
+    // Round 157 Bug 1：Round 154 触发条件加 `cur.running && startedByAutopilot`。
+    //
+    // 上一版没这检查 → SX 停了但 gridProfit/equityDelta 是旧数据（bot.stats
+    // 一直没重置），每次 tick 都触发策略无效熔断 → pausedUntil 又推 24h →
+    // 用户"解除熔断"没用（resumeExchange 只清 pausedUntil，没清 bot.stats）→
+    // 死循环。修法：bot 停了就不评估这个信号。
     const gp = Number(cur.stats?.gridProfit) || 0;
     const ed = cur.equityDelta;
     const sb = Number(cur.startBalance) || 0;
-    if (sb > 0 && Number.isFinite(ed) && ed < 0
+    if (cur.running && st.startedByAutopilot
+        && sb > 0 && Number.isFinite(ed) && ed < 0
         && Math.abs(ed) >= sb * 0.05
         && gp >= Math.abs(ed) * 0.5) {
       await this._emergencyStop(key, `策略无效：网格理论利润 +${gp.toFixed(2)} 但账户实际亏 ${ed.toFixed(2)}（差 ${(gp - ed).toFixed(2)} = fees+adverse 吃掉），换币`);

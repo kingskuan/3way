@@ -892,12 +892,15 @@ function pick(s, mode) {
     mode,
     balance: s.balance,
     equity: s.equity,
+    startBalance: s.startBalance,       // Round 157：让前端能算 equityDelta 和显示效率仪表盘
     totalPnl: s.totalPnl,
     realizedPnl: s.realizedPnl,
     unrealizedPnl: s.unrealizedPnl,
+    equityDelta: s.equityDelta,          // Round 153：真实账户变化，前端总盈亏用这个
     returnPct: s.returnPct,
     volume: s.volume,
     completedRungs: s.stats?.completedRungs ?? 0,
+    stats: { gridProfit: s.stats?.gridProfit ?? 0, completedRungs: s.stats?.completedRungs ?? 0 },   // Round 156：效率仪表盘需要
     openOrders: s.openOrders ?? 0,
     exchangeOpenOrders: s.exchangeOpenOrders ?? null,
     outOfRange: s.outOfRange ?? false,
