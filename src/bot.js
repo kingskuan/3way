@@ -1146,12 +1146,27 @@ export class GridBot {
     const equity = equityRaw != null ? round2(equityRaw) : null;
 
     let realized;
-    if (typeof this.ex.realizedPnl === 'number') {
-      realized = round2(this.ex.realizedPnl - (this._pnlBase ?? 0)); // offset applied by resetStats
+    // Round 149：优先用 stats.gridProfit（fills-based · 跟外部转账/存款无关）。
+    //
+    // 之前用 (equity - startBalance) - unrealized 会把外部转账误报成盈亏——
+    // 用户 Bitget 转 $319 去 Bitunix → equity 从 700→381 → 公式误报"已实现
+    // 亏损 -318"，实际网格几乎没亏，只是钱换了个仓。
+    //
+    // gridProfit 从每次 rung completion 累积（spacing × sizeBase），只跟 bot
+    // 实际吃到的网格利润有关。是理论值，不含 exchange 手续费/资金费用，比
+    // exchange 的真实 realized 通常略高，但**不受转账污染**。
+    //
+    // 若 adapter 从 exchange API 拿到真 realizedPnl（RISEx 是这样做的），走
+    // 二号分支；startBalance-based 保底给没有 stats 但有 startBalance 的场景
+    // （目前不会走到，留兜底）。
+    if (this.stats && Number.isFinite(this.stats.gridProfit)) {
+      realized = round2(this.stats.gridProfit);
+    } else if (typeof this.ex.realizedPnl === 'number') {
+      realized = round2(this.ex.realizedPnl - (this._pnlBase ?? 0));
     } else if (equityRaw != null && this.startBalance != null) {
       realized = round2((equityRaw - this.startBalance) - unrealized);
     } else {
-      realized = round2(this.stats.gridProfit);
+      realized = 0;
     }
     const totalPnl = round2(realized + unrealized);
     const returnPct = (this.startBalance && this.startBalance > 0)
