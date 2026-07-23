@@ -1103,6 +1103,13 @@ input:focus, select:focus {
   60%     { transform: translateY(0) scale(0.95); }
 }
 .pet-icon.pet-poke { animation: petPoke .5s ease-out; }
+/* Round 142: bu-lv*.png 被 gen 成 RGB（没 alpha），四角是纯紫填满，
+   深色面板上看就是四四方方一块。用径向渐变 mask 把四角抠掉，
+   造出跟别家 RGBA 光晕类似的圆形外观。其它家已带 alpha 不需要。 */
+.pet-icon[data-k="bu"] {
+  -webkit-mask-image: radial-gradient(circle at center, #000 58%, transparent 92%);
+          mask-image: radial-gradient(circle at center, #000 58%, transparent 92%);
+}
 /* 进化恭喜条：宠物卡右上角贴金色 ribbon */
 .pet-toast {
   position: absolute;
