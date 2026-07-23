@@ -743,13 +743,15 @@ class Autopilot {
         this._log(key, 'skip', `${pick.name} 起单前清残留失败：${e?.message || e}，跳过本轮避免叠加挂单`);
         return;
       }
-      // Round 159：新市场开仓前清 stats + 重打 startBalance 基线。
+      // Round 159 → 161：新市场开仓前清 gridProfit + 重打 startBalance 基线。
       // 否则 bot.stats.gridProfit / startBalance 从上一市场累积过来，Round 154
       // 策略无效熔断会立刻二次触发（SX 死循环：gp=161 老数据 + ed=-24 新市场 →
       // gp >= |ed|*0.5 && |ed| >= sb*5% → 开仓 3s 后就熔断）。
-      // resetStats 里的 startBalance = 当前 equity → equityDelta 从 0 起算。
-      try { await bot.resetStats(); }
-      catch (e) { this._log(key, 'reset-warn', `resetStats 失败：${e?.message || e}（继续起单）`); }
+      // rebaselinePnl 只清 gridProfit + startBalance + _pnlBase，保留 volume/
+      // buys/sells/completedRungs/volumeBaseline —— Round 159 用的 resetStats
+      // 把用户攒的 SX 15 万交易量 + BU volumeBaseline 一起清了，副作用太大。
+      try { bot.rebaselinePnl(); }
+      catch (e) { this._log(key, 'reset-warn', `rebaselinePnl 失败：${e?.message || e}（继续起单）`); }
       const res = await bot.start(params);
       // 起单后 3s 让适配器同步 place 结果，再读实际挂上多少
       await new Promise((r) => setTimeout(r, 3000));
