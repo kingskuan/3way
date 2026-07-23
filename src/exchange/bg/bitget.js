@@ -51,6 +51,8 @@ export class BitgetExchange extends EventEmitter {
     this.orders = new Map();        // orderId -> { orderId, marketId, side, price, sizeBase, ... }
     this.positions = new Map();
     this.balance = 0;
+    this.equity = 0;             // Round 143：暴露真 equity
+    this.unrealizedPnl = 0;
     this.realizedPnl = 0;
     this.lastOkAt = Date.now();
     this.lastError = null;
@@ -121,9 +123,22 @@ export class BitgetExchange extends EventEmitter {
       if (!usdt) {
         throw new Error(`Bitget: 账户里没有 ${MARGIN_COIN} 保证金账户，去交易所充点 USDT`);
       }
-      this.balance = Number(usdt.available) || 0;
-      this.realizedPnl = Number(usdt.crossedRiskRate) || 0;   // 这个字段没直接给累积 pnl
-      console.log(`[Bitget] 初始 balance=${this.balance} USDT`);
+      // Round 143：同 Bitunix，别只用 available（Bitget v2 mix/account 返 usdtEquity
+      // 才是"总权益"，available 只是"可下单余额"）。以前一开单 balance 就掉 →
+      // Autopilot 日亏损护栏假熔断。
+      const usdtEq = Number(usdt.usdtEquity);
+      const cUnreal = Number(usdt.crossedUnrealizedPL || 0);
+      const iUnreal = Number(usdt.isolatedUnrealizedPL || 0);
+      const unreal = cUnreal + iUnreal;
+      if (Number.isFinite(usdtEq) && usdtEq > 0) {
+        this.equity = usdtEq;
+        this.balance = Math.round((usdtEq - unreal) * 100) / 100;
+      } else {
+        this.balance = Number(usdt.available) || 0;
+        this.equity = this.balance + unreal;
+      }
+      this.unrealizedPnl = unreal;
+      console.log(`[Bitget] 初始 balance=${this.balance} equity=${this.equity} USDT (usdtEquity=${usdtEq} unreal=${unreal.toFixed(2)})`);
     } catch (e) {
       throw new Error(
         `Bitget LIVE 认证失败：${e.message}\n` +
@@ -487,7 +502,19 @@ export class BitgetExchange extends EventEmitter {
         const accounts = await this._req('GET', `/api/v2/mix/account/accounts?productType=${PRODUCT_TYPE}`);
         const usdt = Array.isArray(accounts) ? accounts.find((a) => a.marginCoin === MARGIN_COIN) : null;
         if (usdt) {
-          this.balance = Number(usdt.available) || 0;
+          // Round 143：同 init 用 usdtEquity 而不是 available
+          const usdtEq = Number(usdt.usdtEquity);
+          const cUnreal = Number(usdt.crossedUnrealizedPL || 0);
+          const iUnreal = Number(usdt.isolatedUnrealizedPL || 0);
+          const unreal = cUnreal + iUnreal;
+          if (Number.isFinite(usdtEq) && usdtEq > 0) {
+            this.equity = usdtEq;
+            this.balance = Math.round((usdtEq - unreal) * 100) / 100;
+          } else {
+            this.balance = Number(usdt.available) || 0;
+            this.equity = this.balance + unreal;
+          }
+          this.unrealizedPnl = unreal;
         }
       } catch { /* balance 失败不阻塞 */ }
     }

@@ -47,6 +47,8 @@ export class BitunixExchange extends EventEmitter {
     this.orders = new Map();        // orderId -> { orderId, marketId, side, price, sizeBase, ... }
     this.positions = new Map();
     this.balance = 0;
+    this.equity = 0;             // Round 143：暴露真 equity（钱包 + 未实现）
+    this.unrealizedPnl = 0;      // Round 143：修 realizedPnl 误名，真 realized 无法从 account 端点拉
     this.realizedPnl = 0;
     this.lastOkAt = Date.now();
     this.lastError = null;
@@ -158,9 +160,22 @@ export class BitunixExchange extends EventEmitter {
       if (!usdt) {
         throw new Error(`Bitunix: 账户里没有 ${MARGIN_COIN} 保证金账户，去交易所充点 USDT`);
       }
-      this.balance = Number(usdt.available) || 0;
-      this.realizedPnl = Number(usdt.crossUnrealizedPNL || 0) + Number(usdt.isolationUnrealizedPNL || 0);
-      console.log(`[Bitunix] 初始 balance=${this.balance} USDT`);
+      // Round 143：只用 `available` 会漏 open-orders 冻结 + 已开仓 margin，
+      // 每次 Autopilot 开单都会看到 balance 掉一截 → 假熔断循环（用户报"没怎么亏
+      // 但一直熔断"的 root cause）。Bitunix 官方 doc 明确：
+      //   available = 可用现金；frozen = 挂单锁；margin = 仓位锁；
+      //   crossUnrealizedPNL + isolationUnrealizedPNL = 未实现盈亏。
+      //   总钱包 = available + frozen + margin
+      //   总权益 = 总钱包 + 未实现（正=浮盈，负=浮亏）
+      const avail = Number(usdt.available) || 0;
+      const frozen = Number(usdt.frozen) || 0;
+      const posMg = Number(usdt.margin) || 0;
+      const cUnreal = Number(usdt.crossUnrealizedPNL) || 0;
+      const iUnreal = Number(usdt.isolationUnrealizedPNL) || 0;
+      this.balance = avail + frozen + posMg;
+      this.equity = this.balance + cUnreal + iUnreal;
+      this.unrealizedPnl = cUnreal + iUnreal;   // Round 143：修 realizedPnl 误名
+      console.log(`[Bitunix] 初始 balance=${this.balance} equity=${this.equity} USDT (avail=${avail} margin=${posMg} unreal=${(cUnreal+iUnreal).toFixed(2)})`);
     } catch (e) {
       throw new Error(
         `Bitunix LIVE 认证失败：${e.message}\n` +
@@ -547,11 +562,20 @@ export class BitunixExchange extends EventEmitter {
     this._balanceCounter = (this._balanceCounter || 0) + 1;
     if (this._balanceCounter >= 5) {
       this._balanceCounter = 0;
-      // 余额
+      // 余额 · Round 143 同 init：算总钱包 + 总权益，别只用 available
       try {
         const acc = await this._reqGet('/api/v1/futures/account', { marginCoin: MARGIN_COIN });
         const usdt = Array.isArray(acc) ? acc.find((a) => a.marginCoin === MARGIN_COIN) : acc;
-        if (usdt) this.balance = Number(usdt.available) || 0;
+        if (usdt) {
+          const avail = Number(usdt.available) || 0;
+          const frozen = Number(usdt.frozen) || 0;
+          const posMg = Number(usdt.margin) || 0;
+          const cUnreal = Number(usdt.crossUnrealizedPNL) || 0;
+          const iUnreal = Number(usdt.isolationUnrealizedPNL) || 0;
+          this.balance = avail + frozen + posMg;
+          this.equity = this.balance + cUnreal + iUnreal;
+          this.unrealizedPnl = cUnreal + iUnreal;
+        }
       } catch { /* skip */ }
 
       // 仓位
