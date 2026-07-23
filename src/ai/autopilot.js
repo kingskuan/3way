@@ -129,6 +129,10 @@ class Autopilot {
       if (running && this.cfg.perExchange[k]?.enabled && !this.state[k].startedByAutopilot) {
         this.state[k].startedByAutopilot = true;
         this.state[k].adoptedOnBoot = true;   // 打个标记方便日后排查
+        // Round 146 Bug 4：认领时给 startedAt 打时间戳，否则 Round 121 stop-idle
+        // 判断用的 `lastActivity = fills[0]?.t || startedAt || 0` 永远为 0（认领的
+        // bot 若 boot 后一直没成交，认领态就永远不会 rotate）。
+        if (!this.state[k].startedAt) this.state[k].startedAt = Date.now();
         adopted++;
       }
     }
@@ -318,6 +322,20 @@ class Autopilot {
       }
     }
     // 护栏：连续亏损（简单启发：realizedPnl 从上次决策起没涨反跌了）
+    //
+    // Round 146 Bug 1：把 `st.consecutiveLosses` 的实际计数补上。原代码 5 处
+    // reset、1 处判读，**0 处增量**，护栏永远不会触发，只剩日亏损兜底。
+    //
+    // 只对 Autopilot 自己开的、running 的 bot 计数（用户手动开的不算）。
+    // 用 realized（已实现盈亏）对比：涨了 → 归 0；跌了 → +1；持平 → 不动。
+    if (cur.running && st.startedByAutopilot && Number.isFinite(cur.realized)) {
+      const prev = Number.isFinite(st.lastCheckPnl) ? st.lastCheckPnl : null;
+      if (prev != null) {
+        if (cur.realized < prev) st.consecutiveLosses = (st.consecutiveLosses || 0) + 1;
+        else if (cur.realized > prev) st.consecutiveLosses = 0;
+      }
+      st.lastCheckPnl = cur.realized;
+    }
     if (st.consecutiveLosses >= s.consecutiveLossLimit) {
       await this._emergencyStop(key, `连续亏损 ${st.consecutiveLosses} 次，暂停等人工复核`);
       return;
@@ -703,6 +721,21 @@ class Autopilot {
     if (!trend || Number(trend.strength) < 0.4) return false;
     if (trend.recommended !== 'long' && trend.recommended !== 'short') return false;
 
+    // Round 146 Bug 2：只在 neutral 模式 OR 趋势跟 bot 方向反了的时候 narrow。
+    // 原逻辑不看 bot.config.mode，直接按 trend 方向砍：
+    //   long 模式 + 上升趋势 → 砍上方 sell = 砍止盈单 → 多头堆积没退出
+    //   short 模式 + 下跌趋势 → 砍下方 buy = 砍止盈单 → 空头堆积没退出
+    // 只在下面两种情况才安全 narrow：
+    //   (a) neutral：两侧都是 opening + closing 混合，砍逆势侧减风险
+    //   (b) 反转：bot=long 但趋势变 short（or vice versa），逆势侧本就该砍
+    const botMode = cur.config?.mode || 'neutral';
+    const reversed = (botMode === 'long' && trend.recommended === 'short')
+                  || (botMode === 'short' && trend.recommended === 'long');
+    if (botMode !== 'neutral' && !reversed) {
+      this._log(key, 'narrow-skip', `${cur.config?.displayName} ${botMode} 模式跟趋势 ${trend.recommended} 同向，不 narrow（防砍止盈单）`);
+      return false;
+    }
+
     let newLower = oldLower, newUpper = oldUpper, dir;
     if (trend.recommended === 'short') {
       // 下跌 → 砍掉当前价以下的挂单（防继续接刀）
@@ -796,6 +829,7 @@ function _clearBreakerAndBaseline(st) {
   st.pausedUntil = 0;
   st.pausedReason = '';
   st.consecutiveLosses = 0;
+  st.lastCheckPnl = null;         // Round 146 Bug 1：重置连亏跟踪基准
   st.dayStartEquity = 0;
   st.dayStartDate = '';
   st.dayStartMode = '';
@@ -814,6 +848,7 @@ function _freshExState() {
     dayStartDataSource: '',  // baseline 打时 ex.dataSource（real|synthetic|connecting）
     lastAppliedEquity: 0,
     consecutiveLosses: 0,
+    lastCheckPnl: null,       // Round 146 Bug 1：上次 tick 的 realized，用于连亏计数
     pausedUntil: 0,
     pausedReason: '',
     startedByAutopilot: false,
