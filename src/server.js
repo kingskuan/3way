@@ -257,7 +257,13 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
     }
 
     if (subPath === '/reset' && req.method === 'POST') {
-      try { return send(res, 200, await bot.resetStats()); }
+      try {
+        const state = await bot.resetStats();
+        // Round 158：转账后同时清 Autopilot 日基线，防止 equity 突变触发假熔断
+        const key = prefix.split('/').pop();
+        try { autopilot.resumeExchange(key); } catch { /* ignore if autopilot disabled */ }
+        return send(res, 200, state);
+      }
       catch (e) { return send(res, 400, { error: e.message }); }
     }
 
