@@ -82,7 +82,7 @@ export class StandXExchange extends EventEmitter {
     this._token = null;
     this._sessionId = uuidv4();
     this.balance = 0;
-    this.realizedPnl = 0;
+    this.realizedPnl = null;   // Round 148：见 ondo.js 同 comment
     this.lastOkAt = Date.now();
     this.lastError = null;
     // 每次进程启动生成 ephemeral Ed25519 keypair（body signing 用）
