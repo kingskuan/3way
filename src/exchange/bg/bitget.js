@@ -53,7 +53,7 @@ export class BitgetExchange extends EventEmitter {
     this.balance = 0;
     this.equity = 0;             // Round 143：暴露真 equity
     this.unrealizedPnl = 0;
-    this.realizedPnl = 0;
+    this.realizedPnl = null;   // Round 148：见 ondo.js 同 comment
     this.lastOkAt = Date.now();
     this.lastError = null;
     this.stats = null;              // 缓存 getStats 结果

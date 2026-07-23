@@ -49,7 +49,7 @@ export class BitunixExchange extends EventEmitter {
     this.balance = 0;
     this.equity = 0;             // Round 143：暴露真 equity（钱包 + 未实现）
     this.unrealizedPnl = 0;      // Round 143：修 realizedPnl 误名，真 realized 无法从 account 端点拉
-    this.realizedPnl = 0;
+    this.realizedPnl = null;   // Round 148：见 ondo.js 同 comment
     this.lastOkAt = Date.now();
     this.lastError = null;
     this.stats = null;

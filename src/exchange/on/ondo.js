@@ -36,7 +36,7 @@ export class OndoExchange extends EventEmitter {
     this.orders = new Map();        // orderId -> { orderId, marketId, side, price, sizeBase, ... }
     this.positions = new Map();
     this.balance = 0;
-    this.realizedPnl = 0;
+    this.realizedPnl = null;   // Round 148：null 让 bot.getState() typeof 检查失败，走 (equity-startBalance-unreal) 分支，UI 才能反映真实已实现盈亏
     this.lastOkAt = Date.now();
     this.lastError = null;
 

@@ -42,7 +42,7 @@ export class PerplExchange extends EventEmitter {
     this.orders = new Map();
     this.positions = new Map();
     this.balance = 0;
-    this.realizedPnl = 0;
+    this.realizedPnl = null;   // Round 148：见 ondo.js 同 comment
     this.lastOkAt = Date.now();
     this.lastError = null;
     // 硬限制：Perpl REST /v1/trading/order-history?state=open 返 401（未授权），
