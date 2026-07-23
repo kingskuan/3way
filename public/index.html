@@ -1103,6 +1103,8 @@ input:focus, select:focus {
   60%     { transform: translateY(0) scale(0.95); }
 }
 .pet-icon.pet-poke { animation: petPoke .5s ease-out; }
+/* Round 143：bu-lv*.png 已被后处理加上 radial alpha（跟别家 RGBA 一致），
+   四角 alpha=0，不需要 CSS mask 再抠一次。Round 142 的 CSS mask 已移除。 */
 /* 进化恭喜条：宠物卡右上角贴金色 ribbon */
 .pet-toast {
   position: absolute;
