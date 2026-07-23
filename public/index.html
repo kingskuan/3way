@@ -2594,6 +2594,20 @@ input:focus, select:focus {
       <div><label>主模型（AI_MODEL，可下拉选择或手动输入）</label><input id="ai-model" list="ai-model-list" placeholder="选服务商后可下拉选择"></div>
       <div><label>小模型 AI_MODEL_SMALL（哨兵巡检用，省钱，可留空）</label><input id="ai-model-small" list="ai-model-list" placeholder="选服务商后可下拉选择"></div>
       <datalist id="ai-model-list"></datalist>
+      <div id="ai-quickpick" style="grid-column:1/-1;display:none">
+        <label>🚀 一键切模型（apikey.fun 用户 · 需提前在 apikey.fun 网站切好对应分组）</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+          <button type="button" class="btn btn-ghost ai-chip" style="padding:6px 12px;margin:0;font-size:12px" onclick="aiPickModel('kimi-k3','Kimi K3')">Kimi K3</button>
+          <button type="button" class="btn btn-ghost ai-chip" style="padding:6px 12px;margin:0;font-size:12px" onclick="aiPickModel('glm-4.5','智谱 GLM 4.5')">智谱 GLM-4.5</button>
+          <button type="button" class="btn btn-ghost ai-chip" style="padding:6px 12px;margin:0;font-size:12px" onclick="aiPickModel('deepseek-v3','DeepSeek v3')">DeepSeek v3</button>
+          <button type="button" class="btn btn-ghost ai-chip" style="padding:6px 12px;margin:0;font-size:12px" onclick="aiPickModel('grok-4','Grok 4')">Grok 4</button>
+          <button type="button" class="btn btn-ghost ai-chip" style="padding:6px 12px;margin:0;font-size:12px" onclick="aiPickModel('claude-sonnet-4-5','Claude Sonnet 4.5')">Claude Sonnet</button>
+          <button type="button" class="btn btn-ghost ai-chip" style="padding:6px 12px;margin:0;font-size:12px" onclick="aiPickModel('claude-opus-4-8','Claude Opus 4.8')">Claude Opus</button>
+          <button type="button" class="btn btn-ghost ai-chip" style="padding:6px 12px;margin:0;font-size:12px" onclick="aiPickModel('gpt-5','GPT-5')">GPT-5</button>
+          <button type="button" class="btn btn-ghost ai-chip" style="padding:6px 12px;margin:0;font-size:12px" onclick="aiPickModel('gpt-4o','GPT-4o')">GPT-4o</button>
+        </div>
+        <div class="muted" style="margin-top:6px;font-size:11px">提醒：apikey.fun 的 API key 一次只归属一个分组。点这里换模型名，需要**同时**去 apikey.fun 后台把 key 的「分组」切到对应分组，才 work。</div>
+      </div>
       <div><label>哨兵巡检间隔（分钟，0=关闭）</label><input id="ai-sentinel-min" type="number" min="0" placeholder="5"></div>
       <div><label>日报生成时间（0-23 整点）</label><input id="ai-report-hour" type="number" min="0" max="23" placeholder="20"></div>
       <div><label>Telegram Bot Token（推送用，可选）</label><input id="ai-tg-token" type="password" placeholder="123456:ABC-..."></div>
@@ -3903,7 +3917,7 @@ const AI_ENV_MAP = {
 const AI_VENDORS = {
   deepseek:   { name:'DeepSeek 深度求索', proto:'openai', base:'https://api.deepseek.com/v1', models:['deepseek-chat','deepseek-reasoner'], main:'deepseek-chat', small:'deepseek-chat' },
   kimi:       { name:'Kimi（月之暗面）', proto:'openai', base:'https://api.moonshot.cn/v1', models:['kimi-latest','moonshot-v1-8k','moonshot-v1-32k','moonshot-v1-128k'], main:'kimi-latest', small:'moonshot-v1-8k' },
-  apikeyfun:  { name:'apikey.fun（聚合 · 中转到 kimi/claude/codex）', proto:'openai', base:'https://apikey.fun/v1', models:['kimi-k3','kimi-k2-turbo-preview','kimi-latest','moonshot-v1-128k','claude-sonnet-4-5','claude-haiku-4-5','claude-opus-4-8','codex-pro','fable-5','gpt-5','gpt-4o'], main:'kimi-k3', small:'kimi-k3' },
+  apikeyfun:  { name:'apikey.fun（聚合 · 一键切 kimi/GLM/DeepSeek/Claude/GPT/Grok）', proto:'openai', base:'https://apikey.fun/v1', models:['kimi-k3','kimi-k2-turbo-preview','kimi-latest','moonshot-v1-128k','glm-4.5','glm-4.5-flash','glm-4-plus','deepseek-v3','deepseek-chat','deepseek-reasoner','grok-4','grok-4-fast','claude-sonnet-4-5','claude-haiku-4-5','claude-opus-4-8','codex-pro','fable-5','gpt-5','gpt-4o'], main:'kimi-k3', small:'kimi-k3' },
   qwen:       { name:'通义千问（阿里）', proto:'openai', base:'https://dashscope.aliyuncs.com/compatible-mode/v1', models:['qwen-plus','qwen-turbo','qwen-max','qwen-long'], main:'qwen-plus', small:'qwen-turbo' },
   glm:        { name:'智谱 GLM', proto:'openai', base:'https://open.bigmodel.cn/api/paas/v4', models:['glm-4-plus','glm-4-air','glm-4-flash'], main:'glm-4-plus', small:'glm-4-flash' },
   siliconflow:{ name:'硅基流动 SiliconFlow', proto:'openai', base:'https://api.siliconflow.cn/v1', models:['deepseek-ai/DeepSeek-V3','deepseek-ai/DeepSeek-R1','Qwen/Qwen2.5-72B-Instruct'], main:'deepseek-ai/DeepSeek-V3', small:'Qwen/Qwen2.5-72B-Instruct' },
@@ -3931,7 +3945,24 @@ function aiVendorChange() {
   const dl = $('ai-model-list');
   dl.innerHTML = '';
   for (const m of v.models) { const o = document.createElement('option'); o.value = m; dl.appendChild(o); }
+  // Round 150：apikey.fun 独家一键切模型 chip 只在选 apikey.fun 时显示
+  const qp = $('ai-quickpick');
+  if (qp) qp.style.display = ($('ai-vendor').value === 'apikeyfun') ? '' : 'none';
   $('ai-cfg-status').textContent = `已按 ${v.name} 预填接口地址和推荐模型（模型可下拉换或手动输入），填好 API Key 后点「保存配置」。`;
+}
+
+// Round 150：一键切 apikey.fun 模型 —— 填模型名 + 保存 + 跑测试连接
+async function aiPickModel(modelId, displayName) {
+  $('ai-model').value = modelId;
+  $('ai-model-small').value = modelId;
+  // 高亮当前选中 chip
+  document.querySelectorAll('.ai-chip').forEach((c) => c.style.background = '');
+  const clickedBtn = event?.currentTarget;
+  if (clickedBtn) clickedBtn.style.background = 'var(--purple, #8b5cf6)';
+  $('ai-cfg-status').textContent = `⏳ 切到 ${displayName}（${modelId}）· 保存中...`;
+  await aiSaveConfig();
+  $('ai-cfg-status').textContent = `⏳ 已保存 · 测试 ${displayName} 连接...`;
+  await aiTest();
 }
 const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix' };
 const AI_ACTION_LABEL = {
@@ -3994,6 +4025,9 @@ async function aiRefreshStatus() {
         const dl = $('ai-model-list');
         dl.innerHTML = '';
         for (const m of (AI_VENDORS[vend].models || [])) { const o = document.createElement('option'); o.value = m; dl.appendChild(o); }
+        // Round 150：apikey.fun 一键切模型 chip 在页面加载时也要显示
+        const qp = $('ai-quickpick');
+        if (qp) qp.style.display = (vend === 'apikeyfun') ? '' : 'none';
       }
       if (s.configured || s.baseUrl) $('ai-baseurl').value = s.baseUrl || '';
       if (s.configured) {
