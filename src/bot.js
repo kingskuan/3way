@@ -494,16 +494,24 @@ export class GridBot {
   }
 
   /**
-   * Queue a CLOSING / reduce-only order for retry after a failed placement.
-   * Only closing legs are retried — they can never ADD inventory, so retrying is
-   * always safe; silently dropping one (the old behavior) left inventory without
-   * its take-profit order forever, since replacements are only quoted on fills.
+   * Queue a failed placement for retry.
+   * - CLOSING / reduce-only legs get 5 tries (can never ADD inventory; retrying
+   *   always safe; silently dropping one strands its take-profit forever).
+   * - Round 145: OPENING legs (replacement buys after neutral sell fills, etc.)
+   *   get 3 tries. Before Round 145 they were dropped silently → over 30 min
+   *   of sideways trading, opening-leg replacements accumulated to a gap
+   *   centered on the price (user QC Bitunix screenshot: 5 empty grids in
+   *   middle). Runaway rejects are still bounded by `_refillPausedUntil`
+   *   (60s pause after 5+ cancel/reject bursts in 60s), so bounded retry
+   *   here can't spin API rate-limit.
    */
   _queueRetry(o) {
-    if (o.opening !== false && !o.reduceOnly && !o.recovery) return; // opening legs: by design not retried
+    const isOpening = o.opening !== false && !o.reduceOnly && !o.recovery;
+    const cap = isOpening ? 3 : 5;
     const tries = (o._tries || 0) + 1;
-    if (tries > 5) {
-      this._alert(`❌ 补挂平仓单（level ${o.levelIndex} @ ${o.price}）连续 ${tries - 1} 次失败，已放弃。请到交易所核实并手动挂单。`);
+    if (tries > cap) {
+      const label = isOpening ? '补挂开仓单' : '补挂平仓单';
+      this._alert(`❌ ${label}（level ${o.levelIndex} @ ${o.price}）连续 ${tries - 1} 次失败，已放弃。请到交易所核实并手动挂单。`);
       return;
     }
     this._retryQueue.push({ ...o, _tries: tries, _nextAt: Date.now() + 5000 * tries }); // linear back-off
