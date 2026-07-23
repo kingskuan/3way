@@ -615,7 +615,29 @@ class Autopilot {
         rejections.push(`${c.name}:1h 成交仅 $${c.hour1Vol.toFixed(0)}，市场太冷`);
         continue;
       }
-      const rangePct = s.rangePct;
+      // Round 156：策略切换 · 根据 trend regime 动态调参数
+      //   - 强趋势 (strength >= 0.6)：wider range (×1.4), fewer grids (×0.75), lower lev (×0.7)
+      //     → 网格拉宽让趋势跑进来，格数减少每格 notional 更大，杠杆降低减风险
+      //   - 弱趋势 (0.3 ≤ strength < 0.6)：中度调整 (×1.2, ×0.85, ×0.85)
+      //   - 震荡市 (strength < 0.3)：用配置的原参数
+      // 只有 mode != neutral（即真趋势 long/short）才生效，neutral 不动。
+      const strength = Number(c.strength) || 0;
+      const isTrend = c.recommended === 'long' || c.recommended === 'short';
+      let rMult = 1, gMult = 1, lMult = 1;
+      let regimeLabel = '震荡';
+      if (isTrend && strength >= 0.6) {
+        rMult = 1.4; gMult = 0.75; lMult = 0.7;
+        regimeLabel = '强趋势';
+      } else if (isTrend && strength >= 0.3) {
+        rMult = 1.2; gMult = 0.85; lMult = 0.85;
+        regimeLabel = '弱趋势';
+      }
+      const rangePct = s.rangePct * rMult;
+      const gridCountBase = Math.max(8, Math.round(s.gridCount * gMult));
+      const leverageMult = lMult;
+      if (regimeLabel !== '震荡') {
+        this._log(key, 'regime-switch', `${c.name} ${regimeLabel} · strength=${strength} → range ${(s.rangePct*100).toFixed(1)}%→${(rangePct*100).toFixed(1)}%, 格数 ${s.gridCount}→${gridCountBase}, 杠杆×${leverageMult}`);
+      }
       // stepPrice 是价格 tick（每档差多少），stepSize 是订单量 tick（每张多少）——
       // lower/upper 必须对齐 stepPrice！之前用 stepSize 对齐，Ondo 报
       // "doesn't snap to min price increment 0.1" 就是这个原因。
@@ -642,14 +664,16 @@ class Autopilot {
         rejections.push(`${c.name}:range 异常(实际 ${actualWidth.toFixed(4)} vs 期望 ${intendedWidth.toFixed(4)})`);
         continue;
       }
-      const leverage = Math.min(s.maxLeverage, c.maxLeverage || s.maxLeverage);
+      // Round 156：应用 regime multipliers
+      const adjustedMaxLev = Math.max(3, Math.round(s.maxLeverage * leverageMult));
+      const leverage = Math.min(adjustedMaxLev, c.maxLeverage || adjustedMaxLev);
       const stepUnit = c.stepSize || c.minOrderSize || 1e-6;
       const rawSizeBase = (capitalUsdc * s.sizeFractionOfBalance) / price;
       let sizeBase = Math.max(c.minOrderSize || 0, _stepAlign(rawSizeBase, stepUnit));
       if (sizeBase <= 0 || !Number.isFinite(sizeBase)) { rejections.push(`${c.name}:单量异常`); continue; }
 
       const mid = (lower + upper) / 2;
-      let gridCount = s.gridCount;
+      let gridCount = gridCountBase;   // Round 156：用 regime-adjusted gridCount
       let required = gridCount * sizeBase * mid / leverage;
       if (required > budget) {
         const affordable = Math.floor(budget * leverage / (sizeBase * mid));
