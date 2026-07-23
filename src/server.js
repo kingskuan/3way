@@ -667,6 +667,27 @@ const server = http.createServer(async (request, res) => {
         const bots = { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot };
         const exchanges = { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange, bu: buExchange };
         const results = {};
+        // Round 160：清全市场孤儿仓位 —— 交叉保证金的 DEX（StandX/Bitget/Bitunix/Perpl）
+        // 可能在多个市场同时有仓。bot 只跟 1 个 marketId，切市场时只清老市场的仓 →
+        // 老 session 遗留的仓位（例：SX HYPE-USD SHORT 4.76 -25%）永远清不掉。
+        // 这个 helper 用 fetchPositions() 拉全市场真持仓，逐个 closePosition。
+        // 适配器没实现 fetchPositions（ex/rs/on/de）→ fallback 到 config.marketId 单市场。
+        const flushAllOrphanPositions = async (k, ex, bot) => {
+          if (typeof ex?.fetchPositions !== 'function' || typeof ex?.closePosition !== 'function') return null;
+          try {
+            const positions = await ex.fetchPositions();
+            const live = (positions || []).filter((p) => Number(p?.sizeBase) !== 0);
+            if (!live.length) return { flushed: 0 };
+            const closed = [];
+            for (const p of live) {
+              try {
+                await ex.closePosition(p.marketId);
+                closed.push(String(p.marketId));
+              } catch (e) { closed.push(`${p.marketId}:err(${(e?.message || e).toString().slice(0, 40)})`); }
+            }
+            return { flushed: closed.length, markets: closed };
+          } catch (e) { return { error: (e?.message || String(e)).slice(0, 80) }; }
+        };
         await Promise.all(Object.entries(bots).map(async ([k, bot]) => {
           const ex = exchanges[k];
           if (bot?.running) {
@@ -683,6 +704,13 @@ const server = http.createServer(async (request, res) => {
             } catch (e) { results[k] = 'was-stopped, orphan-cancel err: ' + (e?.message || String(e)).slice(0, 100); }
           } else {
             results[k] = 'not-running';
+          }
+          // Round 160：再做全市场孤儿仓 sweep（stop+closePosition 只清一个市场，
+          // 交叉保证金账户可能还有其他市场的历史遗留仓位）。
+          const flush = await flushAllOrphanPositions(k, ex, bot);
+          if (flush) {
+            if (flush.error) results[k] += ' · flush-err: ' + flush.error;
+            else if (flush.flushed > 0) results[k] += ` · +flushed ${flush.flushed} orphan pos [${flush.markets.join(',')}]`;
           }
         }));
         const apStatus = autopilot.resumeAll();
