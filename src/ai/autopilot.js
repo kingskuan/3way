@@ -47,8 +47,12 @@ const STYLES = {
     outOfRangeAction: 'recover',
   },
   aggressive: {
-    rangePct: 0.03,
-    gridCount: 24,
+    // Round 155：rangePct 3%→5%, gridCount 24→16 —— 每格 spacing ×2.5 打得过
+    // fees。用户 QC 发现 15x×3%×24 每格 spacing 太小 ($81/格 BTC) 净利 $0.016
+    // 打不过双向 taker fees $0.065，SX 一天 6463 fills 亏 $161。改成 5%×16 后
+    // spacing $203/格 净利 $0.14 才有意义。保 15x + 0.10 fraction。
+    rangePct: 0.05,
+    gridCount: 16,
     // Round 119：用户要每格 ~$30 notional。fraction 0.04 → 0.10 (×2.5)：
     //   $300 balance × 0.10 = $30/grid（EX/PL/其他）
     //   $700 Bitget × 0.10 = $70/grid（受惠更多，Bitget 高余额充分利用）
@@ -223,6 +227,21 @@ class Autopilot {
       const now = Date.now();
       if (now - this._lastTickAt < this.cfg.decisionIntervalMin * 60_000) return;
       this._lastTickAt = now;
+      // Round 155 C：跨 DEX 币种去重计数器（每 tick 归零）
+      // 每家挑选时看这个 map（baseSymbol → 已被几家选中），做软性避让 + 3 家硬上限。
+      this._tickPickedSymbols = new Map();
+      // 已在跑的家先记进 map —— 别的家挑币时得看到这些"占位"
+      {
+        const baseOf = (name) => String(name || '').replace(/[-_/]?(usdc|usdt|usd|perp)$/i, '').replace(/[-_/]?\.p$/i, '').toUpperCase();
+        for (const k of KEYS) {
+          const bot = this.bots[k];
+          const state = bot?.getState?.();
+          if (state?.running && state.config?.displayName) {
+            const pb = baseOf(state.config.displayName);
+            if (pb) this._tickPickedSymbols.set(pb, (this._tickPickedSymbols.get(pb) || 0) + 1);
+          }
+        }
+      }
       for (const k of KEYS) {
         if (!this.cfg.perExchange[k].enabled) continue;
         try { await this._decideForExchange(k); }
@@ -389,6 +408,10 @@ class Autopilot {
           // 做这个中间态干预。narrowed 就 skip 本 tick（等下一 tick 再评估）。
           const narrowed = await this._maybeNarrowRange(key, cur, ex).catch(() => false);
           if (narrowed) return;
+          // Round 155 B：价格漂离中心 > 5% 就自动 re-center（不停网格、持仓保留）
+          // 用 adjustRange 平移到当前价 ±（原宽度/2），2h 冷却防抖动。跟趋势走。
+          const recentered = await this._maybeRecenter(key, cur).catch(() => false);
+          if (recentered) return;
           this._log(key, 'skip', `${cur.config.displayName} 网格运行中，指标正常，保持（无成交 ${noFillMinutes} 分钟）`);
           return;
         }
@@ -503,6 +526,33 @@ class Autopilot {
       }
     }
     candidates.sort((a, b) => b.score - a.score);
+    // Round 155 C：跨 DEX 软性币种去重
+    //   base = 去掉 -USD/USDT/-PERP 等后缀，例："BTCUSDT" → "BTC"
+    //   硬上限：一个币最多 3 家跑（防 8/8 都 BTC 相关风险拉满）
+    //   软让：一个币已被 1+ 家选 && 该家该 tick 第一名分数优势 ≤ 2 分 → 让给第二名
+    //   优势 > 3 分：允许该家吃这个币（BTC 全局最优时不牺牲质量）
+    const usedMap = this._tickPickedSymbols || new Map();
+    const baseOf = (name) => String(name || '').replace(/[-_/]?(usdc|usdt|usd|perp)$/i, '').replace(/[-_/]?\.p$/i, '').toUpperCase();
+    while (candidates.length > 1) {
+      const top = candidates[0];
+      const second = candidates[1];
+      const topBase = baseOf(top.name);
+      const used = usedMap.get(topBase) || 0;
+      const gap = Number(top.score) - Number(second.score);
+      if (used >= 3) {
+        // 硬上限：跳到下一个候选
+        this._log(key, 'diversify', `${top.name}(${topBase}) 已 3 家在跑，跳过 → ${second.name}`);
+        candidates.shift();
+        continue;
+      }
+      if (used >= 1 && gap <= 2) {
+        // 软让：优势不明显，让给别家
+        this._log(key, 'diversify', `${top.name}(${topBase}) 已被 ${used} 家选，本家优势仅 +${gap}，让给 ${second.name}`);
+        candidates.shift();
+        continue;
+      }
+      break;   // top 可接受
+    }
     const shortlist = candidates.slice(0, 5);
 
     // 4c. AI 从 shortlist 里挑一个 + 出参数（可选，AI 挂了也能 fallback）
@@ -558,9 +608,10 @@ class Autopilot {
         rejections.push(`${c.name}:近1h跌${c.hour1DropPct.toFixed(2)}%`);
         continue;
       }
-      // Round 140：死鱼盘 skip —— 若市场自身近 1h 成交 < $5k，中性网格挂两侧
-      // 大概率吃不到，浪费保证金 + 30 分钟 idle 才会 stop-idle 换币。前置拒。
-      if (c.hour1Vol != null && c.hour1Vol > 0 && c.hour1Vol < 5000) {
+      // Round 140/155：死鱼盘 skip 阈值 $5k → $50k。QC 实测 EX 起 WTI-USD
+      // 后 81 分钟才 stop-idle rotate，GOOGL-USD.P、WTI-USD 等 <$50k 类
+      // "非典型加密 perp" 挂网格效率极差。50k/h 相当于每格能一小时吃到 1-2 次。
+      if (c.hour1Vol != null && c.hour1Vol > 0 && c.hour1Vol < 50000) {
         rejections.push(`${c.name}:1h 成交仅 $${c.hour1Vol.toFixed(0)}，市场太冷`);
         continue;
       }
@@ -692,6 +743,12 @@ class Autopilot {
       st.lastAppliedEquity = cur.equity;
       st.startedByAutopilot = true;
       st.startedAt = Date.now();   // Round 121：给 no-fill-timeout 30 分钟计时起点
+      // Round 155 C：记录该 tick 已选币（跨 DEX 计数），后续家的候选打分时看这个 map
+      if (this._tickPickedSymbols) {
+        const baseOf = (name) => String(name || '').replace(/[-_/]?(usdc|usdt|usd|perp)$/i, '').replace(/[-_/]?\.p$/i, '').toUpperCase();
+        const pb = baseOf(pick.name);
+        this._tickPickedSymbols.set(pb, (this._tickPickedSymbols.get(pb) || 0) + 1);
+      }
       this._log(key, 'start', st.lastActionReason);
       const successHint = (actual < gridCount * 0.75) ? `⚠ 起单成功率低：${actual}/${gridCount}${failReason}\n` : '';
       notify(`【网格 Autopilot·${EXNAMES[key]}】已启动：${pick.name}\n${successHint}模式：${_modeLabel(mode)} · 区间 ${lower} ~ ${upper}\n${gridCount} 格 × ${sizeBase} · ${leverage}x 杠杆\nAI：${aiReasoning || '规则排序'}`).catch(() => {});
@@ -720,6 +777,50 @@ class Autopilot {
    *
    * @returns true if 已收窄（本 tick 不再做后续决策）
    */
+  /**
+   * Round 155 B：自动 re-center —— 价格漂离原 grid 中心 > 5% 就 adjustRange
+   * 到当前价 ±(原宽度/2)，跟趋势走。持仓保留（adjustRange 不平仓）。
+   *
+   * 护栏：
+   *   1. 2 小时冷却（每所每次 recenter 间隔，跟 narrow 独立）
+   *   2. 只在 balanced/aggressive 生效（conservative 冲区间就 close 了）
+   *   3. 需要 running + inRange + 有 lastPrice
+   *
+   * @returns true if 已 recenter（本 tick 不再评估）
+   */
+  async _maybeRecenter(key, cur) {
+    if (this.cfg.riskStyle === 'conservative') return false;
+    const st = this.state[key];
+    const now = Date.now();
+    if (st.lastRecenterAt && now - st.lastRecenterAt < 2 * 3600_000) return false;
+    const price = Number(cur.lastPrice);
+    const lower = Number(cur.config?.lower);
+    const upper = Number(cur.config?.upper);
+    if (!(price > 0) || !(upper > lower)) return false;
+    const mid = (lower + upper) / 2;
+    const drift = Math.abs(price - mid) / mid;
+    if (drift < 0.05) return false;   // 漂 < 5% 不动
+    const w = upper - lower;
+    const newLower = price - w / 2;
+    const newUpper = price + w / 2;
+    try {
+      await this.bots[key].adjustRange({ lower: newLower, upper: newUpper });
+      st.lastRecenterAt = now;
+      const oldC = ((mid).toFixed(4));
+      const newC = ((price).toFixed(4));
+      const msg = `${cur.config.displayName} 价格漂离中心 ${(drift * 100).toFixed(1)}%（原中心 ${oldC} → 新中心 ${newC}），adjustRange 平移到 [${newLower.toFixed(4)}, ${newUpper.toFixed(4)}]，持仓保留`;
+      st.lastAction = 'recenter';
+      st.lastActionReason = msg;
+      this._log(key, 'recenter', msg);
+      notify(`【网格 Autopilot·跟趋势 recenter】${EXNAMES[key]}\n${msg}\n2 小时冷却期内不再 recenter。`).catch(() => {});
+      this._save();
+      return true;
+    } catch (e) {
+      this._log(key, 'recenter-fail', `${cur.config.displayName} recenter 失败：${e?.message || e}`);
+      return false;
+    }
+  }
+
   async _maybeNarrowRange(key, cur, ex) {
     if (this.cfg.riskStyle === 'conservative') return false;
     const st = this.state[key];
@@ -872,6 +973,7 @@ function _freshExState() {
     pausedReason: '',
     startedByAutopilot: false,
     lastNarrowAt: 0,          // Round 88 收窄区间冷却
+    lastRecenterAt: 0,        // Round 155 B 自动 re-center 冷却
     startedAt: 0,             // Round 121：Autopilot 起单时间戳，用于 no-fill-timeout 计算
   };
 }
