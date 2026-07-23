@@ -733,6 +733,40 @@ const server = http.createServer(async (request, res) => {
         return send(res, 200, { results, autopilot: apStatus });
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
     }
+    // Round 162：一次性回补历史交易量 baseline。
+    //   Round 159 的 resetStats 副作用把 SX 15 万交易量清了，Round 141 之前 5 家
+    //   还没打 volumeBaseline，用户希望展示各家网页对得上的历史累积。
+    //   端点接受 {key: number | null}：
+    //     - number 用用户从网页读来的值直接 set（SX/PL/EX/ON/RS 走这条）
+    //     - null / 未提供 → 保留 bot.stats.volume（BU/BG 已从 exchange API 同步）
+    //   之后一律 baseline=0，让 getState.volume = stats.volume 直接显示。
+    if (p === '/api/admin/set-historical-volumes' && request.method === 'POST') {
+      try {
+        const b = await readBody(request);
+        const bots = { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot };
+        const results = {};
+        for (const [k, bot] of Object.entries(bots)) {
+          if (!bot) { results[k] = 'no-bot'; continue; }
+          if (!bot.stats) bot.stats = { buys: 0, sells: 0, completedRungs: 0, gridProfit: 0, volume: 0 };
+          const provided = b[k];
+          let target;
+          if (typeof provided === 'number' && provided >= 0) {
+            target = provided;
+          } else if (provided === null || provided === undefined) {
+            target = Number(bot.stats.volume) || 0;
+          } else {
+            results[k] = 'skip (invalid value)';
+            continue;
+          }
+          bot.stats.volume = target;
+          bot.stats.volumeBaseline = 0;
+          if (typeof bot._changed === 'function') bot._changed();
+          results[k] = `set volume=$${target.toFixed(2)}, baseline=0`;
+        }
+        return send(res, 200, { ok: true, results });
+      } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+    }
+
     // ── 宠物系统 API ─────────────────────────────────────────────────────
     if (p === '/api/pets') {
       return send(res, 200, pets.status());
