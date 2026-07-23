@@ -340,6 +340,25 @@ class Autopilot {
       await this._emergencyStop(key, `连续亏损 ${st.consecutiveLosses} 次，暂停等人工复核`);
       return;
     }
+    // Round 154：策略无效熔断
+    //
+    // 用户 QC 发现 StandX 网格利润(理论)+160，账户实际亏 -160，差 321 全被
+    // fees/adverse move 吃掉。原日损护栏只看今日 (dayStartEquity vs equity)，
+    // 累计几天 slow bleed 每天 <12% → 永远不熔断，累计巨亏。
+    //
+    // 补一个信号：**网格 fires 但账户在亏 = 手续费大于价差利润 → 策略无效**。
+    //   - gridProfit（理论）远大于账户变化的绝对值 = 每格赚的比不上 fees + adverse
+    //   - 且账户实际亏损值得注意（≥ startBalance × 5%）
+    // 触发即换币（跟其他熔断走同一路径：停 + 24h paused）。
+    const gp = Number(cur.stats?.gridProfit) || 0;
+    const ed = cur.equityDelta;
+    const sb = Number(cur.startBalance) || 0;
+    if (sb > 0 && Number.isFinite(ed) && ed < 0
+        && Math.abs(ed) >= sb * 0.05
+        && gp >= Math.abs(ed) * 0.5) {
+      await this._emergencyStop(key, `策略无效：网格理论利润 +${gp.toFixed(2)} 但账户实际亏 ${ed.toFixed(2)}（差 ${(gp - ed).toFixed(2)} = fees+adverse 吃掉），换币`);
+      return;
+    }
 
     // 3. Bot 已跑同一市场？V1：不换币，只在冲出区间时才干预。
     //    仅动 Autopilot 自己启动的网格；用户手动开的网格 Autopilot 绝不会 stop/reopen，

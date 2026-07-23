@@ -1201,10 +1201,10 @@ input:focus, select:focus {
       </div>
       <div id="tot-eq-tip" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:6px;background:var(--v2-panel,#111a2e);border:1px solid rgba(148,163,184,0.3);border-radius:8px;padding:10px 12px;font-size:12px;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,0.4);line-height:1.7"></div>
     </div>
-    <div class="total-card">
-      <div class="lbl">总盈亏</div>
+    <div class="total-card" title="总盈亏 = 所有 DEX 账户变化之和（equity - startBalance），反映真实账户涨跌，含 fees/资金费/冲区间实际亏/外部转账">
+      <div class="lbl">总盈亏（真实）</div>
       <div class="val" id="tot-pnl">—</div>
-      <div class="sub">已实现 <span id="tot-realized">—</span> / 未实现 <span id="tot-unrealized">—</span></div>
+      <div class="sub">网格理论 <span id="tot-realized">—</span> / 未实现 <span id="tot-unrealized">—</span></div>
     </div>
     <div class="total-card" style="position:relative;overflow:visible" onmouseover="volTipShow(true)" onmouseleave="volTipShow(false)" onclick="volTipToggle()">
       <div class="lbl">总交易量 <span style="opacity:.5;font-size:9px;font-weight:400">悬停/点击看分所</span></div>
@@ -3737,7 +3737,10 @@ function renderOverview(data) {
     if (!d) return;
     if (d.balance != null) totBalance += d.balance;
     if (d.equity != null) totEquity += d.equity;
-    if (d.totalPnl != null) totPnl += d.totalPnl;
+    // Round 154：总盈亏改用 equityDelta（真实账户变化）而不是 totalPnl（gridProfit + unreal 理论值）
+    // 用户 QC StandX gridProfit +160 但账户实际亏 -160 → 累加成"总盈亏"会大幅误导
+    // 现在 totPnl = Σ equityDelta（真实），totRealized 仍显示 gridProfit（理论）在下方对比
+    if (d.equityDelta != null) totPnl += d.equityDelta;
     if (d.realizedPnl != null) totRealized += d.realizedPnl;
     if (d.unrealizedPnl != null) totUnrealized += d.unrealizedPnl;
     if (d.volume != null) totVolume += d.volume;
