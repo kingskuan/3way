@@ -686,6 +686,22 @@ const server = http.createServer(async (request, res) => {
           }
         }));
         const apStatus = autopilot.resumeAll();
+        // Round 159：一键撤除后 race 修复
+        //   Bug: Promise.all 期间 15 min 定时 tick 会撞进来 —— 一半 bot 已停 bot.stop()
+        //   还在 async 跑，autopilot 看 cur.running=true 判"网格运行中，保持"skip；剩下
+        //   得再等 15 min 才自动重开。用户体感"一键撤除后一半没恢复"。
+        //   Fix: (1) 清 startedByAutopilot flag，避免下轮 tick 撞窗时误判"跑着"；
+        //        (2) 清 _lastTickAt，下轮 tick 立刻跑（不用等到 15 min interval 到）；
+        //        (3) 显式 fire and forget _tick()，30-60s 内 autopilot 就替用户
+        //           把 8 家重开一遍，不用等定时器。
+        try {
+          for (const k of Object.keys(bots)) {
+            const st = autopilot.state?.[k];
+            if (st) st.startedByAutopilot = false;
+          }
+          autopilot._lastTickAt = 0;
+          setImmediate(() => { autopilot._tick().catch(() => {}); });
+        } catch { /* best effort — 主流程已回结果 */ }
         return send(res, 200, { results, autopilot: apStatus });
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
     }
