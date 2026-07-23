@@ -443,6 +443,30 @@ export class GridBot {
     return this.getState();
   }
 
+  /**
+   * Round 161：轻量版基线重置 —— 只清 PnL 相关字段，保留历史 volume /
+   * buys / sells / completedRungs / volumeBaseline / fills。用于 autopilot
+   * 换市场时（Round 159 用 resetStats 太重，把用户攒了几周的 SX 15 万交易量
+   * 全清零；BU stats.volume 被 wipe 后 poll 再从 exchange 拉回 407K 但
+   * volumeBaseline 已经 0 → getState.volume=407K 假象满屏）。
+   *
+   * 只动这几个字段：
+   *   - stats.gridProfit → 0（Round 154 判断依据）
+   *   - startBalance → 当前 equity（equityDelta 从 0 起算）
+   *   - _pnlBase → 当前 realizedPnl（RISEx-style adapter 用）
+   *
+   * 保留：stats.volume, stats.volumeBaseline, stats.buys, stats.sells,
+   *       stats.completedRungs, fills[]（历史累计，跨市场不清）
+   */
+  rebaselinePnl() {
+    this.stats.gridProfit = 0;
+    this.startBalance = typeof this.ex.equity === 'number' ? this.ex.equity
+      : typeof this.ex.balance === 'number' ? this.ex.balance : this.startBalance;
+    this._pnlBase = typeof this.ex.realizedPnl === 'number' ? this.ex.realizedPnl : null;
+    this._changed();
+    return this.getState();
+  }
+
   _recomputeRisk() {
     if (!this.grid || !this.config) return;
     const mid = (this.config.lower + this.config.upper) / 2;
