@@ -3951,7 +3951,9 @@ function aiVendorChange() {
   $('ai-cfg-status').textContent = `已按 ${v.name} 预填接口地址和推荐模型（模型可下拉换或手动输入），填好 API Key 后点「保存配置」。`;
 }
 
-// Round 150：一键切 apikey.fun 模型 —— 填模型名 + 保存 + 跑测试连接
+// Round 151：一键切 apikey.fun 模型 —— 填模型名 + 保存 + 跑测试连接 + alert 结果
+// Round 150 版本用户报"点击好几个也用不了" —— 实际是测试跑了但结果显示在下面状态栏，
+// 用户看不到。改成 alert 弹窗直接告诉结果（成功/失败原因），方便排查是分组权限还是模型名错。
 async function aiPickModel(modelId, displayName) {
   $('ai-model').value = modelId;
   $('ai-model-small').value = modelId;
@@ -3962,7 +3964,22 @@ async function aiPickModel(modelId, displayName) {
   $('ai-cfg-status').textContent = `⏳ 切到 ${displayName}（${modelId}）· 保存中...`;
   await aiSaveConfig();
   $('ai-cfg-status').textContent = `⏳ 已保存 · 测试 ${displayName} 连接...`;
-  await aiTest();
+  try {
+    const r = await fetch('/api/ai/test', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const j = await r.json();
+    if (j.ok) {
+      const msg = `✅ ${displayName} 连接正常\n模型：${j.model}\n延迟：${j.ms}ms\n回复：${j.reply}`;
+      $('ai-cfg-status').textContent = `✅ ${displayName} 连接正常 · ${j.ms}ms`;
+      alert(msg);
+    } else {
+      const msg = `❌ ${displayName}（${modelId}）连接失败\n\n错误：${j.error}\n\n可能原因：\n1. apikey.fun 后台 key 的「分组」不含此模型 → 去切分组\n2. 模型 ID 不对 → 到 apikey.fun 文档查正确名字，回来手动改「主模型」字段`;
+      $('ai-cfg-status').textContent = `❌ ${displayName} 失败：${j.error}`;
+      alert(msg);
+    }
+  } catch (e) {
+    $('ai-cfg-status').textContent = '❌ 测试请求失败：' + e.message;
+    alert(`❌ 测试请求失败：${e.message}`);
+  }
 }
 const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix' };
 const AI_ACTION_LABEL = {
