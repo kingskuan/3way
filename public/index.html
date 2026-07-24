@@ -4507,14 +4507,24 @@ function apRender(s) {
       const d = overview[k] || {};
       const gp = Number(d.stats?.gridProfit) || 0;
       const ed = d.equityDelta;
+      const running = !!d.running;
       let effPct = null, status = 'na', color = 'var(--v2-mut)', icon = '⚪';
+      // Round 167：区分"未开始"（真没跑）vs"运行中等成交"（跑了但 rotate 后 rebaselinePnl 清 gp）
+      // 之前的逻辑只看 gp==0，导致 Round 166 加速 rotate 后 6/7 家刚 rotate 就显示"未开始"
+      // 用户以为 bot 没跑。看 running 状态是真相。
       if (gp > 0 && Number.isFinite(ed)) {
         effPct = (ed / gp) * 100;
         if (effPct >= 60) { status = '健康'; color = 'var(--green,#22c55e)'; icon = '🟢'; }
         else if (effPct >= 0) { status = '偏低'; color = 'var(--yel,#eab308)'; icon = '🟡'; }
         else { status = '严重亏损'; color = 'var(--red,#ef4444)'; icon = '🔴'; }
+      } else if (!running) {
+        status = '未开始';
+      } else if (gp === 0) {
+        status = '运行·等成交';
+        color = 'var(--v2-txt)';
+        icon = '🔵';
       } else {
-        status = gp === 0 ? '未开始' : 'N/A';
+        status = 'N/A';
       }
       const name = ({de:'Decibel',ex:'Extended',rs:'RISEx',on:'Ondo',pl:'Perpl',sx:'StandX',bg:'Bitget',bu:'Bitunix'})[k];
       rows.push(`
