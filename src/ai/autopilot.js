@@ -409,10 +409,13 @@ class Autopilot {
         st.startedByAutopilot = false;
       } else {
         // Round 121：30 分钟未成交 → 停 bot + 换币重选
+        // Round 164c：30 → 15 min，冷市场更快 rotate。用户要 volume 上去，
+        // 30 min 太久（QC 数据：BG LTCUSDT 59 min 才 stop-idle 一次，
+        // 一小时白挂）。15 min 相当于每 15 min 至少能换 1 次候选。
         // 用最近 fill 时间 vs 起单时间的更晚者做基准。cur.fills 已按时间倒序（fills[0] 最新）。
         const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
         const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
-        if (lastActivity > 0 && noFillMinutes >= 30) {
+        if (lastActivity > 0 && noFillMinutes >= 15) {
           this._log(key, 'stop-idle', `${cur.config.displayName} ${noFillMinutes} 分钟无成交，停网格换币重选`);
           await bot.stop({ closePosition: true }).catch(() => {});
           st.startedByAutopilot = false;
@@ -526,7 +529,20 @@ class Autopilot {
       c.score = 0;
       if (c.trend === 'range') c.score += 2;
       else c.score += 1;
-      if (c.atrPct != null && c.atrPct >= 0.5 && c.atrPct <= 3.0) c.score += 2;   // 波动率适中
+      // Round 164b：atrPct 分档打分（不再一刀切 +2）。QC 发现选到 LTCUSDT
+      // 59 分钟无成交、GOOGL-USD.P 完全不动 → 用户 volume 上不来。改成"越活跃越
+      // 加分"，1.5-4% 是网格甜蜜点（既有波动又不至于爆炸）。
+      //   atrPct 1.5-4.0%  → +4（甜蜜点）
+      //   atrPct 4.0-6.0%  → +3（波动大但可控）
+      //   atrPct 0.8-1.5%  → +2（原甜蜜点，还算能吃）
+      //   atrPct 0.3-0.8%  → +1（冷但不算死）
+      //   其他            → 0（太冷或极端波动）
+      if (c.atrPct != null) {
+        if (c.atrPct >= 1.5 && c.atrPct <= 4.0) c.score += 4;
+        else if (c.atrPct > 4.0 && c.atrPct <= 6.0) c.score += 3;
+        else if (c.atrPct >= 0.8 && c.atrPct < 1.5) c.score += 2;
+        else if (c.atrPct >= 0.3 && c.atrPct < 0.8) c.score += 1;
+      }
       if (Number(c.strength) >= 0.4 && c.recommended !== 'neutral') c.score += 3; // 强趋势加分
       // Round 140：hour1Vol 打分 —— 避开死鱼盘（Ondo ETH-USD.P 型，QC 数据显示
       // 挂网格 26 分钟一次没成交）。分档：

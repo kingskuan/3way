@@ -760,8 +760,9 @@ const server = http.createServer(async (request, res) => {
           }
           bot.stats.volume = target;
           bot.stats.volumeBaseline = 0;
+          bot.stats.volumeBaselineLocked = true;   // Round 164a：锁住不让 boot migration 覆盖
           if (typeof bot._changed === 'function') bot._changed();
-          results[k] = `set volume=$${target.toFixed(2)}, baseline=0`;
+          results[k] = `set volume=$${target.toFixed(2)}, baseline=0, locked`;
         }
         return send(res, 200, { ok: true, results });
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
@@ -1101,7 +1102,13 @@ await Promise.all([
 // baseline) = 0。以后新交易累积自动加进来。SX/EX/RS 都是 fill event 本地
 // 累积的真实数据，不做 migration。
 for (const [k, bot] of [['on', onBot], ['pl', plBot], ['bg', bgBot], ['bu', buBot]]) {
-  if (bot?.stats && (bot.stats.volumeBaseline == null || bot.stats.volumeBaseline === 0)) {
+  if (!bot?.stats) continue;
+  // Round 164a：加 volumeBaselineLocked flag。Round 162 endpoint 手设 baseline=0
+  // 是用户明确意图（"从 0 开始显示历史值"），下一次 server restart 不能再触发
+  // migration 把 baseline 推到 stats.volume 上（会导致显示归零，Round 162 效果消失）。
+  // 之前的 check 用 `== 0` 分不清"从没设"和"用户设为 0"，改成看 lock flag。
+  if (bot.stats.volumeBaselineLocked === true) continue;
+  if (bot.stats.volumeBaseline == null) {
     const old = bot.stats.volume || 0;
     if (old > 0) {
       bot.stats.volumeBaseline = old;
