@@ -414,14 +414,15 @@ class Autopilot {
         await bot.stop({ closePosition: true }).catch(() => {});
         st.startedByAutopilot = false;
       } else {
-        // Round 121：30 分钟未成交 → 停 bot + 换币重选
-        // Round 164c：30 → 15 min，冷市场更快 rotate。用户要 volume 上去，
-        // 30 min 太久（QC 数据：BG LTCUSDT 59 min 才 stop-idle 一次，
-        // 一小时白挂）。15 min 相当于每 15 min 至少能换 1 次候选。
+        // Round 121→164c→166：stop-idle timeout 30 → 15 → 10 min。
+        // 用户目标：A 档 $50-100K/家/周 = $7-14K/家/天，需要 autopilot 更频繁
+        // 换币寻找活跃市场。10 min 是安全下限（<10 rotate 开销 ~30-40s API +
+        // close fee 占比过高）。一小时 6 次换币机会。冷市场（EX/RS/ON/PL/BG
+        // 当前 0-3 rungs）能更快跳到活跃候选。
         // 用最近 fill 时间 vs 起单时间的更晚者做基准。cur.fills 已按时间倒序（fills[0] 最新）。
         const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
         const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
-        if (lastActivity > 0 && noFillMinutes >= 15) {
+        if (lastActivity > 0 && noFillMinutes >= 10) {
           this._log(key, 'stop-idle', `${cur.config.displayName} ${noFillMinutes} 分钟无成交，停网格换币重选`);
           await bot.stop({ closePosition: true }).catch(() => {});
           st.startedByAutopilot = false;
