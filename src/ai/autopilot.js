@@ -290,14 +290,20 @@ class Autopilot {
     const ex = this.exchanges[key];
     const st = this.state[key];
     let s = STYLES[this.cfg.riskStyle] || STYLES.conservative;
-    // Round 163：SX 单独降 conservative。QC 数据 MU-USD 691 rungs：
-    //   theoretical gridProfit +$107.16, actual equityDelta −$39.40 → 差 $147 = fees
-    //   $114K volume × 0.06% × 2 = $137 手续费 + ~$10 adverse. 每 rung 净亏 $0.04.
-    //   StandX 单边 fee 是 EX/BG/BU (0.02%) 的 3 倍，aggressive $30/rung 打不过。
-    //   conservative 3x lev + $6/rung + 20 格：per-rung volume ↓ 5x → 手续费 ↓ 5x，
-    //   仍有正 spread margin。EX/RS/ON/PL/BG/BU 继续走全局 aggressive。
+    // Round 163→165：SX hybrid style。
+    //   Round 163 让 SX 走 conservative（低 lev + 大 spacing 压手续费），
+    //   但副作用是 dailyLossPctLimit=2% 太严 —— SX 高 fee 慢烧，一次
+    //   rotate 换币的滑点就够亏 2%（$262 × 2% = $5）→ 熔断 → 24h 内 3
+    //   次 → auto-disable（Round 158）→ 用户手动 resume → 又熔断 → 死循环。
+    //   Round 165：SX 走 hybrid —— 保留 conservative 的低 lev + 大 spacing
+    //   （防爆仓），但放宽 dailyLossPctLimit 5% + consecutiveLossLimit 4，
+    //   给 SX 一天亏损缓冲空间，避免慢烧触发。
     if (key === 'sx' && this.cfg.riskStyle === 'aggressive') {
-      s = STYLES.conservative;
+      s = {
+        ...STYLES.conservative,
+        dailyLossPctLimit: 5,       // 2% → 5%
+        consecutiveLossLimit: 4,    // 2 → 4
+      };
     }
     const now = Date.now();
     // Round 50: 每次 tick 都刷新 lastDecisionAt，让 UI"决策时间"反映最近一次评估
