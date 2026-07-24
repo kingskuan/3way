@@ -289,7 +289,16 @@ class Autopilot {
     const bot = this.bots[key];
     const ex = this.exchanges[key];
     const st = this.state[key];
-    const s = STYLES[this.cfg.riskStyle] || STYLES.conservative;
+    let s = STYLES[this.cfg.riskStyle] || STYLES.conservative;
+    // Round 163：SX 单独降 conservative。QC 数据 MU-USD 691 rungs：
+    //   theoretical gridProfit +$107.16, actual equityDelta −$39.40 → 差 $147 = fees
+    //   $114K volume × 0.06% × 2 = $137 手续费 + ~$10 adverse. 每 rung 净亏 $0.04.
+    //   StandX 单边 fee 是 EX/BG/BU (0.02%) 的 3 倍，aggressive $30/rung 打不过。
+    //   conservative 3x lev + $6/rung + 20 格：per-rung volume ↓ 5x → 手续费 ↓ 5x，
+    //   仍有正 spread margin。EX/RS/ON/PL/BG/BU 继续走全局 aggressive。
+    if (key === 'sx' && this.cfg.riskStyle === 'aggressive') {
+      s = STYLES.conservative;
+    }
     const now = Date.now();
     // Round 50: 每次 tick 都刷新 lastDecisionAt，让 UI"决策时间"反映最近一次评估
     // 而不是最近一次 start（之前只在 start 分支更新，skip / stop / err 都不更→
@@ -540,23 +549,40 @@ class Autopilot {
     //   优势 > 3 分：允许该家吃这个币（BTC 全局最优时不牺牲质量）
     const usedMap = this._tickPickedSymbols || new Map();
     const baseOf = (name) => String(name || '').replace(/[-_/]?(usdc|usdt|usd|perp)$/i, '').replace(/[-_/]?\.p$/i, '').toUpperCase();
+    // Round 163：让币前先看剩下的 candidates 里有没有"下游 rankedList 循环能过关"
+    // 的。如果没有 —— 全都会被 hour1DropPct/hour1Vol/tick 拒掉 —— 就别让，
+    // 允许吃这个热门币。之前 BU 场景：BTC/ETH/BNB 三个热门都让给别家，剩下
+    // ADAUSDT (太冷 $44K) + XRPUSDT (tick 太粗) 全被 rejections 拒掉 → BU
+    // 整个 tick skip，15 分钟没起单。
+    const isViable = (c) => (c.hour1Vol == null || c.hour1Vol >= 50000)
+                         && (c.hour1DropPct == null || c.hour1DropPct >= -2)
+                         && Number(c.price) > 0;
     while (candidates.length > 1) {
       const top = candidates[0];
       const second = candidates[1];
       const topBase = baseOf(top.name);
       const used = usedMap.get(topBase) || 0;
       const gap = Number(top.score) - Number(second.score);
+      const hasViableAlt = candidates.slice(1).some(isViable);
       if (used >= 3) {
-        // 硬上限：跳到下一个候选
-        this._log(key, 'diversify', `${top.name}(${topBase}) 已 3 家在跑，跳过 → ${second.name}`);
-        candidates.shift();
-        continue;
+        // 硬上限：跳到下一个候选（但没 viable 替代就允许 4 家共享，防空转）
+        if (hasViableAlt) {
+          this._log(key, 'diversify', `${top.name}(${topBase}) 已 3 家在跑，跳过 → ${second.name}`);
+          candidates.shift();
+          continue;
+        }
+        this._log(key, 'diversify-override', `${top.name}(${topBase}) 3 家占满但无 viable 替代（全太冷/tick 粗），破例允许第 4 家吃`);
+        break;
       }
       if (used >= 1 && gap <= 2) {
-        // 软让：优势不明显，让给别家
-        this._log(key, 'diversify', `${top.name}(${topBase}) 已被 ${used} 家选，本家优势仅 +${gap}，让给 ${second.name}`);
-        candidates.shift();
-        continue;
+        // 软让：优势不明显，让给别家（但没 viable 替代就保留 top）
+        if (hasViableAlt) {
+          this._log(key, 'diversify', `${top.name}(${topBase}) 已被 ${used} 家选，本家优势仅 +${gap}，让给 ${second.name}`);
+          candidates.shift();
+          continue;
+        }
+        this._log(key, 'diversify-override', `${top.name}(${topBase}) 已被 ${used} 家选但让币后无 viable 替代（避免空转），保留 top`);
+        break;
       }
       break;   // top 可接受
     }
