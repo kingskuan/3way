@@ -51,8 +51,14 @@ const STYLES = {
     // fees。用户 QC 发现 15x×3%×24 每格 spacing 太小 ($81/格 BTC) 净利 $0.016
     // 打不过双向 taker fees $0.065，SX 一天 6463 fills 亏 $161。改成 5%×16 后
     // spacing $203/格 净利 $0.14 才有意义。保 15x + 0.10 fraction。
+    // Round 170：gridCount 16 → 24，冲 $1M/周 delta-neutral 目标。rangePct
+    // 保持 5%（不缩范围避免 out-of-range），24 格 × 5% = 每格 spacing 0.417%
+    // vs 双边 fees 0.04% = 净利 0.377%/格（仍大得多）。24 × 0.10 fraction ×
+    // capital / 15 lev = 16% budget，margin 依旧安全（<20% 上限）。每次价格穿越
+    // fills +50%，volume 直接 ×1.5。Delta neutral: neutral 模式 + symmetric
+    // seed，24 格更密的自动平衡结构不改变 delta 中性性。
     rangePct: 0.05,
-    gridCount: 16,
+    gridCount: 24,
     // Round 119：用户要每格 ~$30 notional。fraction 0.04 → 0.10 (×2.5)：
     //   $300 balance × 0.10 = $30/grid（EX/PL/其他）
     //   $700 Bitget × 0.10 = $70/grid（受惠更多，Bitget 高余额充分利用）
@@ -301,6 +307,10 @@ class Autopilot {
     if (key === 'sx' && this.cfg.riskStyle === 'aggressive') {
       s = {
         ...STYLES.conservative,
+        gridCount: 30,              // Round 170：conservative 20 → 30，SX 也
+                                     // 跟着冲 volume。SX 高 fee 但 conservative
+                                     // 3x lev + 小 sizeBase，30 格总 notional 仍
+                                     // <30% capital。fill 密度 +50% 拉 volume。
         dailyLossPctLimit: 8,       // Round 169：5% → 8%（SX 仍熔断中，5% 也
                                      // 打不过高 fee + 慢烧）。8% 是 conservative 2%
                                      // 与 aggressive 12% 中间挡，让 SX 少熔断多跑
