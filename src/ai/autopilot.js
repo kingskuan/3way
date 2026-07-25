@@ -578,6 +578,15 @@ class Autopilot {
         else if (c.hour1Vol > 10_000) c.score += 1;
       }
     }
+    // Round 175：BTC/ETH 强制降级 —— 用户实测 BTC-USD/BTC-USD.P/HYPE/USDC
+    // 一小时零 fills。BTC atrPct 0.2-0.5% 低于 grid spacing 0.075%（Round 174）
+    // 太多倍，不会击穿。冷家（EX/RS/ON/PL）必须挑波动市场才能出 fills。
+    // 硬 penalty: BTC/ETH 类候选 score -5 → 排到最后（除非全部候选都是 BTC/ETH）。
+    const majorLowVolCoins = /^(BTC|ETH)($|USDT|USDC|USD|PERP|\-)/i;
+    for (const c of candidates) {
+      const base = String(c.name || '').replace(/[-_/]?(usdc|usdt|usd|perp)$/i, '').toUpperCase();
+      if (['BTC', 'ETH'].includes(base)) c.score -= 5;
+    }
     candidates.sort((a, b) => b.score - a.score);
     // Round 155 C：跨 DEX 软性币种去重
     //   base = 去掉 -USD/USDT/-PERP 等后缀，例："BTCUSDT" → "BTC"
