@@ -768,6 +768,46 @@ const server = http.createServer(async (request, res) => {
       } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
     }
 
+    // Round 172：/api/volume-rate — 实时周率追踪
+    // 拉每家 bot.fills（本地缓存，最近 50 笔）算过去 X 分钟的成交额，投影到周率。
+    // 让用户部署 Round 170+171 后 1-2 小时就能验证"是否能到 $1M/周"，不用等 7 天。
+    if (p === '/api/volume-rate') {
+      try {
+        const windowMin = Math.max(5, Math.min(1440, Number(url.searchParams.get('window')) || 60));
+        const cutoff = Date.now() - windowMin * 60_000;
+        const bots = { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot };
+        const per = {};
+        let totalWindow = 0;
+        for (const [k, bot] of Object.entries(bots)) {
+          if (!bot) continue;
+          const fills = Array.isArray(bot.fills) ? bot.fills.filter((f) => (f?.t || 0) > cutoff) : [];
+          let vol = 0;
+          for (const f of fills) {
+            const price = Number(f?.price) || 0;
+            const size = Number(f?.size) || 0;
+            if (price > 0 && size > 0) vol += price * size;
+          }
+          per[k] = { fills: fills.length, volumeWindow: round2(vol), running: !!bot.running };
+          totalWindow += vol;
+        }
+        // 投影：window 内实际值 × (7*24*60 / windowMin) = 周率
+        const weekMinutes = 7 * 24 * 60;
+        const projectedWeekly = totalWindow * (weekMinutes / windowMin);
+        const target = 1_000_000;
+        const ratio = target > 0 ? projectedWeekly / target : 0;
+        return send(res, 200, {
+          windowMinutes: windowMin,
+          totalWindowVolume: round2(totalWindow),
+          projectedWeeklyVolume: round2(projectedWeekly),
+          targetWeekly: target,
+          progressPct: round2(ratio * 100),
+          onTrack: ratio >= 1.0,
+          per,
+          note: 'projectedWeeklyVolume = windowVolume × (7*24*60/windowMin). 需连续 3-5 次采样一致才有代表性。',
+        });
+      } catch (e) { return send(res, 500, { error: e?.message || String(e) }); }
+    }
+
     // ── 宠物系统 API ─────────────────────────────────────────────────────
     if (p === '/api/pets') {
       return send(res, 200, pets.status());

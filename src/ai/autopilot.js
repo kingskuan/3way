@@ -51,8 +51,15 @@ const STYLES = {
     // fees。用户 QC 发现 15x×3%×24 每格 spacing 太小 ($81/格 BTC) 净利 $0.016
     // 打不过双向 taker fees $0.065，SX 一天 6463 fills 亏 $161。改成 5%×16 后
     // spacing $203/格 净利 $0.14 才有意义。保 15x + 0.10 fraction。
+    // Round 170：gridCount 16 → 24。Round 171：24 → 32 冲 $1M/周极致 push。
+    // rangePct 保持 5%（不缩范围避免 out-of-range），32 格 × 5% = 每格 spacing
+    // 0.3125% vs 双边 fees 0.04% = 净利 0.2725%/格（仍宽裕）。
+    // 32 × 0.10 × capital / 15 = 21% budget，仍在 <25% 保证金上限内。
+    // 每次价格穿越 fills 从 16→24→32，volume 直接 ×2 vs Round 155。
+    // Delta neutral: neutral 模式 + symmetric seed，32 格更密的自动平衡结构
+    // 反而更快消化 delta drift。
     rangePct: 0.05,
-    gridCount: 16,
+    gridCount: 32,
     // Round 119：用户要每格 ~$30 notional。fraction 0.04 → 0.10 (×2.5)：
     //   $300 balance × 0.10 = $30/grid（EX/PL/其他）
     //   $700 Bitget × 0.10 = $70/grid（受惠更多，Bitget 高余额充分利用）
@@ -301,6 +308,10 @@ class Autopilot {
     if (key === 'sx' && this.cfg.riskStyle === 'aggressive') {
       s = {
         ...STYLES.conservative,
+        gridCount: 30,              // Round 170：conservative 20 → 30，SX 也
+                                     // 跟着冲 volume。SX 高 fee 但 conservative
+                                     // 3x lev + 小 sizeBase，30 格总 notional 仍
+                                     // <30% capital。fill 密度 +50% 拉 volume。
         dailyLossPctLimit: 8,       // Round 169：5% → 8%（SX 仍熔断中，5% 也
                                      // 打不过高 fee + 慢烧）。8% 是 conservative 2%
                                      // 与 aggressive 12% 中间挡，让 SX 少熔断多跑
@@ -417,15 +428,13 @@ class Autopilot {
         await bot.stop({ closePosition: true }).catch(() => {});
         st.startedByAutopilot = false;
       } else {
-        // Round 121→164c→166：stop-idle timeout 30 → 15 → 10 min。
-        // 用户目标：A 档 $50-100K/家/周 = $7-14K/家/天，需要 autopilot 更频繁
-        // 换币寻找活跃市场。10 min 是安全下限（<10 rotate 开销 ~30-40s API +
-        // close fee 占比过高）。一小时 6 次换币机会。冷市场（EX/RS/ON/PL/BG
-        // 当前 0-3 rungs）能更快跳到活跃候选。
-        // 用最近 fill 时间 vs 起单时间的更晚者做基准。cur.fills 已按时间倒序（fills[0] 最新）。
+        // Round 121→164c→166→171：stop-idle 30 → 15 → 10 → 8 min。用户 $1M/周
+        // 目标需要每家都长期跑在活跃市场，冷市场不能耽误超过 8 分钟。8 min 已接近
+        // 换币开销的下限（~30-40s API + close fee 占单次 rotation 6-8% 时间），
+        // 一小时 7-8 次换币机会。
         const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
         const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
-        if (lastActivity > 0 && noFillMinutes >= 10) {
+        if (lastActivity > 0 && noFillMinutes >= 8) {
           this._log(key, 'stop-idle', `${cur.config.displayName} ${noFillMinutes} 分钟无成交，停网格换币重选`);
           await bot.stop({ closePosition: true }).catch(() => {});
           st.startedByAutopilot = false;
@@ -575,6 +584,14 @@ class Autopilot {
     //   优势 > 3 分：允许该家吃这个币（BTC 全局最优时不牺牲质量）
     const usedMap = this._tickPickedSymbols || new Map();
     const baseOf = (name) => String(name || '').replace(/[-_/]?(usdc|usdt|usd|perp)$/i, '').replace(/[-_/]?\.p$/i, '').toUpperCase();
+    // Round 171：用户 /goal 明确"最重要 ondo & perpl & extended & risex" — 这 4 家
+    // 优先享 top 候选，不参与让币逻辑。SX/BG/BU 会看到"这些币被 priority 家占了"
+    // 主动让开，反过来加大 priority 4 拿到最活跃市场的概率。
+    const PRIORITY_KEYS = new Set(['on', 'pl', 'ex', 'rs']);
+    if (PRIORITY_KEYS.has(key)) {
+      this._log(key, 'priority', `优先家（ON/PL/EX/RS），跳过 dedup 让币直接吃 top`);
+      // 跳过整个 while，直接用 candidates[0]
+    } else {
     // Round 163：让币前先看剩下的 candidates 里有没有"下游 rankedList 循环能过关"
     // 的。如果没有 —— 全都会被 hour1DropPct/hour1Vol/tick 拒掉 —— 就别让，
     // 允许吃这个热门币。之前 BU 场景：BTC/ETH/BNB 三个热门都让给别家，剩下
@@ -612,6 +629,7 @@ class Autopilot {
       }
       break;   // top 可接受
     }
+    }  // end else (non-priority key)
     const shortlist = candidates.slice(0, 5);
 
     // 4c. AI 从 shortlist 里挑一个 + 出参数（可选，AI 挂了也能 fallback）
