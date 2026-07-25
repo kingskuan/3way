@@ -787,7 +787,7 @@ const server = http.createServer(async (request, res) => {
             const size = Number(f?.size) || 0;
             if (price > 0 && size > 0) vol += price * size;
           }
-          per[k] = { fills: fills.length, volumeWindow: round2(vol), running: !!bot.running };
+          per[k] = { fills: fills.length, volumeWindow: Math.round(vol * 100) / 100, running: !!bot.running };
           totalWindow += vol;
         }
         // 投影：window 内实际值 × (7*24*60 / windowMin) = 周率
@@ -797,10 +797,10 @@ const server = http.createServer(async (request, res) => {
         const ratio = target > 0 ? projectedWeekly / target : 0;
         return send(res, 200, {
           windowMinutes: windowMin,
-          totalWindowVolume: round2(totalWindow),
-          projectedWeeklyVolume: round2(projectedWeekly),
+          totalWindowVolume: Math.round(totalWindow * 100) / 100,
+          projectedWeeklyVolume: Math.round(projectedWeekly * 100) / 100,
           targetWeekly: target,
-          progressPct: round2(ratio * 100),
+          progressPct: Math.round(ratio * 10000) / 100,
           onTrack: ratio >= 1.0,
           per,
           note: 'projectedWeeklyVolume = windowVolume × (7*24*60/windowMin). 需连续 3-5 次采样一致才有代表性。',
