@@ -51,15 +51,17 @@ const STYLES = {
     // fees。用户 QC 发现 15x×3%×24 每格 spacing 太小 ($81/格 BTC) 净利 $0.016
     // 打不过双向 taker fees $0.065，SX 一天 6463 fills 亏 $161。改成 5%×16 后
     // spacing $203/格 净利 $0.14 才有意义。保 15x + 0.10 fraction。
-    // Round 170：gridCount 16 → 24。Round 171：24 → 32 冲 $1M/周极致 push。
-    // rangePct 保持 5%（不缩范围避免 out-of-range），32 格 × 5% = 每格 spacing
-    // 0.3125% vs 双边 fees 0.04% = 净利 0.2725%/格（仍宽裕）。
-    // 32 × 0.10 × capital / 15 = 21% budget，仍在 <25% 保证金上限内。
-    // 每次价格穿越 fills 从 16→24→32，volume 直接 ×2 vs Round 155。
-    // Delta neutral: neutral 模式 + symmetric seed，32 格更密的自动平衡结构
-    // 反而更快消化 delta drift。
-    rangePct: 0.05,
-    gridCount: 32,
+    // Round 170→171→174：gridCount 16→24→32→40, rangePct 5%→3% 极限推
+    // volume。40 × 3% = 每格 spacing 0.075% vs 双边 fees 0.04% = 净利
+    // 0.035%/格（几乎打平，但每次价格穿越 fills +150% vs Round 155）。
+    // 40 × 0.10 × capital / 15 lev = 27% budget（超保证金舒适上限，需盯）。
+    // 用户 /goal $1M/周不肯降，这是数学证否前最后一击：
+    //   现有 $1,877 capital, 平均 fee 0.04% roundtrip
+    //   $1M turnover × 0.04% = $400 fees/周 = 21% 本金/周
+    //   grid net profit 若 <21%/周 → 净亏本金
+    //   所以 $1M + delta neutral + 保本金 三选二，无解
+    rangePct: 0.03,
+    gridCount: 40,
     // Round 119：用户要每格 ~$30 notional。fraction 0.04 → 0.10 (×2.5)：
     //   $300 balance × 0.10 = $30/grid（EX/PL/其他）
     //   $700 Bitget × 0.10 = $70/grid（受惠更多，Bitget 高余额充分利用）
@@ -434,7 +436,7 @@ class Autopilot {
         // 一小时 7-8 次换币机会。
         const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
         const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
-        if (lastActivity > 0 && noFillMinutes >= 8) {
+        if (lastActivity > 0 && noFillMinutes >= 5) {
           this._log(key, 'stop-idle', `${cur.config.displayName} ${noFillMinutes} 分钟无成交，停网格换币重选`);
           await bot.stop({ closePosition: true }).catch(() => {});
           st.startedByAutopilot = false;
