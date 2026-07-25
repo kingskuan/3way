@@ -425,20 +425,27 @@ export class GridBot {
     return this.getState();
   }
 
-  /** Zero cumulative stats and re-baseline PnL to the current equity. */
+  /** Re-baseline PnL to current equity, preserve historical volume/rungs. */
   resetStats() {
-    this.stats = { buys: 0, sells: 0, completedRungs: 0, gridProfit: 0, volume: 0 };
-    this.fills = [];
+    // Round 168：改行为，只清 PnL 相关字段，保留 volume / buys / sells /
+    // completedRungs / volumeBaseline / fills。
+    // 原因：QC 发现 SX volume 从 $72,414 掉到 $5,329 = 用户按"转账后重置基线"
+    // 触发 resetStats() 把 stats.volume=0。之后 _syncExchangeStats 只能从
+    // getStats 拉 500 recent trades ≈ $5K → 历史累积永久丢失。
+    // 按钮意图"转账后 PnL 归零"用不到清 volume/rungs，这些是历史累积数据。
+    // 只清：gridProfit + startBalance + _pnlBase + backoff/cancel 计时器。
+    this.stats.gridProfit = 0;
     this._placeFails = 0;
     this._lastFailAt = 0;
-    this._refillPausedUntil = 0; this._cancelTimes = [];
+    this._refillPausedUntil = 0;
+    this._cancelTimes = [];
     this.startBalance = typeof this.ex.equity === 'number' ? this.ex.equity
       : typeof this.ex.balance === 'number' ? this.ex.balance : this.startBalance;
     // Offset-based reset: adapters like RISEx refresh realizedPnl from the
     // exchange every poll, so writing 0 into it never sticks — record a
     // baseline instead and subtract it in getState.
     this._pnlBase = typeof this.ex.realizedPnl === 'number' ? this.ex.realizedPnl : null;
-    this._alert('已重置统计：已实现盈亏、收益率、成交量、完成格数清零，并以当前权益为新基准。');
+    this._alert('已重置 PnL 基线：已实现盈亏 + 收益率清零（成交量 / 完成格数保留），以当前权益为新起点。');
     this._changed();
     return this.getState();
   }
