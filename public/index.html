@@ -3749,14 +3749,22 @@ function renderOverview(data) {
   ['de','ex','rs','on','pl','sx','bg','bu'].forEach(p => {
     const d = data[p];
     if (!d) return;
-    if (d.balance != null) totBalance += d.balance;
-    if (d.equity != null) totEquity += d.equity;
-    // Round 154：总盈亏改用 equityDelta（真实账户变化）而不是 totalPnl（gridProfit + unreal 理论值）
-    // 用户 QC StandX gridProfit +160 但账户实际亏 -160 → 累加成"总盈亏"会大幅误导
-    // 现在 totPnl = Σ equityDelta（真实），totRealized 仍显示 gridProfit（理论）在下方对比
-    if (d.equityDelta != null) totPnl += d.equityDelta;
-    if (d.realizedPnl != null) totRealized += d.realizedPnl;
-    if (d.unrealizedPnl != null) totUnrealized += d.unrealizedPnl;
+    // Round 176：balance=0 的 DEX 视为 offboarded（用户提走资金/未启用）——
+    // 不计入总盈亏 / 总权益汇总，避免 startBalance 保留但 equity=0 的差值把
+    // "总盈亏"污染成 -$700（BG+BU 提款后就是这样）。仍然算入 volume/rungs
+    // 因为那是历史累积不受当前 balance 影响。
+    const offboarded = (d.balance === 0 || d.balance == null) && (d.equity === 0 || d.equity == null);
+    if (!offboarded) {
+      if (d.balance != null) totBalance += d.balance;
+      if (d.equity != null) totEquity += d.equity;
+      // Round 154：总盈亏改用 equityDelta（真实账户变化）而不是 totalPnl（gridProfit + unreal 理论值）
+      // 用户 QC StandX gridProfit +160 但账户实际亏 -160 → 累加成"总盈亏"会大幅误导
+      // 现在 totPnl = Σ equityDelta（真实），totRealized 仍显示 gridProfit（理论）在下方对比
+      if (d.equityDelta != null) totPnl += d.equityDelta;
+      if (d.realizedPnl != null) totRealized += d.realizedPnl;
+      if (d.unrealizedPnl != null) totUnrealized += d.unrealizedPnl;
+    }
+    // volume/rungs 不受 offboard 影响：这是历史累积
     if (d.volume != null) totVolume += d.volume;
     totRungs += d.completedRungs || 0;
     if (d.running) running++;
