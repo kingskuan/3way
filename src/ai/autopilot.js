@@ -301,8 +301,11 @@ class Autopilot {
     if (key === 'sx' && this.cfg.riskStyle === 'aggressive') {
       s = {
         ...STYLES.conservative,
-        dailyLossPctLimit: 5,       // 2% → 5%
-        consecutiveLossLimit: 4,    // 2 → 4
+        dailyLossPctLimit: 8,       // Round 169：5% → 8%（SX 仍熔断中，5% 也
+                                     // 打不过高 fee + 慢烧）。8% 是 conservative 2%
+                                     // 与 aggressive 12% 中间挡，让 SX 少熔断多跑
+                                     // 提 volume，最坏亏 8% 才停。
+        consecutiveLossLimit: 5,    // 4 → 5（同理）
       };
     }
     const now = Date.now();
