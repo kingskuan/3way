@@ -799,18 +799,23 @@ const server = http.createServer(async (request, res) => {
           if (!snapshots[k]) snapshots[k] = [];
           // 保留最近 24h 快照，防内存增长
           snapshots[k] = snapshots[k].filter((s) => now - s.t < 24 * 3600_000);
-          snapshots[k].push({ t: now, vol: currentStatsVol });
-          // 找 windowMin 前的最老快照
+          // Round 183: 追加 farmIntent 快照，windowMin delta 显示 farm 主动生成的
+          // volume（不依赖 exchange getStats 是否更新）
+          const farmIntent = Number(autopilot?.state?.[k]?.farmIntentVolume) || 0;
+          snapshots[k].push({ t: now, vol: currentStatsVol, farmIntent });
           const oldSnaps = snapshots[k].filter((s) => now - s.t >= (windowMin - 1) * 60_000);
           const oldest = oldSnaps.length > 0 ? oldSnaps[0] : snapshots[k][0];
           const statsDelta = oldest ? Math.max(0, currentStatsVol - oldest.vol) : 0;
-          // 取两种统计的 max（fill-based 或 stats delta）
-          const vol = Math.max(fillVol, statsDelta);
+          const farmIntentDelta = oldest && oldest.farmIntent != null ? Math.max(0, farmIntent - oldest.farmIntent) : 0;
+          // 三取 max（fills / stats delta / farm intent delta）
+          const vol = Math.max(fillVol, statsDelta, farmIntentDelta);
           per[k] = {
             fills: fills.length,
             volumeWindow: Math.round(vol * 100) / 100,
             volumeFromFills: Math.round(fillVol * 100) / 100,
             volumeFromStatsDelta: Math.round(statsDelta * 100) / 100,
+            volumeFromFarmIntent: Math.round(farmIntentDelta * 100) / 100,
+            farmIntentTotal: Math.round(farmIntent * 100) / 100,
             running: !!bot.running,
           };
           totalWindow += vol;

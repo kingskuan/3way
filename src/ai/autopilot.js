@@ -1162,6 +1162,13 @@ class Autopilot {
     st.startedByAutopilot = true;
     if (!st.farmCycleCount) st.farmCycleCount = 0;
     st.farmCycleCount++;
+    // Round 183：intent volume 跟踪。每次 cycle 双边下单成功 → +2×notional。
+    // 独立于 exchange getStats（可能限 500 单窗口 rolling），给用户实时可信指标。
+    // 只在两边都 OK 时计数（不然是拒单不是 volume）。
+    if (!st.farmIntentVolume) st.farmIntentVolume = 0;
+    if (!buyErr && !sellErr) {
+      st.farmIntentVolume += notional * 2;
+    }
     this._log(key, 'farm-cycle', st.lastActionReason);
     // Round 180：cycle 后 sync exchange 侧的 volume → stats.volume 增长可见。
     // 之前 farm 走 ex.placeLimitOrder 不经过 bot._handleFill → stats.volume 从
