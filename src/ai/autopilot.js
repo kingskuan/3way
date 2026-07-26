@@ -1146,11 +1146,10 @@ class Autopilot {
     const now7 = Date.now() % 1_000_000_0;
 
     // Round 185: PL 用 open→close 模式（single-side + reduceOnly close），
-    // 因为 Perpl 是 netting 账户模式：t=1 (OpenLong) 后立刻 t=2 (OpenShort) 会
-    // 被 sr=43 拒（不允许同时持有长短）。改成 open long → wait → close long
-    // (reduceOnly=true → t=4 CloseLong) 拿到同样 2×notional 的 volume。
-    // 其他所（EX/RS/ON/SX）已验证 buy+sell 同开可以，保持不变。
-    const useCycleMode = (key === 'pl');
+    // 因为 Perpl 是 netting 账户模式。Round 187: 复盘 Round 185 buy 也失败
+    // (st=4 sr=43) —— 不是 netting，是 stale lastPrice 触发价格带拒单。
+    // PL 改用 market order (p=0 + ms=1000)：绕开价格问题。
+    const usePLCycle = (key === 'pl');
     const results = { buy: null, sell: null };
     try {
       const buyCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
@@ -1158,6 +1157,7 @@ class Autopilot {
         marketId, side: 'buy', price: buyPrice, sizeBase,
         reduceOnly: false, levelIndex: 0,
         clientOrderId: buyCoid, leverage: 3,
+        marketOrder: usePLCycle, maxSlippageBps: 1000,   // PL: 市价单 10% slip
       }).catch((e) => ({ error: e?.message || String(e) }));
     } catch (e) { results.buy = { error: e?.message || String(e) }; }
 
@@ -1169,8 +1169,9 @@ class Autopilot {
       const sellCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
       results.sell = await ex.placeLimitOrder({
         marketId, side: 'sell', price: sellPrice, sizeBase,
-        reduceOnly: useCycleMode, levelIndex: 0,
+        reduceOnly: usePLCycle, levelIndex: 0,   // PL: sell close long（netting 安全）
         clientOrderId: sellCoid, leverage: 3,
+        marketOrder: usePLCycle, maxSlippageBps: 1000,
       }).catch((e) => ({ error: e?.message || String(e) }));
     } catch (e) { results.sell = { error: e?.message || String(e) }; }
 
