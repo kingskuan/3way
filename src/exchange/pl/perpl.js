@@ -598,7 +598,24 @@ export class PerplExchange extends EventEmitter {
    * 发一条 mt=22 OrderRequest，用 `rq`（数字自增）做 idempotency key + 响应匹配。
    * 官方响应会是 mt=24 OrdersUpdate，orders[0].rq 回响我们发出去的 rq。
    */
-  _sendOrderRequest(payload, timeoutMs = 8000) {
+  async _sendOrderRequest(payload, timeoutMs = 8000) {
+    // Round 190: farm mode QC 发现"第一笔总 sr=43 第二笔总 OK"pattern（Round
+    // 188/189 交替试 buy-first / sell-first 都一致：first fail second OK）。
+    // 暗示 Perpl 服务端有 warmup/rq-alignment 需求。加一次 auto-retry on sr=43：
+    // 一次拒单立刻同 payload 重发（新 rq），第二次通常 OK。仅 sr=43 触发。
+    try {
+      return await this._sendOnce(payload, timeoutMs);
+    } catch (e) {
+      if (/sr=43/i.test(e?.message || '')) {
+        // 重发一次同样 payload（新 rq bump），常见 pattern 是 second OK
+        try { return await this._sendOnce(payload, timeoutMs); }
+        catch (e2) { throw e2; }
+      }
+      throw e;
+    }
+  }
+
+  _sendOnce(payload, timeoutMs = 8000) {
     if (!this._wsReady) throw new Error('Perpl trading WS 未连接，稍等重试');
     if (!this._wsAuthed) throw new Error('Perpl WS 认证未完成，稍等重试');
     if (this.accountId == null) throw new Error('Perpl accountId 未就绪（等 mt=21 消息）');
