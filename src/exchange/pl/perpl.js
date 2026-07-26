@@ -666,7 +666,17 @@ export class PerplExchange extends EventEmitter {
     // lb: 保守取 head + ttl。head=0（还没收到 heartbeat）时用 0 让服务端拒
     // 一次，我们能看到明确的 rejection 而不是永远等
     const lb = this._headBlock > 0 ? this._headBlock + this._orderTtlBlocks : 0;
-    const payload = {
+    // Round 187: 若 o.marketOrder=true → 用 p=0 + ms=slippage_bps 走市价单
+    // 语义（同 closePosition），避开 stale lastPrice 触发的 sr=43 拒单。
+    // farm mode 用得上 —— aggressive limit 常被 Perpl 判超价格带。
+    const marketOrder = !!o.marketOrder;
+    const payload = marketOrder ? {
+      mkt: marketId, t,
+      p: 0,
+      s: Math.round(Number(o.sizeBase) * sizeScale),
+      fl: 0, lv, lb,
+      ms: Number(o.maxSlippageBps || 1000),   // 默认 10% max slippage
+    } : {
       mkt: marketId, t,
       p: Math.round(Number(o.price) * priceScale),
       s: Math.round(Number(o.sizeBase) * sizeScale),
