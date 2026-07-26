@@ -224,6 +224,37 @@ export class RisexExchange extends EventEmitter {
 
   async closePosition(marketId) { return this._client.closePosition(Number(marketId)); }
 
+  /**
+   * Round 181：RISEx getStats。之前没实现 → bot._syncExchangeStats 返 null →
+   * stats.volume 永远 0（farm mode 也就永远显示 $0 volume）。
+   * RISEx SDK 通过 getFills（用户成交历史）累加 → 30d volume 上限。
+   */
+  async getStats() {
+    try {
+      const endTime = Date.now();
+      const startTime = endTime - 30 * 24 * 3600_000;
+      // 尝试 client 的 tradeHistory / getFills / listTrades 方法名
+      let list = null;
+      for (const method of ['getFills', 'tradeHistory', 'listTrades', 'listFills', 'getTradeHistory']) {
+        if (typeof this._client[method] === 'function') {
+          try {
+            const r = await this._client[method]({ startTime, endTime, limit: 500 });
+            list = Array.isArray(r) ? r : (r?.trades || r?.data || r?.result || null);
+            if (list) break;
+          } catch { /* try next */ }
+        }
+      }
+      if (!list) return null;
+      let vol = 0;
+      for (const t of list) {
+        const price = Number(t.price ?? t.avg_price ?? t.fill_price ?? 0);
+        const size = Number(t.size ?? t.qty ?? t.amount ?? t.filled_qty ?? 0);
+        if (price > 0 && size > 0) vol += price * size;
+      }
+      return { volume: Math.round(vol * 100) / 100 };
+    } catch { return null; }
+  }
+
   start() { if (!this._timer) { this._timer = setInterval(() => this._poll(), this.pollMs); this._timer.unref?.(); } }
   stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } }
 
