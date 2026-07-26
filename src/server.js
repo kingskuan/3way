@@ -776,18 +776,43 @@ const server = http.createServer(async (request, res) => {
         const windowMin = Math.max(5, Math.min(1440, Number(url.searchParams.get('window')) || 60));
         const cutoff = Date.now() - windowMin * 60_000;
         const bots = { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot };
+        // Round 182: 用 stats.volume 快照 delta 而不是 bot.fills 数组。
+        // Farm mode 不经过 bot._handleFill，bot.fills 空 → volume-rate 报 $0 假象。
+        // stats.volume 是 exchange getStats 或 fill 事件累计的真数，
+        // 保存快照 → 下次调用时算 delta = 该窗口内的真实 volume 增长。
+        if (!globalThis.__volumeSnapshots) globalThis.__volumeSnapshots = {};
+        const snapshots = globalThis.__volumeSnapshots;
+        const now = Date.now();
         const per = {};
         let totalWindow = 0;
         for (const [k, bot] of Object.entries(bots)) {
           if (!bot) continue;
           const fills = Array.isArray(bot.fills) ? bot.fills.filter((f) => (f?.t || 0) > cutoff) : [];
-          let vol = 0;
+          let fillVol = 0;
           for (const f of fills) {
             const price = Number(f?.price) || 0;
             const size = Number(f?.size) || 0;
-            if (price > 0 && size > 0) vol += price * size;
+            if (price > 0 && size > 0) fillVol += price * size;
           }
-          per[k] = { fills: fills.length, volumeWindow: Math.round(vol * 100) / 100, running: !!bot.running };
+          // Round 182: 取 stats.volume 增长做 farm 兜底
+          const currentStatsVol = Number(bot.stats?.volume) || 0;
+          if (!snapshots[k]) snapshots[k] = [];
+          // 保留最近 24h 快照，防内存增长
+          snapshots[k] = snapshots[k].filter((s) => now - s.t < 24 * 3600_000);
+          snapshots[k].push({ t: now, vol: currentStatsVol });
+          // 找 windowMin 前的最老快照
+          const oldSnaps = snapshots[k].filter((s) => now - s.t >= (windowMin - 1) * 60_000);
+          const oldest = oldSnaps.length > 0 ? oldSnaps[0] : snapshots[k][0];
+          const statsDelta = oldest ? Math.max(0, currentStatsVol - oldest.vol) : 0;
+          // 取两种统计的 max（fill-based 或 stats delta）
+          const vol = Math.max(fillVol, statsDelta);
+          per[k] = {
+            fills: fills.length,
+            volumeWindow: Math.round(vol * 100) / 100,
+            volumeFromFills: Math.round(fillVol * 100) / 100,
+            volumeFromStatsDelta: Math.round(statsDelta * 100) / 100,
+            running: !!bot.running,
+          };
           totalWindow += vol;
         }
         // 投影：window 内实际值 × (7*24*60 / windowMin) = 周率
