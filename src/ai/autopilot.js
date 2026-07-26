@@ -167,8 +167,27 @@ class Autopilot {
     // 1 分钟节拍器；实际决策频率由 decisionIntervalMin 控制。
     this._timer = setInterval(() => this._tick().catch(() => {}), 60_000);
     this._timer.unref?.();
+    // Round 178：farm 用独立 timer + 独立 busy flag，不受 grid busy 影响。
+    // grid _tick 里的 AI 调用可能 hang（无超时），会锁住 _busy → farm 也停。
+    // farm 频率 60s，跟 grid tick 分开。
+    this._farmTimer = setInterval(() => this._farmTick().catch(() => {}), 60_000);
+    this._farmTimer.unref?.();
     // 启动时立即跑一次日基线更新（如果需要）
     this._maybeRebaseline();
+  }
+
+  /** Round 178: 独立 farm tick，不共享 _busy */
+  async _farmTick() {
+    if (this._farmBusy) return;
+    this._farmBusy = true;
+    try {
+      if (!this.cfg.masterEnabled) return;
+      const farmKeys = KEYS.filter((k) => this.cfg.perExchange[k].enabled && this.cfg.perExchange[k].farmMode);
+      for (const k of farmKeys) {
+        try { await this._farmDecideForExchange(k); }
+        catch (e) { this._log(k, 'error', `farm 决策异常：${e?.message || e}`); }
+      }
+    } finally { this._farmBusy = false; }
   }
 
   status() {
@@ -247,18 +266,8 @@ class Autopilot {
       this._maybeRebaseline();
       if (!this.cfg.masterEnabled) return;
       const now = Date.now();
-      const gridReady = now - this._lastTickAt >= this.cfg.decisionIntervalMin * 60_000;
-      // Round 177：farm mode 每 tick (60s) 都跑，grid 仍每 15 min。
-      // 分开两个 loop：farm 优先，不 gate on decisionIntervalMin。
-      // 分两轮的原因：farm cycle 越频繁 volume 越高，15 min 一 cycle 只有 2 fills/家/15min。
-      // 60s 一 cycle 就是 60 fills/家/hour。
-      const farmKeys = KEYS.filter((k) => this.cfg.perExchange[k].enabled && this.cfg.perExchange[k].farmMode);
-      for (const k of farmKeys) {
-        try { await this._farmDecideForExchange(k); }
-        catch (e) { this._log(k, 'error', `farm 决策异常：${e?.message || e}`); }
-      }
-      // Grid 部分仍走原节奏（15 min）
-      if (!gridReady) return;
+      // Round 178：farm 已移到独立 _farmTick，这里只处理 grid。
+      if (now - this._lastTickAt < this.cfg.decisionIntervalMin * 60_000) return;
       this._lastTickAt = now;
       // Round 155 C：跨 DEX 币种去重计数器（每 tick 归零）
       // 每家挑选时看这个 map（baseSymbol → 已被几家选中），做软性避让 + 3 家硬上限。
