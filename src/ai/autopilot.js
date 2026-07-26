@@ -87,7 +87,15 @@ const DEFAULT_CFG = () => ({
   masterEnabled: false,
   riskStyle: 'conservative',
   decisionIntervalMin: 15,
-  perExchange: Object.fromEntries(KEYS.map((k) => [k, { enabled: false, maxCapitalUsdc: 1000 }])),
+  perExchange: Object.fromEntries(KEYS.map((k) => [k, {
+    enabled: false,
+    maxCapitalUsdc: 1000,
+    // Round 177：farm mode。true 时跳过 grid，改成周期性 buy-sell 循环生成
+    // volume（delta 中性化：每 cycle net 位 0）。airdrop 农场用。
+    farmMode: false,
+    farmNotional: 100,    // 每 cycle 每边 $ 名义值（15x lev → 每 fill $100 volume）
+    farmCycleSec: 90,     // 一 cycle 时长（buy → wait → sell）
+  }])),
 });
 
 export function createAutopilot(deps) { return new Autopilot(deps); }
@@ -185,6 +193,11 @@ class Autopilot {
         if (!p) continue;
         if (typeof p.enabled === 'boolean') c.perExchange[k].enabled = p.enabled;
         if (Number.isFinite(p.maxCapitalUsdc)) c.perExchange[k].maxCapitalUsdc = Math.max(0, Number(p.maxCapitalUsdc));
+        // Round 177 farm mode fields
+        if (typeof p.farmMode === 'boolean') c.perExchange[k].farmMode = p.farmMode;
+        if (Number.isFinite(p.farmNotional)) c.perExchange[k].farmNotional = Math.max(10, Math.min(1000, Number(p.farmNotional)));
+        if (p.farmMarketId != null) c.perExchange[k].farmMarketId = p.farmMarketId;
+        if (Number.isFinite(p.farmCycleSec)) c.perExchange[k].farmCycleSec = Math.max(30, Math.min(600, Number(p.farmCycleSec)));
       }
     }
     // 主开关从 off 切 on：清所有 pausedUntil + 日基线，相当于"用户已复核并重新开始"。
@@ -234,7 +247,18 @@ class Autopilot {
       this._maybeRebaseline();
       if (!this.cfg.masterEnabled) return;
       const now = Date.now();
-      if (now - this._lastTickAt < this.cfg.decisionIntervalMin * 60_000) return;
+      const gridReady = now - this._lastTickAt >= this.cfg.decisionIntervalMin * 60_000;
+      // Round 177：farm mode 每 tick (60s) 都跑，grid 仍每 15 min。
+      // 分开两个 loop：farm 优先，不 gate on decisionIntervalMin。
+      // 分两轮的原因：farm cycle 越频繁 volume 越高，15 min 一 cycle 只有 2 fills/家/15min。
+      // 60s 一 cycle 就是 60 fills/家/hour。
+      const farmKeys = KEYS.filter((k) => this.cfg.perExchange[k].enabled && this.cfg.perExchange[k].farmMode);
+      for (const k of farmKeys) {
+        try { await this._farmDecideForExchange(k); }
+        catch (e) { this._log(k, 'error', `farm 决策异常：${e?.message || e}`); }
+      }
+      // Grid 部分仍走原节奏（15 min）
+      if (!gridReady) return;
       this._lastTickAt = now;
       // Round 155 C：跨 DEX 币种去重计数器（每 tick 归零）
       // 每家挑选时看这个 map（baseSymbol → 已被几家选中），做软性避让 + 3 家硬上限。
@@ -253,6 +277,7 @@ class Autopilot {
       }
       for (const k of KEYS) {
         if (!this.cfg.perExchange[k].enabled) continue;
+        if (this.cfg.perExchange[k].farmMode) continue;   // farm 已在上面跑了
         try { await this._decideForExchange(k); }
         catch (e) { this._log(k, 'error', `决策异常：${e?.message || e}`); }
       }
@@ -1008,6 +1033,111 @@ class Autopilot {
       this._log(key, 'narrow-fail', `${cur.config.displayName} 收窄失败：${e?.message || e}`);
       return false;
     }
+  }
+
+  /**
+   * Round 177: Farm mode — delta neutral buy-sell 循环生成 volume。
+   *
+   * 每 tick 做一 cycle:
+   *   1. 选活跃市场（用户配置的 farmMarketId 或自动挑 top hour1Vol）
+   *   2. 市价 buy $farmNotional (下限价单，price 1% 高于市价 → 立刻吃)
+   *   3. 等 farmCycleSec/2 秒
+   *   4. 市价 sell $farmNotional * 2（关多头 + 开空头 = net -$X）
+   *   5. 等 farmCycleSec/2 秒
+   *   6. 市价 buy $farmNotional * 2（关空头 + 开多头 = net +$X）→ 循环
+   *   ...
+   *
+   * 每 cycle 产生 4 × $farmNotional volume。
+   *
+   * 简化：不追踪 position，让 exchange 自己算 net。每 tick 只 fire 一对
+   * buy-sell（$farmNotional 各一）→ 2 × $farmNotional volume/tick。
+   *
+   * 15 min tick 间隔 + $100 notional → 4 tick/hour × $200 = $800/hour = $134K/周
+   * 缩到 1 min tick + $100 → $12K/hour × 24 × 7 = $2M/周（理论上限，看 fee 够不够撑）。
+   *
+   * 但 tick 定时器现在是 15 min。Farm 需要更快节拍。用 setInterval per-家。
+   */
+  async _farmDecideForExchange(key) {
+    const ex = this.exchanges[key];
+    const st = this.state[key];
+    const cfg = this.cfg.perExchange[key];
+    const now = Date.now();
+    st.lastDecisionAt = now;
+
+    // 检查交易所健康
+    if (ex?.dataSource === 'connecting') { this._log(key, 'farm-skip', '交易所连接中'); return; }
+    if (ex?.dataSource === 'synthetic') { this._log(key, 'farm-skip', '合成行情，farm 不能跑'); return; }
+
+    // 选市场：优先用户配置的 farmMarketId，否则自动挑
+    let marketId = cfg.farmMarketId;
+    let marketMeta = null;
+    if (marketId != null && ex.markets?.get) {
+      marketMeta = ex.markets.get(Number(marketId));
+    }
+    if (!marketMeta) {
+      // 自动挑：hour1Vol 最高的（fill 概率高、slippage 少）
+      const markets = await ex.getMarkets().catch(() => []);
+      if (!markets.length) { this._log(key, 'farm-skip', '无可用市场'); return; }
+      // 取第一个有价格的作为兜底
+      marketMeta = markets.find((m) => Number(m.lastPrice) > 0) || markets[0];
+      marketId = marketMeta.marketId;
+    }
+    const price = Number(marketMeta.lastPrice);
+    if (!(price > 0)) { this._log(key, 'farm-skip', `${marketMeta.displayName} 无价格`); return; }
+
+    // 尺寸：$notional / price = base 量
+    const notional = Math.max(10, Math.min(cfg.farmNotional || 100, cfg.maxCapitalUsdc || 500));
+    const rawSize = notional / price;
+    const stepSize = Number(marketMeta.stepSize) || 1e-6;
+    const sizeBase = Math.max(marketMeta.minOrderSize || 0, Math.round(rawSize / stepSize) * stepSize);
+    if (!(sizeBase > 0)) { this._log(key, 'farm-skip', `${marketMeta.displayName} 单量为 0`); return; }
+
+    // 用 aggressive limit price 模拟 market: buy 高 1%、sell 低 1% → 立刻吃
+    const stepPrice = Number(marketMeta.stepPrice) || 0;
+    const alignPrice = (p) => stepPrice > 0 ? Math.round(p / stepPrice) * stepPrice : p;
+    const buyPrice = alignPrice(price * 1.01);
+    const sellPrice = alignPrice(price * 0.99);
+
+    // 用一个自增 coid seq 防重
+    if (!st.farmSeq) st.farmSeq = 0;
+    st.farmSeq = (st.farmSeq + 1) % 1_000_000;
+    const now7 = Date.now() % 1_000_000_0;
+
+    // Fire buy + sell 顺序执行（不并行防 rate limit）
+    const results = { buy: null, sell: null };
+    try {
+      const buyCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
+      results.buy = await ex.placeLimitOrder({
+        marketId, side: 'buy', price: buyPrice, sizeBase,
+        reduceOnly: false, levelIndex: 0,
+        clientOrderId: buyCoid, leverage: 3,
+      }).catch((e) => ({ error: e?.message || String(e) }));
+    } catch (e) { results.buy = { error: e?.message || String(e) }; }
+
+    // 短暂等，让 buy 上链
+    await new Promise((r) => setTimeout(r, 500));
+
+    try {
+      st.farmSeq = (st.farmSeq + 1) % 1_000_000;
+      const sellCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
+      results.sell = await ex.placeLimitOrder({
+        marketId, side: 'sell', price: sellPrice, sizeBase,
+        reduceOnly: false, levelIndex: 0,
+        clientOrderId: sellCoid, leverage: 3,
+      }).catch((e) => ({ error: e?.message || String(e) }));
+    } catch (e) { results.sell = { error: e?.message || String(e) }; }
+
+    st.lastAction = 'farm-cycle';
+    st.lastActionReason = `${marketMeta.displayName} · $${notional}/边 · buy=${results.buy?.error ? 'ERR' : 'OK'} sell=${results.sell?.error ? 'ERR' : 'OK'}`;
+    st.startedByAutopilot = true;
+    if (!st.farmCycleCount) st.farmCycleCount = 0;
+    st.farmCycleCount++;
+    this._log(key, 'farm-cycle', st.lastActionReason);
+    if (results.buy?.error || results.sell?.error) {
+      const err = results.buy?.error || results.sell?.error;
+      this._log(key, 'farm-err', `${marketMeta.displayName} 失败：${String(err).slice(0, 150)}`);
+    }
+    this._save();
   }
 
   async _emergencyStop(key, reason) {
