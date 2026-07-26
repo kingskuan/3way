@@ -1148,33 +1148,49 @@ class Autopilot {
     st.farmSeq = (st.farmSeq + 1) % 1_000_000;
     const now7 = Date.now() % 1_000_000_0;
 
-    // Round 188: PL exact lastPrice limit（不 marketOrder, 不 reduceOnly, 不 cross）。
-    // Round 187 marketOrder 被 sr=14 拒（Perpl 不允许市价 open）；exact limit 就算
-    // 不成交也能挂 orderbook，buy/sell 都 OK 计 intent。
-    // Round 185/187 假设都错——不是 netting、也不是价格带——先试最纯粹 exact-price
-    // limit 看接受不接受。
+    // Round 189: PL 反转顺序 — sell open short 先 → buy reduceOnly close short。
+    // Round 188 QC 显示 PL sell OK 但 buy=t=1 OpenLong 被 sr=43 拒（Perpl 账户
+    // 特殊限制 open long 方向？账户空但仍拒 t=1）。反转为：
+    //   1. sell (t=2 OpenShort) 建 short 仓
+    //   2. buy reduceOnly (t=4 CloseShort) 平 short 仓 = 净 delta 0，volume=2×
+    // 走 t=2 + t=4 都不碰 t=1 (OpenLong)，绕开拒单。
+    const usePLShortCycle = (key === 'pl');
     const results = { buy: null, sell: null };
+    // PL: sell 先，其他: buy 先。用 firstAction/secondAction 泛化
+    const firstSide = usePLShortCycle ? 'sell' : 'buy';
+    const secondSide = usePLShortCycle ? 'buy' : 'sell';
+    const secondReduceOnly = usePLShortCycle;   // PL: 第二笔 reduceOnly buy 关 short
+    const firstPrice = usePLShortCycle ? sellPrice : buyPrice;
+    const secondPrice = usePLShortCycle ? buyPrice : sellPrice;
     try {
-      const buyCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
-      results.buy = await ex.placeLimitOrder({
-        marketId, side: 'buy', price: buyPrice, sizeBase,
+      const firstCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
+      const firstRes = await ex.placeLimitOrder({
+        marketId, side: firstSide, price: firstPrice, sizeBase,
         reduceOnly: false, levelIndex: 0,
-        clientOrderId: buyCoid, leverage: 3,
+        clientOrderId: firstCoid, leverage: 3,
       }).catch((e) => ({ error: e?.message || String(e) }));
-    } catch (e) { results.buy = { error: e?.message || String(e) }; }
+      if (usePLShortCycle) results.sell = firstRes; else results.buy = firstRes;
+    } catch (e) {
+      const err = { error: e?.message || String(e) };
+      if (usePLShortCycle) results.sell = err; else results.buy = err;
+    }
 
-    // 短暂等，让 buy 上链
+    // 短暂等，让第一笔上链
     await new Promise((r) => setTimeout(r, 500));
 
     try {
       st.farmSeq = (st.farmSeq + 1) % 1_000_000;
-      const sellCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
-      results.sell = await ex.placeLimitOrder({
-        marketId, side: 'sell', price: sellPrice, sizeBase,
-        reduceOnly: false, levelIndex: 0,
-        clientOrderId: sellCoid, leverage: 3,
+      const secondCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
+      const secondRes = await ex.placeLimitOrder({
+        marketId, side: secondSide, price: secondPrice, sizeBase,
+        reduceOnly: secondReduceOnly, levelIndex: 0,
+        clientOrderId: secondCoid, leverage: 3,
       }).catch((e) => ({ error: e?.message || String(e) }));
-    } catch (e) { results.sell = { error: e?.message || String(e) }; }
+      if (usePLShortCycle) results.buy = secondRes; else results.sell = secondRes;
+    } catch (e) {
+      const err = { error: e?.message || String(e) };
+      if (usePLShortCycle) results.buy = err; else results.sell = err;
+    }
 
     // Round 179：明确暴露 error 全文让用户能诊断（之前 buy=OK 但实际 rate-limited）
     const buyErr = results.buy?.error || (results.buy?.code && results.buy.code !== 0 ? `code=${results.buy.code}` : null);
