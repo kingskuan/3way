@@ -1163,6 +1163,13 @@ class Autopilot {
     if (!st.farmCycleCount) st.farmCycleCount = 0;
     st.farmCycleCount++;
     this._log(key, 'farm-cycle', st.lastActionReason);
+    // Round 180：cycle 后 sync exchange 侧的 volume → stats.volume 增长可见。
+    // 之前 farm 走 ex.placeLimitOrder 不经过 bot._handleFill → stats.volume 从
+    // 不更新。让 bot._syncExchangeStats 拉 exchange getStats（30d volume window）
+    // 覆盖进 stats.volume，用户看到的 volume 数字才涨。
+    if (bot && typeof bot._syncExchangeStats === 'function') {
+      setImmediate(() => bot._syncExchangeStats().catch(() => {}));
+    }
     this._save();
   }
 
