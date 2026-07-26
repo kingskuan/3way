@@ -1134,9 +1134,12 @@ class Autopilot {
 
     // 用 aggressive limit price 模拟 market: buy 高 1%、sell 低 1% → 立刻吃
     // Round 184: Perpl 拒单 sr=43 疑似价格带限制。PL 用 0.2% 更紧的 cross。
+    // Round 188: PL 试 exact lastPrice (0 cross) —— Perpl orderbook 可能就在 lastPrice
+    // 附近，exact 挂单能被接受为 resting limit（buy/sell 都 OK 计 intent），
+    // 就算不成交也不会 sr=43 拒。
     const stepPrice = Number(marketMeta.stepPrice) || 0;
     const alignPrice = (p) => stepPrice > 0 ? Math.round(p / stepPrice) * stepPrice : p;
-    const crossPct = key === 'pl' ? 0.002 : 0.01;   // PL: 0.2%, 其他: 1%
+    const crossPct = key === 'pl' ? 0 : 0.01;   // PL: 0 cross（exact lastPrice）; 其他: 1%
     const buyPrice = alignPrice(price * (1 + crossPct));
     const sellPrice = alignPrice(price * (1 - crossPct));
 
@@ -1145,11 +1148,11 @@ class Autopilot {
     st.farmSeq = (st.farmSeq + 1) % 1_000_000;
     const now7 = Date.now() % 1_000_000_0;
 
-    // Round 185: PL 用 open→close 模式（single-side + reduceOnly close），
-    // 因为 Perpl 是 netting 账户模式。Round 187: 复盘 Round 185 buy 也失败
-    // (st=4 sr=43) —— 不是 netting，是 stale lastPrice 触发价格带拒单。
-    // PL 改用 market order (p=0 + ms=1000)：绕开价格问题。
-    const usePLCycle = (key === 'pl');
+    // Round 188: PL exact lastPrice limit（不 marketOrder, 不 reduceOnly, 不 cross）。
+    // Round 187 marketOrder 被 sr=14 拒（Perpl 不允许市价 open）；exact limit 就算
+    // 不成交也能挂 orderbook，buy/sell 都 OK 计 intent。
+    // Round 185/187 假设都错——不是 netting、也不是价格带——先试最纯粹 exact-price
+    // limit 看接受不接受。
     const results = { buy: null, sell: null };
     try {
       const buyCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
@@ -1157,7 +1160,6 @@ class Autopilot {
         marketId, side: 'buy', price: buyPrice, sizeBase,
         reduceOnly: false, levelIndex: 0,
         clientOrderId: buyCoid, leverage: 3,
-        marketOrder: usePLCycle, maxSlippageBps: 1000,   // PL: 市价单 10% slip
       }).catch((e) => ({ error: e?.message || String(e) }));
     } catch (e) { results.buy = { error: e?.message || String(e) }; }
 
@@ -1169,9 +1171,8 @@ class Autopilot {
       const sellCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
       results.sell = await ex.placeLimitOrder({
         marketId, side: 'sell', price: sellPrice, sizeBase,
-        reduceOnly: usePLCycle, levelIndex: 0,   // PL: sell close long（netting 安全）
+        reduceOnly: false, levelIndex: 0,
         clientOrderId: sellCoid, leverage: 3,
-        marketOrder: usePLCycle, maxSlippageBps: 1000,
       }).catch((e) => ({ error: e?.message || String(e) }));
     } catch (e) { results.sell = { error: e?.message || String(e) }; }
 
