@@ -1078,6 +1078,19 @@ class Autopilot {
     if (ex?.dataSource === 'connecting') { this._log(key, 'farm-skip', '交易所连接中'); return; }
     if (ex?.dataSource === 'synthetic') { this._log(key, 'farm-skip', '合成行情，farm 不能跑'); return; }
 
+    // Round 186：balance guard。BG/BU 用户撤资后 balance=0，farm cycle 每 60s
+    // 打一次拒单 log 污染决策面板。$0 直接 skip 并 15min 内不再重试，给用户
+    // 明确提示需要充值。避免无限循环 "buy=ERR:insufficient balance"。
+    const bal = Number(ex?.balance) || 0;
+    const minBalNeeded = Number(cfg.farmNotional || 100) / 10;   // 至少 10x 杠杆能开
+    if (bal < minBalNeeded) {
+      if (!st.lastLowBalLogAt || now - st.lastLowBalLogAt > 15 * 60_000) {
+        this._log(key, 'farm-skip', `余额 $${bal.toFixed(2)} < 需要 $${minBalNeeded.toFixed(2)}（10× 杠杆开 $${cfg.farmNotional}），充值后自动恢复`);
+        st.lastLowBalLogAt = now;
+      }
+      return;
+    }
+
     // Round 179：farm mode 打开时先停 grid bot，防止 40 挂单 grid + farm 双开
     // 导致 API 限流（429）。之前 QC 显示 EX/RS/PL 都有 40 grid orders 挂着 + farm
     // 每 60s 又 fire 2 单，超过所有交易所的 rate limit。
