@@ -1120,10 +1120,12 @@ class Autopilot {
     if (!(sizeBase > 0)) { this._log(key, 'farm-skip', `${marketMeta.displayName} 单量为 0`); return; }
 
     // 用 aggressive limit price 模拟 market: buy 高 1%、sell 低 1% → 立刻吃
+    // Round 184: Perpl 拒单 sr=43 疑似价格带限制。PL 用 0.2% 更紧的 cross。
     const stepPrice = Number(marketMeta.stepPrice) || 0;
     const alignPrice = (p) => stepPrice > 0 ? Math.round(p / stepPrice) * stepPrice : p;
-    const buyPrice = alignPrice(price * 1.01);
-    const sellPrice = alignPrice(price * 0.99);
+    const crossPct = key === 'pl' ? 0.002 : 0.01;   // PL: 0.2%, 其他: 1%
+    const buyPrice = alignPrice(price * (1 + crossPct));
+    const sellPrice = alignPrice(price * (1 - crossPct));
 
     // 用一个自增 coid seq 防重
     if (!st.farmSeq) st.farmSeq = 0;
