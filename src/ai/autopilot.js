@@ -1132,7 +1132,12 @@ class Autopilot {
     st.farmSeq = (st.farmSeq + 1) % 1_000_000;
     const now7 = Date.now() % 1_000_000_0;
 
-    // Fire buy + sell 顺序执行（不并行防 rate limit）
+    // Round 185: PL 用 open→close 模式（single-side + reduceOnly close），
+    // 因为 Perpl 是 netting 账户模式：t=1 (OpenLong) 后立刻 t=2 (OpenShort) 会
+    // 被 sr=43 拒（不允许同时持有长短）。改成 open long → wait → close long
+    // (reduceOnly=true → t=4 CloseLong) 拿到同样 2×notional 的 volume。
+    // 其他所（EX/RS/ON/SX）已验证 buy+sell 同开可以，保持不变。
+    const useCycleMode = (key === 'pl');
     const results = { buy: null, sell: null };
     try {
       const buyCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
@@ -1151,7 +1156,7 @@ class Autopilot {
       const sellCoid = Number(`${now7}${String(st.farmSeq).padStart(6, '0')}`);
       results.sell = await ex.placeLimitOrder({
         marketId, side: 'sell', price: sellPrice, sizeBase,
-        reduceOnly: false, levelIndex: 0,
+        reduceOnly: useCycleMode, levelIndex: 0,
         clientOrderId: sellCoid, leverage: 3,
       }).catch((e) => ({ error: e?.message || String(e) }));
     } catch (e) { results.sell = { error: e?.message || String(e) }; }
