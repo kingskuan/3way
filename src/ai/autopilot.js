@@ -1139,14 +1139,15 @@ class Autopilot {
     const sizeBase = Math.max(marketMeta.minOrderSize || 0, Math.round(rawSize / stepSize) * stepSize);
     if (!(sizeBase > 0)) { this._log(key, 'farm-skip', `${marketMeta.displayName} 单量为 0`); return; }
 
-    // 用 aggressive limit price 模拟 market: buy 高 1%、sell 低 1% → 立刻吃
-    // Round 184: Perpl 拒单 sr=43 疑似价格带限制。PL 用 0.2% 更紧的 cross。
-    // Round 188: PL 试 exact lastPrice (0 cross) —— Perpl orderbook 可能就在 lastPrice
-    // 附近，exact 挂单能被接受为 resting limit（buy/sell 都 OK 计 intent），
-    // 就算不成交也不会 sr=43 拒。
+    // Round 193: 全部改 exact lastPrice (0 cross) → maker limit 挂单模式。
+    // Round 192 QC 显示 RS crossPct=0.01 (taker) 仍 +$1.62/h 盈利，说明 rebate
+    // 可能覆盖 spread。改 maker 后所有家 fill 时收 rebate 而非付 taker fee，
+    // 有望把总 P&L 从 -$1.10/h 拉到接近 zero 或正。
+    // 副作用：exact-price limit 可能不成交 → intent 增速降低。若明显 volume
+    // 掉了可考虑回 0.1% 半 aggressive 折中。
     const stepPrice = Number(marketMeta.stepPrice) || 0;
     const alignPrice = (p) => stepPrice > 0 ? Math.round(p / stepPrice) * stepPrice : p;
-    const crossPct = key === 'pl' ? 0 : 0.01;   // PL: 0 cross（exact lastPrice）; 其他: 1%
+    const crossPct = 0;   // 全部 maker 模式
     const buyPrice = alignPrice(price * (1 + crossPct));
     const sellPrice = alignPrice(price * (1 - crossPct));
 
