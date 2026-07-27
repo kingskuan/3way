@@ -1082,6 +1082,13 @@ class Autopilot {
     // 打一次拒单 log 污染决策面板。$0 直接 skip 并 15min 内不再重试，给用户
     // 明确提示需要充值。避免无限循环 "buy=ERR:insufficient balance"。
     const bal = Number(ex?.balance) || 0;
+    // Round 192：farmPnl 跟踪。首次 farm 起始时 snapshot balance，之后每 cycle
+    // 计算 pnl = current - startBalance。让用户实时看到 farm mode 的成本累积
+    // （spread + fees 摩擦，理论 delta neutral 但不 zero cost）。
+    if (!st.farmStartBalance && bal > 0) {
+      st.farmStartBalance = bal;
+      st.farmStartAt = now;
+    }
     const minBalNeeded = Number(cfg.farmNotional || 100) / 10;   // 至少 10x 杠杆能开
     if (bal < minBalNeeded) {
       if (!st.lastLowBalLogAt || now - st.lastLowBalLogAt > 15 * 60_000) {
@@ -1189,6 +1196,12 @@ class Autopilot {
     if (!st.farmIntentVolume) st.farmIntentVolume = 0;
     if (!buyErr && !sellErr) {
       st.farmIntentVolume += notional * 2;
+    }
+    // Round 192：更新 farmPnl（每次 cycle 后重算 balance drift）
+    if (st.farmStartBalance) {
+      st.farmPnl = Math.round((bal - st.farmStartBalance) * 100) / 100;
+      const hours = Math.max(0.01, (now - (st.farmStartAt || now)) / 3600_000);
+      st.farmPnlPerHour = Math.round((st.farmPnl / hours) * 100) / 100;
     }
     this._log(key, 'farm-cycle', st.lastActionReason);
     // Round 180：cycle 后 sync exchange 侧的 volume → stats.volume 增长可见。
