@@ -645,6 +645,39 @@ const server = http.createServer(async (request, res) => {
     if (p === '/api/autopilot/status') {
       return send(res, 200, autopilot.status());
     }
+    // Round 194: farm-report — 每家 mode / pnl / intent 一览
+    if (p === '/api/autopilot/farm-report') {
+      const s = autopilot.status();
+      const per = {};
+      for (const [k, st] of Object.entries(s.state || {})) {
+        const cfg = s.cfg?.perExchange?.[k] || {};
+        if (!cfg.farmMode) continue;
+        per[k] = {
+          enabled: !!cfg.enabled,
+          strategy: cfg.farmModeStrategy || 'auto',
+          autoStrategyActive: st.autoFarmStrategy || null,
+          farmCycleCount: st.farmCycleCount || 0,
+          farmIntentVolume: Math.round((st.farmIntentVolume || 0) * 100) / 100,
+          farmPnl: Math.round((st.farmPnl || 0) * 100) / 100,
+          farmPnlPerHour: Math.round((st.farmPnlPerHour || 0) * 100) / 100,
+          maxFarmLossDaily: cfg.maxFarmLossDaily || 50,
+          maxFarmLossHourly: cfg.maxFarmLossHourly || 5,
+          lastAction: st.lastAction,
+          lastActionReason: (st.lastActionReason || '').slice(0, 200),
+        };
+      }
+      const totalIntent = Object.values(per).reduce((a, p) => a + p.farmIntentVolume, 0);
+      const totalPnl = Object.values(per).reduce((a, p) => a + p.farmPnl, 0);
+      const totalPnlHr = Object.values(per).reduce((a, p) => a + p.farmPnlPerHour, 0);
+      return send(res, 200, {
+        activeCount: Object.keys(per).length,
+        totalIntent: Math.round(totalIntent * 100) / 100,
+        totalPnl: Math.round(totalPnl * 100) / 100,
+        totalPnlPerHour: Math.round(totalPnlHr * 100) / 100,
+        efficiency: totalIntent > 0 ? Math.round((totalPnl / totalIntent) * 100_000) / 100 + 'bps/round-trip' : 'n/a',
+        per,
+      });
+    }
     if (p === '/api/autopilot/config' && request.method === 'POST') {
       try { return send(res, 200, autopilot.updateConfig(await readBody(request))); }
       catch (e) { return send(res, 400, { error: e?.message || String(e) }); }

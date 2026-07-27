@@ -95,6 +95,10 @@ const DEFAULT_CFG = () => ({
     farmMode: false,
     farmNotional: 100,    // 每 cycle 每边 $ 名义值（15x lev → 每 fill $100 volume）
     farmCycleSec: 90,     // 一 cycle 时长（buy → wait → sell）
+    // Round 194：farm 4 层自动化
+    farmModeStrategy: 'auto',   // 'auto' | 'aggressive' | 'moderate' | 'maker' | 'disabled'
+    maxFarmLossDaily: 50,       // 单家单日亏 > $50 → 自动 disable farm
+    maxFarmLossHourly: 5,       // pnl/h < -$5 连续 20 cycles → 换 strategy
   }])),
 });
 
@@ -217,6 +221,12 @@ class Autopilot {
         if (Number.isFinite(p.farmNotional)) c.perExchange[k].farmNotional = Math.max(10, Math.min(1000, Number(p.farmNotional)));
         if (p.farmMarketId != null) c.perExchange[k].farmMarketId = p.farmMarketId;
         if (Number.isFinite(p.farmCycleSec)) c.perExchange[k].farmCycleSec = Math.max(30, Math.min(600, Number(p.farmCycleSec)));
+        // Round 194: farm auto-strategy fields
+        if (typeof p.farmModeStrategy === 'string' && ['auto','aggressive','moderate','maker','disabled'].includes(p.farmModeStrategy)) {
+          c.perExchange[k].farmModeStrategy = p.farmModeStrategy;
+        }
+        if (Number.isFinite(p.maxFarmLossDaily)) c.perExchange[k].maxFarmLossDaily = Math.max(1, Math.min(10000, Number(p.maxFarmLossDaily)));
+        if (Number.isFinite(p.maxFarmLossHourly)) c.perExchange[k].maxFarmLossHourly = Math.max(0.1, Math.min(1000, Number(p.maxFarmLossHourly)));
       }
     }
     // 主开关从 off 切 on：清所有 pausedUntil + 日基线，相当于"用户已复核并重新开始"。
@@ -1139,15 +1149,43 @@ class Autopilot {
     const sizeBase = Math.max(marketMeta.minOrderSize || 0, Math.round(rawSize / stepSize) * stepSize);
     if (!(sizeBase > 0)) { this._log(key, 'farm-skip', `${marketMeta.displayName} 单量为 0`); return; }
 
-    // Round 193: 全部改 exact lastPrice (0 cross) → maker limit 挂单模式。
-    // Round 192 QC 显示 RS crossPct=0.01 (taker) 仍 +$1.62/h 盈利，说明 rebate
-    // 可能覆盖 spread。改 maker 后所有家 fill 时收 rebate 而非付 taker fee，
-    // 有望把总 P&L 从 -$1.10/h 拉到接近 zero 或正。
-    // 副作用：exact-price limit 可能不成交 → intent 增速降低。若明显 volume
-    // 掉了可考虑回 0.1% 半 aggressive 折中。
+    // Round 194: 4 层自动化。
+    // Layer 1: farmModeStrategy 每家可配 aggressive/moderate/maker/auto/disabled
+    // Layer 2: 'auto' → 每 20 cycles 看 pnl/h，若 < -maxFarmLossHourly 换 mode
+    // Layer 4: Circuit breaker - 单日亏 > maxFarmLossDaily 自动 disable
+    //
+    // Layer 4: 单日亏损熔断
+    if (st.farmPnl && st.farmPnl < -Number(cfg.maxFarmLossDaily || 50)) {
+      this._log(key, 'farm-disable', `单日亏 $${(-st.farmPnl).toFixed(2)} > $${cfg.maxFarmLossDaily}，自动 disable farmMode`);
+      notify(`⚠ ${EXNAMES[key]} farm 单日亏 $${(-st.farmPnl).toFixed(2)} 触发熔断，已自动关闭 farmMode`).catch(() => {});
+      this.cfg.perExchange[key].farmMode = false;
+      this._save();
+      return;
+    }
+    // Layer 1+2: 从 strategy 选 crossPct
+    const MODE_CROSS = { aggressive: 0.01, moderate: 0.001, maker: 0 };
+    let strategy = cfg.farmModeStrategy || 'auto';
+    if (strategy === 'disabled') { this._log(key, 'farm-skip', 'strategy=disabled'); return; }
+    if (strategy === 'auto') {
+      // 用 st.autoFarmStrategy 记住当前尝试；初次默认 'moderate'
+      strategy = st.autoFarmStrategy || 'moderate';
+    }
     const stepPrice = Number(marketMeta.stepPrice) || 0;
     const alignPrice = (p) => stepPrice > 0 ? Math.round(p / stepPrice) * stepPrice : p;
-    const crossPct = 0;   // 全部 maker 模式
+    const crossPct = MODE_CROSS[strategy] ?? 0.001;
+    // Layer 2: 每 20 cycles 检查 pnl/h，若太亏就轮换 strategy
+    if (cfg.farmModeStrategy === 'auto' && st.farmCycleCount >= 20 && st.farmCycleCount % 20 === 0) {
+      const pph = st.farmPnlPerHour || 0;
+      if (pph < -Number(cfg.maxFarmLossHourly || 5)) {
+        const modes = ['aggressive', 'moderate', 'maker'];
+        const cur = modes.indexOf(strategy);
+        const next = modes[(cur + 1) % modes.length];
+        st.autoFarmStrategy = next;
+        st.farmStartBalance = 0;   // reset baseline for new strategy
+        st.farmStartAt = 0;
+        this._log(key, 'farm-strategy-switch', `pnl/h $${pph.toFixed(2)} < -$${cfg.maxFarmLossHourly}，切 ${strategy}→${next}`);
+      }
+    }
     const buyPrice = alignPrice(price * (1 + crossPct));
     const sellPrice = alignPrice(price * (1 - crossPct));
 
