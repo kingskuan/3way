@@ -86,7 +86,7 @@ const STYLES = {
 const DEFAULT_CFG = () => ({
   masterEnabled: false,
   riskStyle: 'conservative',
-  decisionIntervalMin: 15,
+  decisionIntervalMin: 8,   // Round 197：15→8，让 ON 的 stop-idle rotation 更快（no-fill 5min floor + 8min tick）
   perExchange: Object.fromEntries(KEYS.map((k) => [k, {
     enabled: false,
     maxCapitalUsdc: 1000,
@@ -473,6 +473,9 @@ class Autopilot {
         this._log(key, 'stop', `${cur.config.displayName} 冲出区间，停网格准备重开`);
         await bot.stop({ closePosition: true }).catch(() => {});
         st.startedByAutopilot = false;
+        // Round 197：记冷却，30 min 内本所不再选这个市场（RS 反复挑 HYPE 就是这里堵）
+        st.stoppedMarkets = st.stoppedMarkets || {};
+        st.stoppedMarkets[cur.config.displayName] = Date.now();
       } else {
         // Round 121→164c→166→171：stop-idle 30 → 15 → 10 → 8 min。用户 $1M/周
         // 目标需要每家都长期跑在活跃市场，冷市场不能耽误超过 8 分钟。8 min 已接近
@@ -485,6 +488,9 @@ class Autopilot {
           await bot.stop({ closePosition: true }).catch(() => {});
           st.startedByAutopilot = false;
           st.startedAt = 0;
+          // Round 197：stop-idle 的市场也 30 min 冷却（ON 反复选 BTC 就是这里堵）
+          st.stoppedMarkets = st.stoppedMarkets || {};
+          st.stoppedMarkets[cur.config.displayName] = Date.now();
           // 继续往下走选币逻辑，直接重开
         } else {
           // Round 88：仍在区间内 → 检查是否需要"收窄区间"应对趋势反转。
@@ -730,9 +736,23 @@ class Autopilot {
     let pickedLeverage = s.maxLeverage;
     const rejections = [];   // 记每个候选被 skip 的原因，方便最后统一 log
 
+    // Round 197：清 30 min 之前的冷却记录（防 map 无限增长）
+    st.stoppedMarkets = st.stoppedMarkets || {};
+    const cdCutoff = now - 30 * 60_000;
+    for (const [m, t] of Object.entries(st.stoppedMarkets)) {
+      if (t < cdCutoff) delete st.stoppedMarkets[m];
+    }
+
     for (const c of rankedList) {
       const price = c.price || 0;
       if (!(price > 0)) { rejections.push(`${c.name}:无价格`); continue; }
+      // Round 197：30 min 内被 stop/stop-idle 过的市场跳过 —— RS 反复挑 HYPE 循环。
+      // 让 autopilot 强制换到 fallback 候选，即便得分低一档也比反复挑烂币好。
+      if (st.stoppedMarkets[c.name]) {
+        const agoMin = Math.round((now - st.stoppedMarkets[c.name]) / 60_000);
+        rejections.push(`${c.name}:${agoMin}min 前刚 stop，冷却中`);
+        continue;
+      }
       // Round 133：近 1h 跌 >2% 跳过这个候选（不整轮 return，往下一个试）。
       // 之前 Round 20 在 rankedList 循环外单独 check，一个候选跌就整轮 skip；
       // 结果 Bitunix 因 ADAUSDT 跌 6% 一整个 tick 都没起，剩 4 个不下跌的没试。
@@ -1318,6 +1338,7 @@ function _clearBreakerAndBaseline(st) {
   st.dayStartDate = '';
   st.dayStartMode = '';
   st.dayStartDataSource = '';
+  st.stoppedMarkets = {};         // Round 197：解除熔断时也清冷却池，让 autopilot 重新自由挑币
 }
 
 function _freshExState() {
@@ -1339,5 +1360,6 @@ function _freshExState() {
     lastNarrowAt: 0,          // Round 88 收窄区间冷却
     lastRecenterAt: 0,        // Round 155 B 自动 re-center 冷却
     startedAt: 0,             // Round 121：Autopilot 起单时间戳，用于 no-fill-timeout 计算
+    stoppedMarkets: {},       // Round 197：{marketName: stoppedAtMs}，30 分钟冷却防止连选烂币
   };
 }
