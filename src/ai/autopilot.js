@@ -763,7 +763,9 @@ class Autopilot {
       // Round 140/155：死鱼盘 skip 阈值 $5k → $50k。QC 实测 EX 起 WTI-USD
       // 后 81 分钟才 stop-idle rotate，GOOGL-USD.P、WTI-USD 等 <$50k 类
       // "非典型加密 perp" 挂网格效率极差。50k/h 相当于每格能一小时吃到 1-2 次。
-      if (c.hour1Vol != null && c.hour1Vol > 0 && c.hour1Vol < 50000) {
+      // Round 198：$50k → $20k，给 RS/ON 死鱼盘小池子放宽准入。
+      // 副作用：BNB/AMD/COIN 等 20-50k 的市场会被选中，网格效率一般但不至于死鱼。
+      if (c.hour1Vol != null && c.hour1Vol > 0 && c.hour1Vol < 20000) {
         rejections.push(`${c.name}:1h 成交仅 $${c.hour1Vol.toFixed(0)}，市场太冷`);
         continue;
       }
