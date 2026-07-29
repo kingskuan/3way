@@ -481,9 +481,13 @@ class Autopilot {
         // 目标需要每家都长期跑在活跃市场，冷市场不能耽误超过 8 分钟。8 min 已接近
         // 换币开销的下限（~30-40s API + close fee 占单次 rotation 6-8% 时间），
         // 一小时 7-8 次换币机会。
+        // Round 200：ON 死鱼盘天生慢（AMD/COIN/CRCL 一格 5-10min 才 hit），5min
+        // 阈值太紧 → 35min 换 4 次币 rungs=0，纯烧手续费。ON 用 15min 让死鱼盘
+        // 有时间成交；PL/RS 保持 5min（活跃币可以快速轮换）。
+        const noFillFloor = key === 'on' ? 15 : 5;
         const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
         const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
-        if (lastActivity > 0 && noFillMinutes >= 5) {
+        if (lastActivity > 0 && noFillMinutes >= noFillFloor) {
           this._log(key, 'stop-idle', `${cur.config.displayName} ${noFillMinutes} 分钟无成交，停网格换币重选`);
           await bot.stop({ closePosition: true }).catch(() => {});
           st.startedByAutopilot = false;
