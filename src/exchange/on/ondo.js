@@ -55,7 +55,21 @@ export class OndoExchange extends EventEmitter {
     };
   }
 
+  // Round 199：全局请求节流器。Ondo 单账户 API 大约 5-10 req/s，seed 40
+  // 单一起 fire + retry queue 并发 = burst 触发"Rate limited for account"。
+  // 用滚动 slot 让并发调用自动排队，两 slot 间距 minIntervalMs。当检测到 rate
+  // limit 时把间距动态拉长 4 倍（1s），60s 后自动恢复。
+  _acquireSlot() {
+    const now = Date.now();
+    const interval = this._rateLimitedUntil && now < this._rateLimitedUntil ? 1000 : 250;
+    const nextAt = Math.max(now, this._nextSlotAt || 0);
+    this._nextSlotAt = nextAt + interval;
+    const delay = nextAt - now;
+    return delay > 0 ? new Promise((r) => setTimeout(r, delay)) : Promise.resolve();
+  }
+
   async _req(method, path, body = null, timeoutMs = 10000) {
+    await this._acquireSlot();
     const bodyStr = body ? JSON.stringify(body) : '';
     const headers = {
       ...this._signHeaders(method, path, bodyStr),
@@ -70,6 +84,10 @@ export class OndoExchange extends EventEmitter {
     try { j = text ? JSON.parse(text) : null; } catch { /* keep null */ }
     if (!res.ok) {
       const msg = j?.error || j?.message || text.slice(0, 160) || `HTTP ${res.status}`;
+      // Round 199：检测到 rate limit → 60s 内切到 1s/req 节流
+      if (res.status === 429 || /rate.?limit/i.test(msg)) {
+        this._rateLimitedUntil = Date.now() + 60_000;
+      }
       throw new Error(`Ondo ${method} ${path} → ${msg}`);
     }
     // Ondo 统一响应结构 { success: true, result: ... }：自动解包 result 让上层代码
