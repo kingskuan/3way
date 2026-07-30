@@ -47,36 +47,20 @@ const STYLES = {
     outOfRangeAction: 'recover',
   },
   aggressive: {
-    // Round 155：rangePct 3%→5%, gridCount 24→16 —— 每格 spacing ×2.5 打得过
-    // fees。用户 QC 发现 15x×3%×24 每格 spacing 太小 ($81/格 BTC) 净利 $0.016
-    // 打不过双向 taker fees $0.065，SX 一天 6463 fills 亏 $161。改成 5%×16 后
-    // spacing $203/格 净利 $0.14 才有意义。保 15x + 0.10 fraction。
-    // Round 170→171→174：gridCount 16→24→32→40, rangePct 5%→3% 极限推
-    // volume。40 × 3% = 每格 spacing 0.075% vs 双边 fees 0.04% = 净利
-    // 0.035%/格（几乎打平，但每次价格穿越 fills +150% vs Round 155）。
-    // 40 × 0.10 × capital / 15 lev = 27% budget（超保证金舒适上限，需盯）。
-    // 用户 /goal $1M/周不肯降，这是数学证否前最后一击：
-    //   现有 $1,877 capital, 平均 fee 0.04% roundtrip
-    //   $1M turnover × 0.04% = $400 fees/周 = 21% 本金/周
-    //   grid net profit 若 <21%/周 → 净亏本金
-    //   所以 $1M + delta neutral + 保本金 三选二，无解
-    rangePct: 0.03,
-    gridCount: 40,
-    // Round 119：用户要每格 ~$30 notional。fraction 0.04 → 0.10 (×2.5)：
-    //   $300 balance × 0.10 = $30/grid（EX/PL/其他）
-    //   $700 Bitget × 0.10 = $70/grid（受惠更多，Bitget 高余额充分利用）
-    // 24 格总 notional：24 × $30 = $720 (EX/PL), 24 × $70 = $1680 (BG)
-    // 保证金占用：10x → 24%, 12x → 20%, 15x → 16%（BG 因 15x + 高余额，占 11%）
-    sizeFractionOfBalance: 0.10,
-    maxLeverage: 15,   // Round 81：用户要 15x（Round 37 是 10x, 更早 8x）。
-                       // 15x × 3% 区间边缘 = 45% 亏损，护栏 dailyLossPctLimit 必须
-                       // 放宽给 15x 网格留跑动空间。
-                       // Round 123：8% → 12%。Round 119 每格 $30 (0.10 fraction)
-                       // 让 total notional × 3x，一次 4% 反向 = 8% equity loss 就
-                       // 触发熔断（SX 03:09 就这样炸了）。12% 允许 6% 反向单边
-                       // 才熔断，对应网格走到 1/3 区间——仍在 exceed 前拦住雪崩。
-                       // 单币 maxLeverage 上限仍由 exchange 决定（很多币 <=20x）。
-    dailyLossPctLimit: 12,
+    // Round 201: 全 copy @zaijin338191 (16 天 +50% return) 策略。
+    // 核心：BTC 挂着不换币 + 80 格密网格 + 30x + 主动 re-center 保仓。
+    // - rangePct 5% (对齐他 ±3000U on BTC $63k ≈ 4.7%)
+    // - gridCount 80 (对齐他 Decibel/Extended 80 格)
+    // - fraction 0.20 (对齐他 per-grid notional/balance ≈ 0.188)
+    // - leverage 30x (对齐他)
+    // - dailyLossPct 8% (更严，30x 需更多 buffer)
+    // outOfRangeAction 保 'recover' 但配合 _maybeRecenter 提前触发（drift 3.3%）
+    // 保仓不平，让位置在震荡中自然吃掉。
+    rangePct: 0.05,
+    gridCount: 80,
+    sizeFractionOfBalance: 0.20,
+    maxLeverage: 30,
+    dailyLossPctLimit: 8,
     consecutiveLossLimit: 4,
     outOfRangeAction: 'recover',
   },
@@ -484,7 +468,9 @@ class Autopilot {
         // Round 200：ON 死鱼盘天生慢（AMD/COIN/CRCL 一格 5-10min 才 hit），5min
         // 阈值太紧 → 35min 换 4 次币 rungs=0，纯烧手续费。ON 用 15min 让死鱼盘
         // 有时间成交；PL/RS 保持 5min（活跃币可以快速轮换）。
-        const noFillFloor = key === 'on' ? 15 : 5;
+        // Round 201: 全部 60min，学 @zaijin338191 挂 BTC 不换币。stop-idle 变防呆
+        // 兜底：BTC 一小时真的无成交才认命换。正常震荡时永不换币。
+        const noFillFloor = 60;
         const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
         const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
         if (lastActivity > 0 && noFillMinutes >= noFillFloor) {
@@ -723,6 +709,16 @@ class Autopilot {
         }
       }
     } catch { /* AI 挂了没关系，走 fallback */ }
+    // Round 201: aggressive 风格强制挑 BTC —— 学 @zaijin338191 挂 BTC 不换币策略。
+    // BTC = 最深流动性 + 最稳震荡 + 无 tail risk = 网格圣杯。
+    // 匹配 BTC-PERP / BTC-USD.P / BTC/USDC / BTCUSDT 等 exchange 各自命名。
+    if (this.cfg.riskStyle === 'aggressive') {
+      const btcCandidate = shortlist.find((c) => /^BTC[-/_ .]|USDT?$|BTC$/i.test(c.name) && /^BTC/i.test(c.name));
+      if (btcCandidate) {
+        pick = btcCandidate;
+        aiReasoning = 'BTC 挂着不换（@zaijin338191 策略）';
+      }
+    }
     // 把 AI/规则选中的 pick 放到 shortlist 最前面，其他按分数留在后面作为 fallback。
     // Perpl 那种「首选 BTC 但 $210 只够 MON/SOL/ETH」的场景：主选不 afford 就依次
     // 往下试，选出第一个能塞进保证金的市场。
@@ -990,7 +986,9 @@ class Autopilot {
     if (!(price > 0) || !(upper > lower)) return false;
     const mid = (lower + upper) / 2;
     const drift = Math.abs(price - mid) / mid;
-    if (drift < 0.05) return false;   // 漂 < 5% 不动
+    // Round 201: 5% → 3.3% —— 在金 距边界 <1000/3000 就 rebalance（drift 3.17%），
+    // 主动 re-center 保仓 = 网格永远围绕当前价，避免冲出去 close 亏损
+    if (drift < 0.033) return false;
     const w = upper - lower;
     const newLower = price - w / 2;
     const newUpper = price + w / 2;
