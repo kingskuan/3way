@@ -809,6 +809,13 @@ class Autopilot {
 
       const mid = (lower + upper) / 2;
       let gridCount = gridCountBase;   // Round 156：用 regime-adjusted gridCount
+      // Round 203: 交易所硬性 open-orders/market 上限。
+      // RISEx 每个市场最多 50 单，Round 201 想开 80 格触发 "429: max open orders"
+      // + 30 单 3 次重试全失败，UI 全是 alert。硬 cap 到 50。
+      const exchangeGridCap = { rs: 50 };
+      if (exchangeGridCap[key] && gridCount > exchangeGridCap[key]) {
+        gridCount = exchangeGridCap[key];
+      }
       let required = gridCount * sizeBase * mid / leverage;
       if (required > budget) {
         const affordable = Math.floor(budget * leverage / (sizeBase * mid));
@@ -1309,7 +1316,12 @@ class Autopilot {
 // ── 工具 ────────────────────────────────────────────────────────────────────
 function _stepAlign(v, step) {
   if (!step || step <= 0) return v;
-  return Math.round(v / step) * step;
+  const aligned = Math.round(v / step) * step;
+  // Round 203: 修 IEEE 754 精度尾巴。9 * 0.0001 = 0.0009000000000000001，
+  // Ondo API 严格拒绝，返 "invalid - doesn't snap to min size increment 0.0001"。
+  // 用 toFixed 到 step 的小数位截断（step=0.0001 → 4 位）。
+  const decimals = String(step).split('.')[1]?.length || 0;
+  return Number(aligned.toFixed(decimals));
 }
 function _modeLabel(m) { return m === 'long' ? '做多' : m === 'short' ? '做空' : '中性'; }
 // 清熔断状态 + 日基线：解除熔断时必须一并清 dayStartEquity，否则历史已实现
