@@ -689,13 +689,15 @@ class Autopilot {
     // shortlist top1。AI 选币曾经的价值在 Round 109/155 用 strength 挑趋势时有意
     // 义；Round 201 后 3 家都挂 BTC 不换币，AI selector 每次都得挑 BTC —— 白白
     // 花 API cost + log 噪音。
+    // Round 204: BTC 查找从 shortlist (top-5) 扩到 candidates (全池)。RS 的
+    // BTC/USDC 可能因分数排在 6+ 位没进 shortlist，导致 fallback 到 HYPE。
     let pick = null;
     let aiReasoning = '';
     if (this.cfg.riskStyle === 'aggressive') {
-      pick = shortlist.find((c) => /^BTC/i.test(c.name));
+      pick = candidates.find((c) => /^BTC/i.test(c.name));
       aiReasoning = pick ? 'BTC 挂着不换（@zaijin338191 策略）' : '';
     }
-    // 非 aggressive 或 shortlist 里没 BTC 就用 top1 规则打分
+    // 非 aggressive 或 candidates 里没 BTC 就用 top1 规则打分
     if (!pick) {
       pick = shortlist[0];
       aiReasoning = pick ? '规则排序 top1' : '';
