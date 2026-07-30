@@ -19,7 +19,8 @@
 //        b. 让 AI 从 TOP-N 候选里挑 1 个，出 mode/range%/gridCount/reasoning
 //        c. 代码钳制所有参数到 riskStyle 定义的安全区间
 //        d. bot.start(params) 调用 → 成功则记录，失败则记 alert
-import { aiChat, extractJson, notify, getAiConfig } from './provider.js';
+// Round 202: 删掉 AI selector 后 aiChat/extractJson/getAiConfig 都不再用
+import { notify } from './provider.js';
 import { analyzeTrend } from '../trend.js';
 import { loadSnapshot, saveSnapshot } from '../persist.js';
 
@@ -70,7 +71,8 @@ const STYLES = {
 const DEFAULT_CFG = () => ({
   masterEnabled: false,
   riskStyle: 'conservative',
-  decisionIntervalMin: 8,   // Round 197：15→8，让 ON 的 stop-idle rotation 更快（no-fill 5min floor + 8min tick）
+  decisionIntervalMin: 30,  // Round 202: 8→30。挂 BTC 不换币策略下不需要密集决策；
+                            // 主动动作只剩 re-center/narrow/emergency，30 min 已足够。
   perExchange: Object.fromEntries(KEYS.map((k) => [k, {
     enabled: false,
     maxCapitalUsdc: 1000,
@@ -683,41 +685,20 @@ class Autopilot {
     }  // end else (non-priority key)
     const shortlist = candidates.slice(0, 5);
 
-    // 4c. AI 从 shortlist 里挑一个 + 出参数（可选，AI 挂了也能 fallback）
+    // Round 202: 简化 —— 删掉 AI 选币 + 规则挑币。aggressive 就是 BTC，其他保底
+    // shortlist top1。AI 选币曾经的价值在 Round 109/155 用 strength 挑趋势时有意
+    // 义；Round 201 后 3 家都挂 BTC 不换币，AI selector 每次都得挑 BTC —— 白白
+    // 花 API cost + log 噪音。
     let pick = null;
     let aiReasoning = '';
-    try {
-      const cfg = getAiConfig();
-      if (cfg.apiKey) {
-        const text = await aiChat({
-          small: true, json: true, maxTokens: 1500, temperature: 0.2,
-          system: [
-            '你是自动网格交易的 AI 选币器。从候选里挑一个最适合网格的市场。',
-            '返回 JSON：{"marketId":<数字>,"mode":"neutral|long|short","reason":"<20字内中文>"}',
-            '规则（Round 109 重写）：',
-            '① 如有候选 strength >= 0.4 且 recommended 是 long/short，优先挑它 + 用 recommended 做 mode（跟趋势）。',
-            '② 否则选 recommended=neutral 且 atrPct 0.5-3.0 的做中性网格。',
-            '③ 不确定就选第一个（分数最高的）。',
-          ].join(''),
-          messages: [{ role: 'user', content: '候选：\n' + JSON.stringify(shortlist) }],
-        });
-        const j = extractJson(text);
-        if (j && j.marketId != null) {
-          pick = shortlist.find((c) => String(c.marketId) === String(j.marketId));
-          aiReasoning = String(j.reason || '').slice(0, 80);
-          if (pick && ['neutral', 'long', 'short'].includes(j.mode)) pick._aiMode = j.mode;
-        }
-      }
-    } catch { /* AI 挂了没关系，走 fallback */ }
-    // Round 201: aggressive 风格强制挑 BTC —— 学 @zaijin338191 挂 BTC 不换币策略。
-    // BTC = 最深流动性 + 最稳震荡 + 无 tail risk = 网格圣杯。
-    // 匹配 BTC-PERP / BTC-USD.P / BTC/USDC / BTCUSDT 等 exchange 各自命名。
     if (this.cfg.riskStyle === 'aggressive') {
-      const btcCandidate = shortlist.find((c) => /^BTC[-/_ .]|USDT?$|BTC$/i.test(c.name) && /^BTC/i.test(c.name));
-      if (btcCandidate) {
-        pick = btcCandidate;
-        aiReasoning = 'BTC 挂着不换（@zaijin338191 策略）';
-      }
+      pick = shortlist.find((c) => /^BTC/i.test(c.name));
+      aiReasoning = pick ? 'BTC 挂着不换（@zaijin338191 策略）' : '';
+    }
+    // 非 aggressive 或 shortlist 里没 BTC 就用 top1 规则打分
+    if (!pick) {
+      pick = shortlist[0];
+      aiReasoning = pick ? '规则排序 top1' : '';
     }
     // 把 AI/规则选中的 pick 放到 shortlist 最前面，其他按分数留在后面作为 fallback。
     // Perpl 那种「首选 BTC 但 $210 只够 MON/SOL/ETH」的场景：主选不 afford 就依次
