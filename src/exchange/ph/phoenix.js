@@ -9,7 +9,7 @@
 //
 // 依赖 @solana/web3.js + bs58 —— 都是 Solana 官方推荐。
 import { EventEmitter } from 'events';
-import { Connection, Keypair, VersionedTransaction, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, Transaction, TransactionInstruction, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 
 const BASE_URL = 'https://perp-api.phoenix.trade';
@@ -231,28 +231,55 @@ export class PhoenixExchange extends EventEmitter {
   }
 
   async _signAndSubmitInstructions(instructionsData) {
-    // instructionsData 是 API 返回的 [{ type, data: <base64 instruction> }] 或 { instructions: [...] }
-    const arr = Array.isArray(instructionsData) ? instructionsData : instructionsData?.instructions;
+    // Round 219: Phoenix 实际返 [{ data: [byte...], keys: [{pubkey,isSigner,isWritable}], programId? }]
+    // 不是 base64 VersionedTransaction。要 build TransactionInstruction + Transaction 手工签名。
+    // place-limit-order 返 [{data,keys,programId}]
+    // cancel-all-orders 返 {data,keys,programId} (直接单对象)
+    // 也兼容 {instructions: [...]} 格式
+    let arr;
+    if (Array.isArray(instructionsData)) arr = instructionsData;
+    else if (instructionsData?.instructions) arr = instructionsData.instructions;
+    else if (instructionsData?.data && instructionsData?.keys) arr = [instructionsData];
+    else arr = null;
     if (!Array.isArray(arr) || arr.length === 0) {
-      throw new Error('Phoenix 返回的 instruction 数组为空');
+      throw new Error('Phoenix 返回的 instruction 数组为空：' + JSON.stringify(instructionsData).slice(0, 200));
     }
-    // 每个 instruction 是一个完整 signed transaction（Phoenix API 通常返 pre-built TX）
-    const results = [];
+    // 构造 legacy Transaction 一次性 submit 所有 instruction
+    const tx = new Transaction();
     for (const inst of arr) {
-      const b64 = inst.data || inst.tx || inst.transaction;
-      if (!b64) continue;
-      const txBytes = Buffer.from(b64, 'base64');
-      const tx = VersionedTransaction.deserialize(txBytes);
-      tx.sign([this._keypair]);
-      const sig = await this._solanaConn.sendTransaction(tx, {
-        skipPreflight: false,
-        maxRetries: 3,
-      });
-      // 等确认（confirmed 就 OK，finalized 太慢）
-      await this._solanaConn.confirmTransaction(sig, 'confirmed');
-      results.push(sig);
+      if (!inst.data || !Array.isArray(inst.keys)) {
+        throw new Error(`Phoenix instruction 结构异常：${JSON.stringify(inst).slice(0, 200)}`);
+      }
+      // programId 一般在 keys 里第一个 isSigner=false isWritable=false 的 pubkey，或独立字段
+      // Phoenix 返 keys 数组第 0/1 项常是 program 相关的 config，实际 programId 藏在 keys 末尾或 metadata
+      // 保守：找第一个 isWritable=false 的 pubkey 作为 programId 兜底（真 programId 会在 pkg meta 中）
+      const programIdStr = inst.programId || inst.program_id;
+      if (!programIdStr) {
+        throw new Error('Phoenix instruction 缺 programId');
+      }
+      tx.add(new TransactionInstruction({
+        keys: inst.keys.map((k) => ({
+          pubkey: new PublicKey(k.pubkey),
+          isSigner: !!k.isSigner,
+          isWritable: !!k.isWritable,
+        })),
+        programId: new PublicKey(programIdStr),
+        data: Buffer.from(inst.data),
+      }));
     }
-    return results;
+    // 拉最新 blockhash + fee payer
+    const { blockhash } = await this._solanaConn.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = this._keypair.publicKey;
+    tx.sign(this._keypair);
+    // Submit + confirm
+    const rawTx = tx.serialize();
+    const sig = await this._solanaConn.sendRawTransaction(rawTx, {
+      skipPreflight: false,
+      maxRetries: 3,
+    });
+    await this._solanaConn.confirmTransaction(sig, 'confirmed');
+    return [sig];
   }
 
   async getMarkets() {
@@ -279,14 +306,19 @@ export class PhoenixExchange extends EventEmitter {
     if (priceInTicks <= 0 || numBaseLots <= 0) {
       throw new Error(`Phoenix 单量/价格 tick 计算异常 price=${o.price} size=${o.sizeBase}`);
     }
+    // Round 219: 用 place-limit-order (cross-margin, 复用 subaccount 0 已 deposit 的 collateral)
+    // 而不是 place-isolated-limit-order（后者每次要 transfer_amount 新建 isolated subaccount，
+    // 每笔单一个 subaccount = 80 网格 80 个隔离账户，架构完全不适合网格）
+    // 字段用全 camelCase：Round 219 探到 traderPdaIndex/priceInTicks/numBaseLots
     const body = {
       authority: this._authorityPubkey,
+      traderPdaIndex: 0,
       side,
       symbol: m.displayName,
       priceInTicks,
       numBaseLots,
     };
-    const instructionsData = await this._req('POST', '/v1/ix/place-isolated-limit-order', body, true);
+    const instructionsData = await this._req('POST', '/v1/ix/place-limit-order', body, true);
     const sigs = await this._signAndSubmitInstructions(instructionsData);
     const orderId = sigs[0] || ('ph-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
     this.orders.set(orderId, {
@@ -298,9 +330,16 @@ export class PhoenixExchange extends EventEmitter {
     return { orderId };
   }
 
-  async cancelOrder(_marketId, orderId) {
-    // Phoenix cancel 也返 instruction 需要签名 submit
-    const body = { authority: this._authorityPubkey, orderId: String(orderId) };
+  async cancelOrder(marketId, orderId) {
+    // Round 219: Phoenix cancel-order 需要 orders 数组（可批量）+ traderPdaIndex
+    const m = this.markets.get(Number(marketId));
+    if (!m) return true;
+    const body = {
+      authority: this._authorityPubkey,
+      traderPdaIndex: 0,
+      symbol: m.displayName,
+      orders: [String(orderId)],
+    };
     try {
       const instructionsData = await this._req('POST', '/v1/ix/cancel-order', body, true);
       await this._signAndSubmitInstructions(instructionsData);
@@ -318,7 +357,8 @@ export class PhoenixExchange extends EventEmitter {
   async cancelAll(marketId) {
     const m = this.markets.get(Number(marketId));
     if (!m) return true;
-    const body = { authority: this._authorityPubkey, symbol: m.displayName };
+    // Round 219: cancel-all-orders 需要 traderPdaIndex
+    const body = { authority: this._authorityPubkey, traderPdaIndex: 0, symbol: m.displayName };
     try {
       const instructionsData = await this._req('POST', '/v1/ix/cancel-all-orders', body, true);
       await this._signAndSubmitInstructions(instructionsData);
