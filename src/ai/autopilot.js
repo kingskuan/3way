@@ -527,8 +527,23 @@ class Autopilot {
     //   · 1h 100 bars = 4 天多，反映中期趋势
     //   · 15m 100 bars = 25 小时，反映短线动量
     // strength 取两者平均，atrPct 用 15m（波动率更实时）。
+    // Round 220: Phoenix 62 市场按 API 顺序 top-8 是 NVDA/CRCL/DOGE/ZEC/XLM/AMZN/NEAR/ASML，
+    // BTC 在 30+ 位进不了候选池 → aggressive BTC-hold 逻辑白搭。而且股票市场（NVDA/MU/TSM/
+    // AMZN 等）Phoenix 用缩放 tick，K 线返 $835 实际 UI 显 $201，网格区间跟真价对不上。
+    // 修法：Phoenix 特殊选池 —— 强制 BTC/ETH/SOL/HYPE/DOGE 优先 + 过滤股票市场。
+    const STOCK_SYMBOLS = /^(NVDA|MU|TSM|AMZN|AAPL|GOOGL|META|CRCL|COIN|ASML|CRWV|MSTR|GOLD|WTIOIL|COST|BABA|WMT|LLY|HOOD|NFLX|UBER|MELI|PLTR|IBIT|SPX|SPY|QQQ)$/i;
+    let scanList;
+    if (key === 'ph') {
+      const crypto = markets.filter((m) => !STOCK_SYMBOLS.test(m.displayName));
+      const priority = ['BTC', 'ETH', 'SOL', 'HYPE', 'DOGE'];
+      const pri = crypto.filter((m) => priority.includes(m.displayName));
+      const rest = crypto.filter((m) => !priority.includes(m.displayName));
+      scanList = [...pri, ...rest].slice(0, 8);
+    } else {
+      scanList = markets.slice(0, 8);
+    }
     const candidates = [];
-    for (const m of markets.slice(0, 8)) {   // 限 top-8 减少 API 压力
+    for (const m of scanList) {
       try {
         const [c1h, c15m] = await Promise.all([
           ex.getCandles(m.marketId, 3600, 100).catch(() => []),
