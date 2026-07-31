@@ -125,7 +125,7 @@ const plExchange = createPlExchange(cfg.pl);
 const sxExchange = createSxExchange(cfg.sx);
 const bgExchange = createBgExchange(cfg.bg);
 const buExchange = createBuExchange(cfg.bu);
-const phExchange = createPhExchange(cfg.ph);
+const phExchange = await createPhExchange(cfg.ph);
 
 const deBot = new GridBot(deExchange, { onChange: (s) => saveSnapshot('de', s) });
 const exBot = new GridBot(exExchange, { onChange: (s) => saveSnapshot('ex', s) });
