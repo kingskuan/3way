@@ -1,7 +1,7 @@
 {
   "name": "grid-bot-all",
   "version": "1.0.0",
-  "description": "QnV · 五所整合网格交易机器人：Decibel / Extended / RISEx / Ondo / Perpl，统一仪表盘，支持同时运行五个网格策略 + AI Autopilot。",
+  "description": "QnV · 九所整合网格交易机器人：Decibel / Extended / RISEx / Ondo / Perpl / StandX / Bitget / Bitunix / Phoenix，统一仪表盘 + AI Autopilot。",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
@@ -13,13 +13,13 @@
   "dependencies": {
     "@aptos-labs/ts-sdk": "^5.2.1",
     "@decibeltrade/sdk": "^0.6.0",
-    "@solana/web3.js": "^1.95.4",
-    "bs58": "^6.0.0",
     "ethers": "^6.13.4",
     "zod": "^3.25.62",
     "undici": "^6.19.8"
   },
   "optionalDependencies": {
-    "risex-client": "^0.1.0"
+    "risex-client": "^0.1.0",
+    "@solana/web3.js": "^1.95.4",
+    "bs58": "^6.0.0"
   }
 }
