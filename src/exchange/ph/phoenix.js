@@ -69,17 +69,24 @@ export class PhoenixExchange extends EventEmitter {
   async _ensureAuth() {
     // Token 还有效则直接返回
     if (this._authToken && Date.now() < this._authTokenExpiresAt - 60_000) return;
-    // 1. 拿 nonce
-    const nonceRes = await fetch(`${BASE_URL}/v1/auth/nonce?pubkey=${this._authorityPubkey}`, {
+    // 1. 拿 nonce（字段是 wallet_pubkey，不是 pubkey；Round 213 直接打 API 探到）
+    const nonceRes = await fetch(`${BASE_URL}/v1/auth/nonce?wallet_pubkey=${this._authorityPubkey}`, {
       signal: AbortSignal.timeout(10000),
     });
-    if (!nonceRes.ok) throw new Error(`Phoenix nonce 拉取失败：HTTP ${nonceRes.status}`);
+    if (!nonceRes.ok) {
+      const t = await nonceRes.text();
+      throw new Error(`Phoenix nonce 拉取失败：HTTP ${nonceRes.status} · ${t.slice(0, 200)}`);
+    }
     const nonceData = await nonceRes.json();
-    const nonce = nonceData?.nonce || nonceData?.message;
-    if (!nonce) throw new Error(`Phoenix nonce 响应无 nonce 字段：${JSON.stringify(nonceData).slice(0, 200)}`);
-    // 2. Sign nonce with wallet keypair (ed25519)
-    // Phoenix 一般签名 message 是 UTF-8 字符串
-    const messageBytes = new TextEncoder().encode(String(nonce));
+    // Phoenix 响应：{ nonce_id, message, expires_at }
+    // 要签的是 message 完整字符串（多行：phoenix-wallet-login-v1\nwallet:xxx\nnonce:xxx\nexpires_at:xxx）
+    const nonceId = nonceData?.nonce_id;
+    const message = nonceData?.message;
+    if (!nonceId || !message) {
+      throw new Error(`Phoenix nonce 响应缺 nonce_id/message：${JSON.stringify(nonceData).slice(0, 200)}`);
+    }
+    // 2. Sign message bytes（不是 nonce_id）with wallet keypair (ed25519)
+    const messageBytes = new TextEncoder().encode(String(message));
     // @solana/web3.js Keypair 用 nacl sign，需要 nacl 库或用 tweetnacl
     // web3.js 内部就有 nacl，暴露方式是 Keypair.secretKey → sign
     // 简化：用 crypto ed25519 直接签
@@ -96,9 +103,9 @@ export class PhoenixExchange extends EventEmitter {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
-        pubkey: this._authorityPubkey,
+        wallet_pubkey: this._authorityPubkey,
         signature: bs58.encode(signature),
-        nonce: String(nonce),
+        nonce_id: nonceId,
       }),
       signal: AbortSignal.timeout(10000),
     });
@@ -121,19 +128,31 @@ export class PhoenixExchange extends EventEmitter {
         let idx = 1;
         for (const m of markets) {
           if (!m.symbol) continue;
+          if (m.marketStatus !== 'active') continue;
+          // Phoenix 字段（Round 213 直接打 API 探得）：
+          //   tickSize: 价格 tick（整数或小数，具体单位看 asset）
+          //   baseLotsDecimals: base lot 小数位（e.g. 2 → 0.01 步长）
+          //   leverageTiers: [{ maxLeverage, maxSizeBaseLots, ... }]
+          //   marketPubkey: on-chain 地址（订单/仓位 PDA seed 用）
+          const baseLotStep = Math.pow(10, -Number(m.baseLotsDecimals || 3));
+          const maxLev = Array.isArray(m.leverageTiers) && m.leverageTiers.length > 0
+            ? Number(m.leverageTiers[0].maxLeverage) || 20
+            : 20;
           const market = {
             marketId: idx,
             displayName: m.symbol,
-            symbol: String(m.symbol).replace('-PERP', ''),
-            lastPrice: Number(m.markPrice || m.price || 0),
-            minOrderSize: Number(m.minBaseLot || m.baseLotSize || 0.001),
-            stepSize: Number(m.baseLotSize || 0.001),
-            stepPrice: Number(m.priceTickSize || 0.001),
-            maxLeverage: Number(m.maxLeverage || 20),
+            symbol: String(m.symbol),   // Phoenix 用裸 symbol 无 -PERP 后缀
+            lastPrice: 0,               // 价格从 /v1/candles/{symbol} 拉，init 后 poll 更新
+            minOrderSize: baseLotStep,
+            stepSize: baseLotStep,
+            stepPrice: Number(m.tickSize) || 0.01,
+            maxLeverage: maxLev,
+            marketPubkey: m.marketPubkey,
+            takerFee: Number(m.takerFee) || 0,
+            makerFee: Number(m.makerFee) || 0,
           };
           this.markets.set(idx, market);
           this._marketSymbolToId.set(String(m.symbol), idx);
-          this.prices.set(idx, market.lastPrice);
           idx++;
         }
       }
@@ -215,24 +234,6 @@ export class PhoenixExchange extends EventEmitter {
 
   async getPrice(marketId) {
     return this.prices.get(Number(marketId)) ?? null;
-  }
-
-  async getCandles(marketId, sec, n) {
-    // Phoenix API 的 candle endpoint 未在 docs 详细列出。用 mark-price stats 兜底
-    // 或返合成 K 线让 autopilot 选币不炸
-    const price = this.prices.get(Number(marketId)) ?? 100;
-    const now = Math.floor(Date.now() / 1000);
-    const step = sec || 3600;
-    const out = [];
-    let last = price;
-    for (let i = n - 1; i >= 0; i--) {
-      const t = now - i * step;
-      const drift = (Math.random() - 0.5) * 0.006;
-      const close = last * (1 + drift);
-      out.push({ time: t, open: last, high: Math.max(last, close), low: Math.min(last, close), close, volume: 0 });
-      last = close;
-    }
-    return out;
   }
 
   async setLeverage(_marketId, _leverage) {
@@ -369,36 +370,71 @@ export class PhoenixExchange extends EventEmitter {
 
   start() {
     if (this._pollTimer) return;
+    // 首次立刻拉一批 top 市场价格（BTC/ETH/SOL 优先）
+    this._pollPrices().catch(() => {});
     this._pollTimer = setInterval(async () => {
       try {
-        // 1. 更新市场价（不需 auth）
-        const markets = await this._req('GET', '/v1/view/exchange/markets');
-        if (Array.isArray(markets)) {
-          for (const remote of markets) {
-            const id = this._marketSymbolToId.get(remote.symbol);
-            if (id != null) {
-              const p = Number(remote.markPrice || remote.price || 0);
-              if (p > 0) {
-                this.prices.set(id, p);
-                const m = this.markets.get(id);
-                if (m) m.lastPrice = p;
-                this.emit('price', { marketId: id, price: p });
-              }
-            }
-          }
-          this.lastOkAt = Date.now();
-        }
-        // 2. 每 3 次 poll 才刷 balance/positions（省 auth 调用）
+        await this._pollPrices();
+        this.lastOkAt = Date.now();
+        // 每 3 次 poll 刷 balance/positions（省 auth 调用）
         if (!this._pollCount) this._pollCount = 0;
         this._pollCount++;
-        if (this._pollCount % 3 === 0) {
+        if (this._pollCount % 3 === 0 && this._authToken) {
           await this._refreshBalance();
         }
       } catch (e) {
         this.lastError = e.message;
       }
-    }, 5000);
+    }, 10000);
     this._pollTimer.unref?.();
+  }
+
+  // Round 213: Phoenix markets endpoint 不返价格，价格从 /v1/candles/{symbol} 拉。
+  // 62 市场太多不能每 tick 全 poll，只跑一小批优先市场（Autopilot getCandles 会自己拉）。
+  async _pollPrices() {
+    // 优先 BTC/ETH/SOL/HYPE + 前 10 个市场，避免 62 req/tick 压 Phoenix API
+    const priority = ['BTC', 'ETH', 'SOL', 'HYPE', 'DOGE'];
+    const targets = new Set(priority);
+    for (const [id, m] of this.markets) {
+      if (targets.size >= 12) break;
+      targets.add(m.symbol);
+    }
+    for (const symbol of targets) {
+      const id = this._marketSymbolToId.get(symbol);
+      if (id == null) continue;
+      try {
+        const bars = await this._req('GET', `/v1/candles/${symbol}?timeframe=1m&limit=1`);
+        if (Array.isArray(bars) && bars.length > 0) {
+          const p = Number(bars[bars.length - 1].markClose || bars[bars.length - 1].close || 0);
+          if (p > 0) {
+            this.prices.set(id, p);
+            const m = this.markets.get(id);
+            if (m) m.lastPrice = p;
+            this.emit('price', { marketId: id, price: p });
+          }
+        }
+      } catch { /* 单市场失败不影响其它 */ }
+    }
+  }
+
+  async getCandles(marketId, resolutionSec, limit) {
+    const m = this.markets.get(Number(marketId));
+    if (!m) return [];
+    // Phoenix timeframe 支持：1m / 5m / 15m / 1h / 4h / 1d（Round 213 探得）
+    const tfMap = { 60: '1m', 300: '5m', 900: '15m', 3600: '1h', 14400: '4h', 86400: '1d' };
+    const tf = tfMap[Number(resolutionSec)] || '1h';
+    try {
+      const bars = await this._req('GET', `/v1/candles/${m.symbol}?timeframe=${tf}&limit=${limit || 100}`);
+      if (!Array.isArray(bars)) return [];
+      return bars.map((b) => ({
+        t: Number(b.time),
+        open: Number(b.markOpen || b.open),
+        high: Number(b.markHigh || b.high),
+        low: Number(b.markLow || b.low),
+        close: Number(b.markClose || b.close),
+        volume: Number(b.volume || 0),
+      }));
+    } catch { return []; }
   }
 
   stop() {
