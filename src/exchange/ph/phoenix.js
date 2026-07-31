@@ -114,10 +114,14 @@ export class PhoenixExchange extends EventEmitter {
       throw new Error(`Phoenix login 失败：HTTP ${loginRes.status} · ${t.slice(0, 200)}`);
     }
     const loginData = await loginRes.json();
-    this._authToken = loginData?.token || loginData?.accessToken || loginData?.bearerToken;
-    // Token TTL 假设 1 小时（响应 exp 字段没探明，保守）
-    this._authTokenExpiresAt = Date.now() + 3600_000;
-    if (!this._authToken) throw new Error(`Phoenix login 响应无 token：${JSON.stringify(loginData).slice(0, 200)}`);
+    // Phoenix 实际返 { token_type, access_token, refresh_token, expires_in, pop_key }
+    // Round 216: 探到真字段是 access_token (下划线)，之前找 token/accessToken/bearerToken
+    // 全空 → 抛"响应无 token" → dataSource=real-readonly。加真字段名。
+    this._authToken = loginData?.access_token || loginData?.accessToken || loginData?.token || loginData?.bearerToken;
+    // expires_in 是秒（900 = 15 min），刷新前 60s 视为过期
+    const expiresInSec = Number(loginData?.expires_in) || 3600;
+    this._authTokenExpiresAt = Date.now() + expiresInSec * 1000;
+    if (!this._authToken) throw new Error(`Phoenix login 响应无 access_token：${JSON.stringify(loginData).slice(0, 200)}`);
   }
 
   async init() {
