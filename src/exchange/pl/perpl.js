@@ -520,7 +520,12 @@ export class PerplExchange extends EventEmitter {
           this._pendingReplies.delete(rq);
           clearTimeout(pending.timer);
           if (rejected) {
-            pending.reject(new Error(`Perpl 拒单 st=${o.st ?? '?'} sr=${o.sr ?? '?'}${o.err ? ` err=${o.err}` : ''}`));
+            // Round 207: 拒单信息加 payload 细节 + sr 语义推测，帮定位未文档化拒单码
+            const p = pending.payload || {};
+            const sideStr = p.t === 1 ? 'openLong' : p.t === 2 ? 'openShort' : p.t === 3 ? 'closeLong' : p.t === 4 ? 'closeShort' : p.t === 5 ? 'cancel' : `t=${p.t}`;
+            const paramStr = `[${sideStr} p=${p.p} s=${p.s} lb=${p.lb} lv=${p.lv}]`;
+            const hint = this._srHint(o.sr);
+            pending.reject(new Error(`Perpl 拒单 st=${o.st ?? '?'} sr=${o.sr ?? '?'} (${hint}) ${paramStr}${o.err ? ` err=${o.err}` : ''}`));
           } else {
             pending.resolve({ orderId: oid });
           }
@@ -631,7 +636,9 @@ export class PerplExchange extends EventEmitter {
         this._pendingReplies.delete(rq);
         reject(new Error(`Perpl WS 请求超时（rq=${rq}, mt=22）`));
       }, timeoutMs);
-      this._pendingReplies.set(rq, { resolve, reject, timer });
+      // Round 207: 把 payload 存进 pending 里，reject 时可以带 payload 细节回来
+      // 帮助定位 sr=1 类未文档化拒单码的 root cause（价格、数量、方向、lb）。
+      this._pendingReplies.set(rq, { resolve, reject, timer, payload });
       try { this._ws.send(JSON.stringify(msg)); }
       catch (e) {
         this._pendingReplies.delete(rq);
@@ -639,6 +646,25 @@ export class PerplExchange extends EventEmitter {
         reject(new Error(`Perpl WS 发送失败：${e.message}`));
       }
     });
+  }
+
+  // Round 207: Perpl sr 拒单码 → 人可读推测。官方文档缺失，基于观察 + 交易所常识
+  // 归纳。sr=1 频繁出现在 reduceOnly close order 上，最可能是 "reduce-only violation"
+  // (position 已被其他成交先关掉 → 后到的 close order 变成会 open 反向仓 → 拒).
+  _srHint(sr) {
+    const codes = {
+      1: 'reduce-only 违规？(仓位已平/方向不对，close 单变 open)',
+      2: '价格 tick 无效？',
+      3: '数量 tick 无效？',
+      4: '保证金不足？',
+      5: '仓位限额？',
+      6: '重复订单/价格冲突？',
+      7: 'post-only 会立即成交？',
+      8: 'lb 已过期 (last-block ttl)？',
+      32: 'rq 未大于服务端 lfr（Round 22）',
+      43: 'warmup/first-request（Round 190）',
+    };
+    return codes[sr] || '未知';
   }
 
   // ── GridBot 接口 ────────────────────────────────────────────────────────
