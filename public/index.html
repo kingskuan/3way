@@ -34,6 +34,7 @@
   --sx-color: #14b8a6;   /* StandX: 青绿 */
   --bg-color: #f97316;   /* Bitget: 橙 */
   --bu-color: #8b5cf6;   /* Bitunix: 紫（跟 pl 淡紫错开，更深） */
+  --ph-color: #f472b6;   /* Phoenix: 粉（凤凰浴火色，跟其他家色区分足够） */
   --de-bg: #f59e0b18;
   --ex-bg: #3b82f618;
   --rs-bg: #22c55e18;
@@ -42,6 +43,7 @@
   --sx-bg: #14b8a618;
   --bg-bg: #f9731618;
   --bu-bg: #8b5cf618;
+  --ph-bg: #f472b618;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -1158,6 +1160,7 @@ input:focus, select:focus {
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-sx-dot"></span><span id="hdr-sx" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">SX: PAPER</span></div>
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-bg-dot"></span><span id="hdr-bg" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">BG: PAPER</span></div>
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-bu-dot"></span><span id="hdr-bu" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">BU: PAPER</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-ph-dot"></span><span id="hdr-ph" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">PH: PAPER</span></div>
     </div>
   </div>
   <div class="header-right">
@@ -1178,6 +1181,7 @@ input:focus, select:focus {
   <button class="tab-btn" onclick="switchTab('sx')"><span style="color:var(--v2-mut)">●</span> StandX</button>
   <button class="tab-btn" onclick="switchTab('bg')"><span style="color:var(--bg-color)">●</span> Bitget</button>
   <button class="tab-btn" onclick="switchTab('bu')"><span style="color:var(--bu-color)">●</span> Bitunix</button>
+  <button class="tab-btn" onclick="switchTab('ph')"><span style="color:var(--ph-color)">●</span> Phoenix</button>
   <button class="tab-btn" onclick="switchTab('autopilot')">🚀 Autopilot</button>
   <button class="tab-btn" onclick="switchTab('ai')">🤖 AI</button>
   <button class="tab-btn" onclick="switchTab('settings')">⚙ IP配置</button>
@@ -1444,6 +1448,32 @@ input:focus, select:focus {
       <div id="ov-bu-ai" class="ai-box muted" style="display:none;margin-top:8px;font-size:12px"></div>
       <div id="ov-bu-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
       <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="switchTab('bu')">进入 Bitunix 控制台 →</button>
+    </div>
+
+    <!-- Phoenix (Round 214 · 第 9 家) -->
+    <div class="ov-card ph">
+      <div class="ov-exname" style="color:var(--ph-color)">
+        <span class="run-dot" id="ov-ph-dot"></span>
+        Phoenix · USDT-M 永续
+        <span id="ov-ph-badge" class="badge badge-paper" style="margin-left:auto">PAPER</span>
+      </div>
+      <div id="ov-ph-health" class="exhealth eh-idle">—</div>
+      <div class="ov-pnl" id="ov-ph-pnl">—</div>
+      <div class="ov-sub" id="ov-ph-ret">收益率 —</div>
+      <div style="margin-top:10px">
+        <div class="ov-stat"><span class="lbl">余额</span><span class="val" id="ov-ph-bal">—</span></div>
+        <div class="ov-stat"><span class="lbl">权益</span><span class="val" id="ov-ph-eq">—</span></div>
+        <div class="ov-stat"><span class="lbl">已实现</span><span class="val" id="ov-ph-rpnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">未实现</span><span class="val" id="ov-ph-upnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">交易量</span><span class="val" id="ov-ph-vol">—</span></div>
+        <div class="ov-stat"><span class="lbl">完成网格</span><span class="val" id="ov-ph-rungs">—</span></div>
+        <div class="ov-stat"><span class="lbl">最新价</span><span class="val" id="ov-ph-price">—</span></div>
+        <div class="ov-stat"><span class="lbl">当前市场</span><span class="val" id="ov-ph-mkt">—</span></div>
+      </div>
+      <div id="ov-ph-gridcfg" class="gridcfg" style="display:none"></div>
+      <div id="ov-ph-ai" class="ai-box muted" style="display:none;margin-top:8px;font-size:12px"></div>
+      <div id="ov-ph-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
+      <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="switchTab('ph')">进入 Phoenix 控制台 →</button>
     </div>
   </div>
 
@@ -2496,6 +2526,137 @@ input:focus, select:focus {
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Phoenix (Round 214 · 完整控制台，跟 Bitunix 结构一致) -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div id="tab-ph" class="tab-panel">
+<div class="wrap">
+<div class="grid-left-right">
+  <div>
+    <div class="panel ph pet-card" id="ph-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
+    <div class="panel ph" style="margin-bottom:14px">
+      <div class="panel-title" style="color:var(--v2-txt,#e2e8f0)">Phoenix · 市场与趋势</div>
+      <label>交易对</label>
+      <select id="ph-market"></select>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>K线周期</label>
+          <select id="ph-interval">
+            <option value="900">15m</option>
+            <option value="3600" selected>1h</option>
+            <option value="14400">4h</option>
+            <option value="86400">1d</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-ghost" style="margin:0;padding:7px" id="ph-refresh-trend">刷新</button>
+        </div>
+      </div>
+      <div style="margin-top:10px" id="ph-rec-box" class="rec-box rec-range">
+        <div class="muted">趋势分析</div>
+        <div class="rec-tag" id="ph-rec-tag">分析中…</div>
+        <div class="rec-detail" id="ph-rec-detail">—</div>
+        <button class="btn btn-ghost" style="margin-top:8px;padding:6px;font-size:12px" id="ph-apply-rec">采用推荐策略 + 自动区间</button>
+      </div>
+      <div class="muted" style="margin-top:10px;font-size:11px;line-height:1.6">
+        💡 Phoenix 是永续合约 DEX/CEX，USDT-M 永续（BTC/ETH/SOL 等主流币），结算币 <code>USDT</code>。<br>
+        ⚠️ 实盘 <code>PH_MODE=live</code> 需要 <code>PH_API_KEY</code> + <code>PH_API_SECRET</code>（Phoenix → API Management）。<br>
+        ✅ Round 214：LIVE 已接入（REST + 下单/撤单/平仓/杠杆/持仓/K线）。Autopilot 可托管。
+      </div>
+    </div>
+
+    <div class="panel ph">
+      <div class="panel-title" style="color:var(--v2-txt,#e2e8f0)">Phoenix · 策略配置</div>
+      <label>网格类型</label>
+      <div class="modes" id="ph-modes">
+        <div class="mode-btn sel" data-mode="neutral">中性<small>双向震荡</small></div>
+        <div class="mode-btn" data-mode="long">做多<small>低买高止</small></div>
+        <div class="mode-btn" data-mode="short">做空<small>高空低止</small></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+        <span class="muted">风格</span>
+        <div class="risk-toggle" id="ph-risk-toggle">
+          <span class="risk-btn sel" data-risk="steady">稳健</span>
+          <span class="risk-btn" data-risk="aggressive">激进</span>
+        </div>
+        <span class="muted" id="ph-risk-hint">成交少·更安全</span>
+      </div>
+      <button class="btn btn-smart" id="ph-smart-fill">🎯 智能填充参数</button>
+      <div class="muted" id="ph-smart-note" style="margin:5px 0 2px"></div>
+      <div class="row">
+        <div><label>下边界</label><input id="ph-lower" type="number" step="any"></div>
+        <div><label>上边界</label><input id="ph-upper" type="number" step="any"></div>
+      </div>
+      <div class="row">
+        <div><label>网格数量</label><input id="ph-grid-count" type="number" value="20" min="2"></div>
+        <div><label>每格数量(币)</label><input id="ph-size-base" type="number" step="any" value="0.001"></div>
+      </div>
+      <div class="row">
+        <div><label>杠杆 (x)</label><input id="ph-leverage" type="number" value="3" min="1"></div>
+        <div>
+          <label>区间外止损策略</label>
+          <select id="ph-auto-stop">
+            <option value="close" selected>冲破区间平仓</option>
+            <option value="recover">只减仓回收阶梯</option>
+          </select>
+        </div>
+      </div>
+      <div class="risk-preview" id="ph-risk-preview"></div>
+      <button class="btn btn-start" id="ph-start-btn">启动 Phoenix 网格</button>
+      <button class="btn btn-stop" id="ph-stop-btn" disabled>停止 + 撤单 + 平仓</button>
+      <button class="btn btn-ghost" id="ph-adjust-btn" disabled style="margin-top:8px">调整区间（不停止网格）</button>
+      <button class="btn btn-ghost" id="ph-cancel-orders-btn" style="margin-top:8px;border-color:var(--yel);color:var(--yel)">撤销所有挂单（保留持仓）</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel" id="ph-orphan-prompt" style="display:none;margin-bottom:14px;border:1px solid var(--yel)">
+      <div class="panel-title" style="color:var(--yel)">⚠ 检测到未托管持仓 · 请选择处理方式</div>
+      <div id="ph-orphan-info" class="muted" style="margin-bottom:10px;line-height:1.5"></div>
+      <button class="btn btn-ghost" id="ph-orphan-recover" style="border-color:var(--yel);color:var(--yel)">① 只减仓回收阶梯</button>
+      <label style="display:block;font-size:11px;color:var(--mut2);margin-top:6px"><input type="checkbox" id="ph-orphan-above-entry" style="width:auto;margin-right:6px;vertical-align:middle">回收仅在成本价以上减仓</label>
+      <button class="btn btn-ghost" id="ph-orphan-regrid" style="margin-top:8px">② 按现价重开网格</button>
+      <button class="btn btn-stop" id="ph-orphan-close" style="margin-top:8px">③ 市价平仓</button>
+    </div>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">Phoenix · 账户状态</div>
+      <div class="grid-2" style="gap:10px;margin-bottom:10px">
+        <div><div class="kv"><span class="lbl">运行状态</span><span class="val" id="ph-st-run">未运行</span></div>
+          <div class="kv"><span class="lbl">最新价</span><span class="val" id="ph-st-price">—</span></div>
+          <div class="kv"><span class="lbl">账户余额</span><span class="val" id="ph-st-bal">—</span></div>
+          <div class="kv"><span class="lbl">权益</span><span class="val" id="ph-st-eq">—</span></div></div>
+        <div><div class="kv"><span class="lbl">持仓</span><span class="val" id="ph-st-pos">—</span></div>
+          <div class="kv"><span class="lbl">持仓均价</span><span class="val" id="ph-st-entry">—</span></div>
+          <div class="kv"><span class="lbl">网格利润（理论）</span><span class="val" id="ph-st-rpnl">—</span></div>
+          <div class="kv"><span class="lbl">未实现盈亏</span><span class="val" id="ph-st-upnl">—</span></div></div>
+      </div>
+      <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="ph-st-total">—</span></div>
+      <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="ph-st-orders">—</span></div>
+      <button class="btn btn-ghost" id="ph-reset-btn" style="margin-top:8px;font-size:12px">💰 转账后重置基线（只清盈亏，保留成交量）</button>
+      <button class="btn btn-ghost" id="ph-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="ph-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
+      <button class="btn btn-ghost" id="ph-debug-btn" style="margin-top:8px;font-size:12px">🔍 诊断 Phoenix 挂单（raw API 响应）</button>
+    </div>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
+      <div id="ph-range-warn"></div>
+      <div class="chartbox"><canvas id="ph-chart"></canvas></div>
+    </div>
+    <div class="grid-2" style="gap:14px">
+      <div class="panel">
+        <div class="panel-title">成交记录</div>
+        <table><thead><tr><th>时间</th><th>方向</th><th>价格</th><th>数量</th></tr></thead><tbody id="ph-fills"></tbody></table>
+      </div>
+      <div class="panel">
+        <div class="panel-title">运行日志</div>
+        <div class="log" id="ph-alerts"><div class="log-item muted">暂无日志</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
 <!-- TAB: 🚀 Autopilot — AI 无脑一键托管 -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <div id="tab-autopilot" class="tab-panel">
@@ -2658,6 +2819,7 @@ input:focus, select:focus {
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('sx', this)">分析 StandX</button>
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('bg', this)">分析 Bitget</button>
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('bu', this)">分析 Bitunix</button>
+      <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('ph', this)">分析 Phoenix</button>
     </div>
     <div id="ai-analyze-box" class="ai-box muted" style="margin-top:10px">综合 4小时/1小时/15分钟 三个周期的指标判断市况，给出区间/格数/间距建议。分析的是该所当前配置的市场。</div>
   </div>
@@ -3517,6 +3679,7 @@ const plCtrl = makeExchangeCtrl('pl', 'pl-chart');
 const sxCtrl = makeExchangeCtrl('sx', 'sx-chart');
 const bgCtrl = makeExchangeCtrl('bg', 'bg-chart');
 const buCtrl = makeExchangeCtrl('bu', 'bu-chart');
+const phCtrl = makeExchangeCtrl('ph', 'ph-chart');
 
 // ── 总览 SSE + 程序运行状态（后端连接心跳）─────────────────────────────────────
 // 服务器每秒推送一次总览数据。只要心跳正常即视为"正常运行"；心跳停止
@@ -3826,7 +3989,7 @@ function renderOverview(data) {
   $('tot-volume').textContent = fmt(totVolume);
   $('tot-rungs').textContent = totRungs;
   // 分所交易量 + 权益 tooltip 数据
-  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix' };
+  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix' };
   const perEx = ['de','ex','rs','on','pl','sx','bg','bu','ph'].map(p => {
     const v = data[p]?.volume;
     const eq = data[p]?.equity;
@@ -4410,7 +4573,7 @@ aiRefreshStatus();
 setInterval(aiRefreshStatus, 30000);
 
 // ── 🚀 Autopilot UI ─────────────────────────────────────────────────────────
-const AP_EX = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix' };
+const AP_EX = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix', ph:'Phoenix' };
 const AP_ACTION_ICON = {
   none:'—', start:'🟢', started:'🟢', stop:'🛑', adjusted:'🔄',
   skip:'⏭', skipped:'⏭', error:'❌', emergency_stop:'🚨',
@@ -4534,7 +4697,7 @@ function apRender(s) {
       } else {
         status = 'N/A';
       }
-      const name = ({de:'Decibel',ex:'Extended',rs:'RISEx',on:'Ondo',pl:'Perpl',sx:'StandX',bg:'Bitget',bu:'Bitunix'})[k];
+      const name = ({de:'Decibel',ex:'Extended',rs:'RISEx',on:'Ondo',pl:'Perpl',sx:'StandX',bg:'Bitget',bu:'Bitunix',ph:'Phoenix'})[k];
       rows.push(`
         <div style="border:1px solid rgba(148,163,184,0.25);border-radius:8px;padding:10px;background:var(--v2-panel,#111a2e)">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -4651,7 +4814,7 @@ setInterval(apRefresh, 15000);   // 每 15s 刷一次状态
 const PET_COLORS = {
   de:'var(--de-color,#f59e0b)', ex:'var(--ex-color,#3b82f6)', rs:'var(--rs-color,#10b981)',
   on:'var(--on-color,#06b6d4)', pl:'var(--pl-color,#ec4899)', sx:'#8b5cf6', bg:'var(--bg-color,#f97316)',
-  bu:'var(--bu-color,#8b5cf6)',
+  bu:'var(--bu-color,#8b5cf6)', ph:'var(--ph-color,#f472b6)',
 };
 function petFmtNum(n) {
   if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
@@ -4760,17 +4923,17 @@ setInterval(petsRefresh, 60_000);
 const NUM_SELECTORS = [
   '#tot-equity', '#tot-pnl', '#tot-balance', '#tot-realized',
   '#tot-unrealized', '#tot-volume', '#tot-rungs',
-  '#ov-de-pnl', '#ov-ex-pnl', '#ov-rs-pnl', '#ov-on-pnl', '#ov-pl-pnl', '#ov-sx-pnl', '#ov-bg-pnl', '#ov-bu-pnl',
-  '#ov-de-bal', '#ov-ex-bal', '#ov-rs-bal', '#ov-on-bal', '#ov-pl-bal', '#ov-sx-bal', '#ov-bg-bal', '#ov-bu-bal',
-  '#ov-de-eq',  '#ov-ex-eq',  '#ov-rs-eq',  '#ov-on-eq',  '#ov-pl-eq',  '#ov-sx-eq',  '#ov-bg-eq',  '#ov-bu-eq',
-  '#ov-de-price','#ov-ex-price','#ov-rs-price','#ov-on-price','#ov-pl-price','#ov-sx-price','#ov-bg-price','#ov-bu-price',
-  '#ov-de-rpnl','#ov-ex-rpnl','#ov-rs-rpnl','#ov-on-rpnl','#ov-pl-rpnl','#ov-sx-rpnl','#ov-bg-rpnl','#ov-bu-rpnl',
-  '#ov-de-upnl','#ov-ex-upnl','#ov-rs-upnl','#ov-on-upnl','#ov-pl-upnl','#ov-sx-upnl','#ov-bg-upnl','#ov-bu-upnl',
-  '#ov-de-vol','#ov-ex-vol','#ov-rs-vol','#ov-on-vol','#ov-pl-vol','#ov-sx-vol','#ov-bg-vol','#ov-bu-vol',
-  '#ov-de-rungs','#ov-ex-rungs','#ov-rs-rungs','#ov-on-rungs','#ov-pl-rungs','#ov-sx-rungs','#ov-bg-rungs','#ov-bu-rungs',
-  '#de-st-price','#ex-st-price','#rs-st-price','#on-st-price','#pl-st-price','#sx-st-price','#bg-st-price','#bu-st-price',
-  '#de-st-bal','#ex-st-bal','#rs-st-bal','#on-st-bal','#pl-st-bal','#sx-st-bal','#bg-st-bal','#bu-st-bal',
-  '#de-st-eq','#ex-st-eq','#rs-st-eq','#on-st-eq','#pl-st-eq','#sx-st-eq','#bg-st-eq','#bu-st-eq',
+  '#ov-de-pnl', '#ov-ex-pnl', '#ov-rs-pnl', '#ov-on-pnl', '#ov-pl-pnl', '#ov-sx-pnl', '#ov-bg-pnl', '#ov-bu-pnl', '#ov-ph-pnl',
+  '#ov-de-bal', '#ov-ex-bal', '#ov-rs-bal', '#ov-on-bal', '#ov-pl-bal', '#ov-sx-bal', '#ov-bg-bal', '#ov-bu-bal', '#ov-ph-bal',
+  '#ov-de-eq',  '#ov-ex-eq',  '#ov-rs-eq',  '#ov-on-eq',  '#ov-pl-eq',  '#ov-sx-eq',  '#ov-bg-eq',  '#ov-bu-eq',  '#ov-ph-eq',
+  '#ov-de-price','#ov-ex-price','#ov-rs-price','#ov-on-price','#ov-pl-price','#ov-sx-price','#ov-bg-price','#ov-bu-price','#ov-ph-price',
+  '#ov-de-rpnl','#ov-ex-rpnl','#ov-rs-rpnl','#ov-on-rpnl','#ov-pl-rpnl','#ov-sx-rpnl','#ov-bg-rpnl','#ov-bu-rpnl','#ov-ph-rpnl',
+  '#ov-de-upnl','#ov-ex-upnl','#ov-rs-upnl','#ov-on-upnl','#ov-pl-upnl','#ov-sx-upnl','#ov-bg-upnl','#ov-bu-upnl','#ov-ph-upnl',
+  '#ov-de-vol','#ov-ex-vol','#ov-rs-vol','#ov-on-vol','#ov-pl-vol','#ov-sx-vol','#ov-bg-vol','#ov-bu-vol','#ov-ph-vol',
+  '#ov-de-rungs','#ov-ex-rungs','#ov-rs-rungs','#ov-on-rungs','#ov-pl-rungs','#ov-sx-rungs','#ov-bg-rungs','#ov-bu-rungs','#ov-ph-rungs',
+  '#de-st-price','#ex-st-price','#rs-st-price','#on-st-price','#pl-st-price','#sx-st-price','#bg-st-price','#bu-st-price','#ph-st-price',
+  '#de-st-bal','#ex-st-bal','#rs-st-bal','#on-st-bal','#pl-st-bal','#sx-st-bal','#bg-st-bal','#bu-st-bal','#ph-st-bal',
+  '#de-st-eq','#ex-st-eq','#rs-st-eq','#on-st-eq','#pl-st-eq','#sx-st-eq','#bg-st-eq','#bu-st-eq','#ph-st-eq',
 ];
 
 function initNumAnimation() {

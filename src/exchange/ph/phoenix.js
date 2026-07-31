@@ -161,7 +161,8 @@ export class PhoenixExchange extends EventEmitter {
       throw new Error(`Phoenix init 拉市场失败：${e.message}`);
     }
 
-    // 认证
+    // 认证 —— 失败不 throw，退到 real-readonly 让 start() 继续启 poll timer
+    // 拉市场/K 线/价格是公开接口，即使 auth 挂了也应该能显示 Phoenix 市场数据。
     try {
       await this._ensureAuth();
       this.dataSource = 'real';
@@ -169,10 +170,10 @@ export class PhoenixExchange extends EventEmitter {
     } catch (e) {
       this.dataSource = 'real-readonly';
       this.lastError = `认证失败：${e.message}`;
-      throw new Error(`Phoenix 认证失败（能读市场但不能交易）：${e.message}`);
+      console.warn(`[Phoenix] auth 失败，退到 real-readonly：${e.message}`);
     }
 
-    // 拉初始 trader state 拿 balance
+    // 拉初始 trader state 拿 balance（若 auth 没过，_refreshBalance 会跳过）
     try { await this._refreshBalance(); } catch (e) { /* 首次失败不 throw，poll 里会重试 */ }
 
     return true;
