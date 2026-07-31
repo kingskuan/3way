@@ -460,8 +460,12 @@ class Autopilot {
         await bot.stop({ closePosition: true }).catch(() => {});
         st.startedByAutopilot = false;
         // Round 197：记冷却，30 min 内本所不再选这个市场（RS 反复挑 HYPE 就是这里堵）
-        st.stoppedMarkets = st.stoppedMarkets || {};
-        st.stoppedMarkets[cur.config.displayName] = Date.now();
+        // Round 205: aggressive 挂 BTC 不换 —— 冲出区间也不加冷却，让 autopilot
+        // 下 tick 再挑 BTC (Round 204 全池) + 主动 re-center 保仓。
+        if (this.cfg.riskStyle !== 'aggressive') {
+          st.stoppedMarkets = st.stoppedMarkets || {};
+          st.stoppedMarkets[cur.config.displayName] = Date.now();
+        }
       } else {
         // Round 121→164c→166→171：stop-idle 30 → 15 → 10 → 8 min。用户 $1M/周
         // 目标需要每家都长期跑在活跃市场，冷市场不能耽误超过 8 分钟。8 min 已接近
@@ -472,7 +476,10 @@ class Autopilot {
         // 有时间成交；PL/RS 保持 5min（活跃币可以快速轮换）。
         // Round 201: 全部 60min，学 @zaijin338191 挂 BTC 不换币。stop-idle 变防呆
         // 兜底：BTC 一小时真的无成交才认命换。正常震荡时永不换币。
-        const noFillFloor = 60;
+        // Round 205: aggressive 完全禁 stop-idle rotate。之前 60min 无成交仍
+        // rotate → BTC 冷却 30min → autopilot 重挑 fallback 到 AAPL/HYPE，破坏
+        // 挂 BTC 不换策略。aggressive 就是"挂着不换"，让 re-center/narrow 处理。
+        const noFillFloor = this.cfg.riskStyle === 'aggressive' ? Infinity : 60;
         const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
         const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
         if (lastActivity > 0 && noFillMinutes >= noFillFloor) {
@@ -731,7 +738,8 @@ class Autopilot {
       if (!(price > 0)) { rejections.push(`${c.name}:无价格`); continue; }
       // Round 197：30 min 内被 stop/stop-idle 过的市场跳过 —— RS 反复挑 HYPE 循环。
       // 让 autopilot 强制换到 fallback 候选，即便得分低一档也比反复挑烂币好。
-      if (st.stoppedMarkets[c.name]) {
+      // Round 205: aggressive 挂 BTC 不换 —— 跳过冷却池检查，让 BTC 永远 pickable。
+      if (this.cfg.riskStyle !== 'aggressive' && st.stoppedMarkets[c.name]) {
         const agoMin = Math.round((now - st.stoppedMarkets[c.name]) / 60_000);
         rejections.push(`${c.name}:${agoMin}min 前刚 stop，冷却中`);
         continue;
