@@ -715,7 +715,11 @@ class Autopilot {
     const rankedList = pick ? [pick, ...shortlist.filter((c) => c !== pick)] : shortlist.slice();
 
     // 4d. 代码钳制参数到风格允许区间（AI 永远不能自伤）
-    const capitalUsdc = Math.min(this.cfg.perExchange[key].maxCapitalUsdc || 1000, cur.balance || 1000);
+    // Round 206: balance=0 但 equity>0 用 equity 兜底 —— Extended API 返 balance=0
+    // 但 futures 里有钱（$231），旧代码 fallback 到 1000 导致算出 $533 保证金要求，
+    // bot start 用真实 $231 检查一律拒。equity fallback 让参数反映真实可用资金。
+    const realCapital = (cur.balance > 0) ? cur.balance : (cur.equity > 0 ? cur.equity : 1000);
+    const capitalUsdc = Math.min(this.cfg.perExchange[key].maxCapitalUsdc || 1000, realCapital);
     const budget = capitalUsdc * 0.8;   // 保留 20% buffer
 
     let params = null;
