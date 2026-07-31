@@ -228,6 +228,10 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
         network: exchange.network || exCfg.network,
         apiUrl: exchange.apiUrl || exCfg.apiUrl,
         markets: await exchange.getMarkets(),
+        // Round 217：暴露 lastError + wallet 派生 pubkey 助诊 LIVE 连不上
+        lastError: exchange.lastError || null,
+        authorityPubkey: exchange._authorityPubkey || null,
+        balance: exchange.balance ?? null,
       });
     }
 
