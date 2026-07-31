@@ -190,9 +190,26 @@ export class PhoenixExchange extends EventEmitter {
 
   async _refreshBalance() {
     try {
+      // Round 218: 探到真实 Phoenix trader state 结构：
+      //   { authority, traderPdaIndex, slot, slotIndex,
+      //     snapshot: {
+      //       version, capabilities, subaccounts: [
+      //         { subaccountIndex, sequence, collateral: "295020000", cooldownStatus }
+      //       ]
+      //     }
+      //   }
+      // collateral 是 string, USDC micro units (6 decimals) → /1e6 得 USD
       const state = await this._req('GET', `/v1/trader/state/${this._authorityPubkey}`, null, true);
-      const usdcBal = Number(state?.usdcBalance ?? state?.balance ?? state?.equity ?? 0);
-      if (usdcBal > 0) this.balance = usdcBal;
+      const subs = state?.snapshot?.subaccounts;
+      if (Array.isArray(subs) && subs.length > 0) {
+        // 汇总所有 subaccount 的 collateral（一般只有 index=0，但保险起见 sum）
+        let totalMicro = 0;
+        for (const sub of subs) {
+          totalMicro += Number(sub.collateral || 0);
+        }
+        this.balance = totalMicro / 1e6;
+      }
+      // 仓位从 positions 字段拿（如果有；空 wallet 不会有）
       if (Array.isArray(state?.positions)) {
         this.positions.clear();
         for (const p of state.positions) {
