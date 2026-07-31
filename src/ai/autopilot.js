@@ -61,7 +61,11 @@ const STYLES = {
     gridCount: 80,
     sizeFractionOfBalance: 0.20,
     maxLeverage: 30,
-    dailyLossPctLimit: 8,
+    // Round 208: 8% → 15%。BTC 跌 2% × 30x lev = 60% notional swing → 8% 阈值
+    // 一波下跌就熔断（PL/RS 双爆），close position 实现 loss，24h 锁定。
+    // @zaijin338191 明确说"绝不手动平仓" —— 自动熔断是代理版手动平仓。
+    // 15% 允许 3% 反向 BTC 走势才触发（对应 45% notional loss），网格能吃住小波动。
+    dailyLossPctLimit: 15,
     consecutiveLossLimit: 4,
     outOfRangeAction: 'recover',
   },
