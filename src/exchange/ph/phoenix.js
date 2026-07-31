@@ -176,6 +176,11 @@ export class PhoenixExchange extends EventEmitter {
     // 拉初始 trader state 拿 balance（若 auth 没过，_refreshBalance 会跳过）
     try { await this._refreshBalance(); } catch (e) { /* 首次失败不 throw，poll 里会重试 */ }
 
+    // Round 214c: init 立刻启 poll timer —— server.js 只调 init 不调 start
+    // （对比 Ondo：init() 里就 this._startPolling()）。没这句 _pollPrices 永不跑
+    // → 62 市场全 lastPrice=0，Autopilot 无法给 Phoenix 挑币。
+    this.start();
+
     return true;
   }
 
