@@ -142,6 +142,18 @@ export function getConfig() {
     proxy: process.env.BU_PROXY || globalProxy,
   };
 
+  // ── Phoenix (perp-api.phoenix.trade, Solana on-chain perp DEX) ───────────
+  // Round 209 Phase 1：paper only + LIVE skeleton。LIVE 需要 Solana wallet：
+  // PH_WALLET_PRIVATE_KEY (base58) + PH_SOLANA_RPC_URL。
+  // Round 210 计划完整 wallet 签名 + instruction submit。
+  const ph = {
+    mode: (process.env.PH_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
+    walletPrivateKey: process.env.PH_WALLET_PRIVATE_KEY || '',
+    solanaRpcUrl: process.env.PH_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+    startBalance: Number(process.env.PAPER_BALANCE || 10000),
+    proxy: process.env.PH_PROXY || globalProxy,
+  };
+
   // ── Ondo Perps ────────────────────────────────────────────────────────────
   const onNet = (process.env.ON_NETWORK || 'mainnet').toLowerCase();
   const onDefaults = onNet === 'testnet'
@@ -186,6 +198,7 @@ export function getConfig() {
     sx,
     bg,
     bu,
+    ph,
   };
 }
 

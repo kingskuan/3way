@@ -8,7 +8,7 @@
 //   4. 状态持久化在 .state.json 的 'pets' key 下，重启不掉
 import { loadSnapshot, saveSnapshot } from './persist.js';
 
-const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu'];
+const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph'];
 
 // Round 84 阈值调整：7 阶进化，按用户要求以真实 USDT 交易量刻度：
 //   L1→L2 500K   L2→L3 1亿   L3→L4 2亿   L4→L5 5亿   L5→L6 10亿   L6→L7 50亿
@@ -75,6 +75,12 @@ export const PET_SPECIES = {
     stageNames: ['凶卵', '穷奇幼', '带翼虎', '苍穷奇', '逐风奇', '穷奇神', '踏空穷奇'],
     fallback: ['🥚', '🐺', '🦊', '🐆', '⚡', '👑', '💫'],
     color: '#8b5cf6',
+  },
+  ph: {
+    name: '凤凰', theme: '涅槃重生 · 浴火不灭',
+    stageNames: ['焰卵', '雏凤', '青鸾', '赤凤', '涅槃凤', '凤凰神', '不灭凤凰'],
+    fallback: ['🥚', '🐣', '🐦', '🦜', '🔥', '🦅', '🌅'],
+    color: '#f472b6',
   },
 };
 

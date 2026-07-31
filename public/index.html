@@ -2809,10 +2809,10 @@ const RISK = {
 };
 
 // ── Tab 切换 ────────────────────────────────────────────────────────────────
-const TAB_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu','autopilot','ai','settings'];
+const TAB_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu','ph','autopilot','ai','settings'];
 // Round 89：只在 DEX 部分（总览 + 7 家）滑动切换。Autopilot/AI/IP 配置
 // 用户是明确要"进去"的，不参与滑动，避免误触。
-const SWIPE_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu'];
+const SWIPE_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu','ph'];
 let _currentTab = 'overview';
 
 function switchTab(name) {
@@ -3547,7 +3547,7 @@ function updateConnStatus() {
   el.className = 'conn ' + cls;
   txt.textContent = label;
   el.title = '后端连接状态' + (lastBeat ? `（最后更新 ${Math.round(age / 1000)} 秒前）` : '');
-  if (lastBeat && age >= 10000) ['de','ex','rs','on','pl','sx','bg','bu'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
+  if (lastBeat && age >= 10000) ['de','ex','rs','on','pl','sx','bg','bu','ph'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
 }
 setInterval(updateConnStatus, 1000);
 updateConnStatus();
@@ -3590,7 +3590,7 @@ const MODE_LABEL = { neutral: '中性', long: '做多', short: '做空' };
 const TREND_LABEL = { up: '上升', down: '下降', range: '震荡' };
 
 async function scanTrends() {
-  for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu']) {
+  for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph']) {
     const box = $(`ov-${p}-trend`);
     if (!box) continue;
     const d = lastOverview[p];
@@ -3688,7 +3688,7 @@ function hdrDetailsToggle() {
 }
 // 从 5 个个体 badge 的 mode（live/paper）+ dot 状态汇总出药丸
 function updateHdrSummary() {
-  const keys = ['de','ex','rs','on','pl','sx','bg','bu'];
+  const keys = ['de','ex','rs','on','pl','sx','bg','bu','ph'];
   const items = keys.map(k => {
     const b = $('hdr-' + k);
     return { k, live: b && b.className.includes('badge-live') };
@@ -3746,7 +3746,7 @@ function renderOverview(data) {
   let totEquity = 0, totBalance = 0, totPnl = 0, totRealized = 0, totUnrealized = 0, totVolume = 0, totRungs = 0;
   let running = 0;
 
-  ['de','ex','rs','on','pl','sx','bg','bu'].forEach(p => {
+  ['de','ex','rs','on','pl','sx','bg','bu','ph'].forEach(p => {
     const d = data[p];
     if (!d) return;
     // Round 176：balance=0 的 DEX 视为 offboarded（用户提走资金/未启用）——
@@ -3827,7 +3827,7 @@ function renderOverview(data) {
   $('tot-rungs').textContent = totRungs;
   // 分所交易量 + 权益 tooltip 数据
   const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix' };
-  const perEx = ['de','ex','rs','on','pl','sx','bg','bu'].map(p => {
+  const perEx = ['de','ex','rs','on','pl','sx','bg','bu','ph'].map(p => {
     const v = data[p]?.volume;
     const eq = data[p]?.equity;
     return {
@@ -3871,7 +3871,7 @@ function renderOverview(data) {
   const totMode = $('tot-modes'); if (totMode) totMode.textContent = '';
 
   // Hero 卡的 demo/live 计数（就算 Live 是 0 也照样显示）
-  const modesArr = ['de','ex','rs','on','pl','sx','bg','bu'].map(p => (data[p]?.mode || 'paper').toLowerCase());
+  const modesArr = ['de','ex','rs','on','pl','sx','bg','bu','ph'].map(p => (data[p]?.mode || 'paper').toLowerCase());
   const demoN = modesArr.filter((m) => m === 'paper').length;
   const liveN = modesArr.filter((m) => m === 'live').length;
   const el = $('tot-mode-summary');
@@ -4022,7 +4022,7 @@ async function aiPickModel(modelId, displayName) {
     alert(`❌ 测试请求失败：${e.message}`);
   }
 }
-const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix' };
+const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix', ph:'Phoenix' };
 const AI_ACTION_LABEL = {
   adjust_range:'调整网格区间', stop_grid:'停止网格', cancel_orders:'撤销全部挂单（保留持仓）',
   close_position:'市价平仓', reconnect:'重连 DEX', start_recovery:'启动只减仓回收阶梯', start_grid:'启动网格',
@@ -4141,7 +4141,7 @@ async function aiRefreshStatus() {
       }
       if (document.activeElement !== $('ov-ai-mkt-min')) $('ov-ai-mkt-min').placeholder = s.marketMin;
       if (document.activeElement !== $('ov-ai-sent-min')) $('ov-ai-sent-min').placeholder = s.sentinelMin;
-      for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu']) {
+      for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph']) {
         const el = $(`ov-${p}-ai`);
         const per = s.sentinel && s.sentinel.per ? s.sentinel.per[p] : null;
         if (el && per) {
@@ -4511,7 +4511,7 @@ function apRender(s) {
   if (effBox) {
     const rows = [];
     const overview = window.lastOverview || {};
-    for (const k of ['de','ex','rs','on','pl','sx','bg','bu']) {
+    for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph']) {
       const d = overview[k] || {};
       const gp = Number(d.stats?.gridProfit) || 0;
       const ed = d.equityDelta;
@@ -4742,7 +4742,7 @@ async function petsRefresh() {
     const j = await r.json();
     const species = j.species || {};
     const pets = j.pets || {};
-    for (const k of ['de','ex','rs','on','pl','sx','bg','bu']) {
+    for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph']) {
       const entry = pets[k];
       const sp = species[k];
       if (entry && sp) petRenderCard(k, entry, sp, j.thresholds);
@@ -4866,7 +4866,7 @@ async function bulkEnableAutopilot(btn) {
   st.textContent = '';
   try {
     const perExchange = {};
-    for (const k of ['de','ex','rs','on','pl','sx','bg','bu']) perExchange[k] = { enabled: true };
+    for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph']) perExchange[k] = { enabled: true };
     const r = await fetch('/api/autopilot/config', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ masterEnabled: true, perExchange }),
@@ -4898,7 +4898,7 @@ async function bulkReconnectAll(btn) {
   st.textContent = '';
 
   // 打开面板，先全部显示 loading
-  const keys = ['de','ex','rs','on','pl','sx','bg','bu'];
+  const keys = ['de','ex','rs','on','pl','sx','bg','bu','ph'];
   const statuses = {};
   for (const k of keys) statuses[k] = { state: 'loading', mode: lastOverview?.[k]?.mode };
   const paint = () => { body.innerHTML = keys.map((k) => renderReconnectRow(k, statuses[k])).join(''); };
@@ -4962,7 +4962,7 @@ async function bulkResetDemo(btn) {
   const st = $('bulk-status');
   btn.disabled = true; const orig = btn.textContent;
   btn.textContent = '⏳ 重置中…'; st.textContent = '';
-  const keys = ['de','ex','rs','on','pl','sx','bg','bu'];
+  const keys = ['de','ex','rs','on','pl','sx','bg','bu','ph'];
   const results = await Promise.all(keys.map(async (k) => {
     try {
       // 先停网格 + 平仓
