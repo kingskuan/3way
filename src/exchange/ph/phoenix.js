@@ -9,7 +9,7 @@
 //
 // 依赖 @solana/web3.js + bs58 —— 都是 Solana 官方推荐。
 import { EventEmitter } from 'events';
-import { Connection, Keypair, Transaction, TransactionInstruction, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, Transaction, TransactionInstruction, PublicKey, ComputeBudgetProgram } from '@solana/web3.js';
 import bs58 from 'bs58';
 
 const BASE_URL = 'https://perp-api.phoenix.trade';
@@ -257,6 +257,12 @@ export class PhoenixExchange extends EventEmitter {
     }
     // 构造 legacy Transaction 一次性 submit 所有 instruction
     const tx = new Transaction();
+    // Round 222c: Phoenix program 需要充足 compute budget + priority fee 避免
+    // simulation "Program failed to complete"。默认 200k CU 对复杂 DeFi 不够。
+    // 400k CU + 5000 microlamports priority = 前置 2 个 ComputeBudgetProgram
+    // instruction，Phoenix 的 place-limit-order 应能完成 simulation。
+    tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }));
+    tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5000 }));
     for (const inst of arr) {
       if (!inst.data || !Array.isArray(inst.keys)) {
         throw new Error(`Phoenix instruction 结构异常：${JSON.stringify(inst).slice(0, 200)}`);
