@@ -1787,9 +1787,9 @@ th {
   .pet-icon { filter: drop-shadow(0 4px 0 rgba(0,0,0,0.6)) !important; }
 }
 
-/* — Overview 底部 ticker banner —————————————————— */
+/* — Overview 顶部 ticker banner（Round 225: 从底部搬到总权益上方）—————— */
 .v4-ticker {
-  margin-top: 16px;
+  margin: 0 0 14px 0;   /* Round 225: bottom margin 换成顶部余 8px 保留 hero 呼吸 */
   background: var(--v4-accent-cool);
   border: 3px solid var(--v4-ink);
   border-radius: 10px;
@@ -1912,6 +1912,11 @@ th {
 <!-- ═══════════════════════════════════════════════════════════ -->
 <div id="tab-overview" class="tab-panel active">
 <div class="wrap">
+
+  <!-- Round 225: v4 Ticker banner —— 9 家 PnL 滚动条（原在最底 · 用户建议贴 tabs 顶部像 Bloomberg） -->
+  <div class="v4-ticker" aria-hidden="true">
+    <div class="v4-ticker-track" id="v4-ticker-track"></div>
+  </div>
 
   <!-- 五所汇总卡 -->
   <div class="total-row" style="margin-top:4px">
@@ -2197,10 +2202,7 @@ th {
     </div>
   </div>
 
-  <!-- v4 Ticker banner —— 9 家 PnL 滚动条 -->
-  <div class="v4-ticker" aria-hidden="true">
-    <div class="v4-ticker-track" id="v4-ticker-track"></div>
-  </div>
+  <!-- Round 225: v4 Ticker banner 已搬到顶部（tab-overview 内首元素）-->
 
   <!-- AI 市况分析（BTC，定时报告） -->
   <div class="panel" style="margin-top:14px">
