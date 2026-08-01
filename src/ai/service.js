@@ -10,6 +10,10 @@ import { analyzeTrend } from '../trend.js';
 import { loadSnapshot, saveSnapshot } from '../persist.js';
 
 const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix' };
+const KEYS = Object.keys(EXNAMES);
+// Round 222：日报状态图标（严格 4 档 —— running/warn/critical/其他）
+const STATE_ICON = { running: '🟢', warn: '🟡', warning: '🟡', critical: '🔴', stopped: '⚪', paused: '⏸', 'not-configured': '⚪' };
+const SEV_ICON = { info: 'ℹ️', ok: 'ℹ️', warn: '⚠️', warning: '⚠️', critical: '🔴', error: '🔴' };
 
 export function createAiService({ bots, exchanges }) {
   return new AiService(bots, exchanges);
@@ -35,10 +39,18 @@ class AiService {
     if (saved) {
       this.report = saved.report ?? null;
       this.market = saved.market ?? null;
-      this._baseline = saved.baseline ?? null; // 日报基线 {t, per: {de:{equity,stats}}}
       this._reportDoneDay = saved.reportDoneDay ?? null;
+      // Round 222：日报基线从单点 `_baseline` 升级为 3 槽 ring buffer
+      // → 可算 24h delta 和 72h 趋势。旧字段 saved.baseline 兼容读入为
+      // history 的首项（避免升级后当天缺基线）。
+      if (Array.isArray(saved.baselineHistory) && saved.baselineHistory.length) {
+        this._baselineHistory = saved.baselineHistory.slice(0, 3);
+      } else if (saved.baseline) {
+        this._baselineHistory = [saved.baseline];
+      }
     }
-    this._baseline = this._baseline || null;
+    this._baselineHistory = this._baselineHistory || [];
+    this._baseline = this._baselineHistory[0] || null; // 保留字段供旧路径 read
     // Round 71：async analyze/chat 结果缓存
     this._analysisByEx = {};       // { de: {t, result, error?}, ex: {...} }
     this._chatResults = {};         // { jobId: {t, result, error?} }
@@ -81,8 +93,8 @@ class AiService {
     // 出区间跳变检测：30s 一次，纯本地比对，只有跳变才调 AI
     this._oorTimer = setInterval(() => this._checkOutOfRange().catch(() => {}), 30_000);
     this._oorTimer.unref?.();
-    // 日报基线：若从未建立，以当前状态为基线
-    if (!this._baseline) this._rebaseline();
+    // 日报基线：若从未建立（history 为空），以当前状态为基线
+    if (!this._baselineHistory.length) this._rebaseline();
   }
 
   async _tick() {
@@ -256,9 +268,11 @@ class AiService {
   }
 
   // ---------- 2) 每日复盘 ----------
+  /** Round 222：基线 ring buffer——每期报后 unshift 一个快照，保留最近 3 期
+   *  → 每日报告可算 24h delta（hist[0]）+ 72h 趋势（hist[2]，若已积攒 3 期）。 */
   _rebaseline() {
     const per = {};
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph']) {
+    for (const key of KEYS) {
       const s = this.bots[key].getState();
       const ex = this.exchanges[key];
       per[key] = {
@@ -270,55 +284,328 @@ class AiService {
         dataSource: ex?.dataSource || null,   // Round 50: real/synthetic
       };
     }
-    this._baseline = { t: Date.now(), per };
+    const snap = { t: Date.now(), per };
+    this._baselineHistory = this._baselineHistory || [];
+    this._baselineHistory.unshift(snap);
+    if (this._baselineHistory.length > 3) this._baselineHistory.length = 3;
+    this._baseline = snap; // 保留字段供旧路径 read
     this._save();
+  }
+
+  /** Round 222：日报专用富化快照——除了通用字段还带 fillsLast24h /
+   *  gridEfficiency / marginUtilPct / state，方便 AI 出定量结论。 */
+  async _reportSnapshot() {
+    const per = {};
+    const now = Date.now();
+    for (const key of KEYS) {
+      const bot = this.bots[key];
+      const ex = this.exchanges[key];
+      const s = bot.getState();
+      // state：running / stopped / paused / not-configured
+      let state;
+      if (s.running) state = 'running';
+      else if (s.config) state = 'stopped';
+      else state = 'not-configured';
+      if (s.health?.reason && /暂停补单/.test(s.health.reason)) state = 'paused';
+
+      const fills = Array.isArray(bot.fills) ? bot.fills : [];
+      const fills24 = fills.filter((f) => f && f.t && (now - f.t < 24 * 3600e3)).length;
+      const grid = s.config?.gridCount || null;
+      const notional = (s.position?.sizeBase && s.position?.entryPrice)
+        ? Math.abs(s.position.sizeBase) * s.position.entryPrice : 0;
+      const marginUtilPct = (notional > 0 && s.equity && s.equity > 0)
+        ? Math.round(notional / s.equity * 100) : null;
+      const gridEff = (grid && grid > 0) ? Math.round(fills24 / grid * 100) / 100 : null;
+
+      per[key] = {
+        key, name: EXNAMES[key], state,
+        mode: ex?.mode || null,
+        dataSource: ex?.dataSource || null,
+        market: s.config?.displayName || null,
+        equity: s.equity, balance: s.balance,
+        realizedPnl: s.realizedPnl, unrealizedPnl: s.unrealizedPnl,
+        returnPct: s.returnPct,
+        volume: s.volume,
+        gridCount: grid,
+        openOrders: s.openOrders,
+        exchangeOpenOrders: s.exchangeOpenOrders,
+        fillsLast24h: fills24,
+        gridEfficiency: gridEff,
+        marginUtilPct,
+        outOfRange: s.outOfRange,
+        health: s.health,
+        position: s.position,
+        recentAlerts: (s.alerts || []).slice(0, 3).map((a) => ({
+          t: new Date(a.t).toLocaleTimeString('zh-CN', { hour12: false }).slice(0, 5),
+          message: String(a.message || '').slice(0, 120),
+        })),
+      };
+    }
+    return per;
+  }
+
+  /** Round 222：算 24h 和 72h 两个窗口的 delta（envChanged 视为 null 不评）。 */
+  _computeDeltas(snap) {
+    const hist = this._baselineHistory || [];
+    const b24 = hist[0] || null;
+    const b72 = hist.length >= 3 ? hist[2] : null; // 只有攒够 3 期才出 72h
+    const per = {};
+    const envChanged = (base, s) => {
+      if (!base) return true;
+      if (base.mode && s.mode && base.mode !== s.mode) return true;
+      if (base.dataSource && s.dataSource && base.dataSource !== s.dataSource) return true;
+      return false;
+    };
+    const diffAt = (base, s) => {
+      if (!base || envChanged(base, s)) return null;
+      return {
+        pnl: (s.realizedPnl != null && base.realizedPnl != null)
+          ? Math.round((s.realizedPnl - base.realizedPnl) * 100) / 100 : null,
+        equity: (s.equity != null && base.equity != null)
+          ? Math.round((s.equity - base.equity) * 100) / 100 : null,
+        volume: Math.round(((s.volume || 0) - (base.volume || 0)) * 100) / 100,
+        rungs: (s.completedRungs != null && base.completedRungs != null)
+          ? (s.completedRungs - base.completedRungs) : null,
+      };
+    };
+    for (const key of KEYS) {
+      const s = snap[key];
+      // 用 snapshot 里的 mode/dataSource 与 baseline 的 mode/dataSource 比
+      const baseFacet24 = b24?.per?.[key];
+      const baseFacet72 = b72?.per?.[key];
+      per[key] = {
+        d24: diffAt(baseFacet24, {
+          realizedPnl: s.realizedPnl, equity: s.equity, volume: s.volume,
+          completedRungs: null, // completedRungs 在新 snapshot 里没直接保留，忽略
+          mode: s.mode, dataSource: s.dataSource,
+        }),
+        d72: diffAt(baseFacet72, {
+          realizedPnl: s.realizedPnl, equity: s.equity, volume: s.volume,
+          completedRungs: null,
+          mode: s.mode, dataSource: s.dataSource,
+        }),
+        envChanged24: envChanged(baseFacet24, { mode: s.mode, dataSource: s.dataSource }),
+      };
+    }
+    return {
+      per,
+      hoursSince24: b24 ? Math.round((Date.now() - b24.t) / 3600e3 * 10) / 10 : null,
+      hoursSince72: b72 ? Math.round((Date.now() - b72.t) / 3600e3 * 10) / 10 : null,
+    };
+  }
+
+  /** Round 222：本地计算总账户口径（AI 不要碰数字，只填 note/risks/actions）。 */
+  _computeOverview(snap, deltas) {
+    let totalEquity = 0, totalPnl24h = 0, totalPnl24hBase = 0, totalVolume24h = 0;
+    let activeCount = 0, hasAnyEquity = false, hasAny24hPnl = false;
+    for (const key of KEYS) {
+      const s = snap[key];
+      const d = deltas.per[key]?.d24 || null;
+      if (typeof s.equity === 'number') { totalEquity += s.equity; hasAnyEquity = true; }
+      if (s.state === 'running') activeCount++;
+      if (d && d.pnl != null) { totalPnl24h += d.pnl; hasAny24hPnl = true; }
+      if (d && d.equity != null) { totalPnl24hBase += (typeof s.equity === 'number' ? s.equity - d.equity : 0); }
+      if (d && d.volume != null) { totalVolume24h += d.volume; }
+    }
+    // 24h pct = pnl / (period-start equity)；无 baseline 时留 null
+    const totalPnl24hPct = (hasAny24hPnl && totalPnl24hBase > 0)
+      ? Math.round((totalPnl24h / totalPnl24hBase) * 10000) / 100 : null;
+    return {
+      totalEquity: hasAnyEquity ? Math.round(totalEquity * 100) / 100 : null,
+      totalPnl24h: hasAny24hPnl ? Math.round(totalPnl24h * 100) / 100 : null,
+      totalPnl24hPct,
+      totalVolume24h: Math.round(totalVolume24h * 100) / 100,
+      activeCount,
+      activeTotal: KEYS.length,
+    };
   }
 
   async makeReport() {
     if (this._busy.report) return this.report;
     this._busy.report = true;
     try {
-      const snap = this._isSlowModel() ? await this._snapshotCompact() : await this._snapshot();
-      const base = this._baseline;
-      const diff = {};
-      for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph']) {
-        const b = base?.per?.[key] || {};
+      // 1) 富化快照 + 本地算 delta + 本地算 overview（数字不交给 AI）
+      const snap = await this._reportSnapshot();
+      const deltas = this._computeDeltas(snap);
+      const overview = this._computeOverview(snap, deltas);
+
+      // 2) 拼给 AI 的紧凑 per-exchange 事实块（AI 只填 note / 判 risks / 给 actions）
+      const perFacts = KEYS.map((key) => {
         const s = snap[key];
-        const ex = this.exchanges[key];
-        // Round 50: baseline 打时是 paper（equity=10000 默认值），期间切到 LIVE
-        // （equity=$285）→ diff=-$9714 → AI 误判"疑为出金"。检出环境切换后
-        // 把该所 diff 全清 null，让 AI 只看当前快照不算增量。
-        const modeChanged = b.mode && ex?.mode && b.mode !== ex.mode;
-        const dsChanged = b.dataSource && ex?.dataSource && b.dataSource !== ex.dataSource;
-        const envChanged = modeChanged || dsChanged;
-        diff[key] = envChanged ? {
-          equityChange: null, realizedChange: null,
-          rungsDone: null, volumeDone: null,
-          envChangeNote: `本期内环境从 ${b.mode || '?'}/${b.dataSource || '?'} 切到 ${ex?.mode || '?'}/${ex?.dataSource || '?'}，baseline 作废（勿评论权益变动）`,
-        } : {
-          equityChange: (s.equity != null && b.equity != null) ? Math.round((s.equity - b.equity) * 100) / 100 : null,
-          realizedChange: (s.realizedPnl != null && b.realizedPnl != null) ? Math.round((s.realizedPnl - b.realizedPnl) * 100) / 100 : null,
-          rungsDone: (s.completedRungs || 0) - (b.completedRungs || 0),
-          volumeDone: Math.round(((s.volume || 0) - (b.volume || 0)) * 100) / 100,
+        const d24 = deltas.per[key]?.d24;
+        return {
+          key, name: s.name, state: s.state,
+          mode: s.mode, dataSource: s.dataSource,
+          market: s.market, gridCount: s.gridCount,
+          openOrders: s.openOrders, exchangeOpenOrders: s.exchangeOpenOrders,
+          fills24: s.fillsLast24h,
+          gridEff: s.gridEfficiency,
+          utilPct: s.marginUtilPct,
+          pnl24h: d24?.pnl ?? null,
+          equity: s.equity,
+          uPnl: s.unrealizedPnl,
+          returnPct: s.returnPct,
+          outOfRange: s.outOfRange,
+          healthReason: s.health?.reason || null,
+          recentAlerts: s.recentAlerts,
+          envChanged24: deltas.per[key]?.envChanged24 ?? false,
         };
-      }
-      const sinceHrs = base ? Math.round((Date.now() - base.t) / 3600_000 * 10) / 10 : null;
-      const text = await aiChat({
-        json: false, maxTokens: 3000, temperature: 0.4,
-        system: [
-          '你是网格交易机器人的复盘分析师。用简洁的中文写一份运行日报（纯文本,不用 markdown 标题符号）。',
-          '内容：1)五所各自的盈亏归因（网格已实现 vs 持仓浮动）；2)成交活跃度与网格参数是否匹配（完成格数、间距）；',
-          '3)风险点（保证金、区间边缘、挂单异常）；4)下一步的 1-3 条可执行建议。',
-          '数字保留两位小数；paper 为模拟盘要注明；没跑的交易所一句话带过。总长 300 字以内。',
-          '如果某所 diff 里带 envChangeNote，说明期内 paper↔live 切换过，baseline 已作废——只报当前快照的状态，绝对不要评论其权益/浮盈"变动"（那是切换假象、不是真出入金）。',
-        ].join('\n'),
-        messages: [{ role: 'user', content: `统计周期：${sinceHrs != null ? '近 ' + sinceHrs + ' 小时' : '本期'}\n当前快照：${JSON.stringify(snap)}\n周期增量：${JSON.stringify(diff)}` }],
       });
-      this.report = { t: Date.now(), text: text.trim() };
+
+      // 3) 调 AI 只要非数值决策（narrative）
+      const aiJsonText = await aiChat({
+        json: true, maxTokens: 2000, temperature: 0.2,
+        system: [
+          '你是网格交易机器人的日报分析师。基于给定事实块，回复严格 JSON，只填非数值字段：',
+          '{',
+          '  "healthSummary": "总账户健康总结 ≤30 字",',
+          '  "perExchange": [{"key":"de","note":"该所 ≤20 字点评"}, ... 严格 9 项，顺序 de/ex/rs/on/pl/sx/bg/bu/ph],',
+          '  "risks":  [{"key":"rs","sev":"warn|critical","timestamp":"HH:MM","issue":"≤30字问题","code":"如429/sr=43/空","hint":"≤30字处置"}],',
+          '  "actions":[{"priority":"P0|P1|P2","key":"rs","action":"≤30字动作","reason":"≤40字理由","expectedImpact":"≤30字预期效果"}]',
+          '}',
+          '硬规则：',
+          '· perExchange 必须 9 项且 key 顺序为 de/ex/rs/on/pl/sx/bg/bu/ph（state 已给定，不要改）。',
+          '· risks 只挑真正需要关注的（挂单不同步、outOfRange、告警里有失败/异常/暂停/保证金/接管、gridEff 极端 0 或 >2、utilPct>80），无风险时给空数组 []。',
+          '· risks.timestamp 用给定告警时间；若来自当前观察无告警时间，写"现在"。code 从告警文字或健康原因里抽（如 429、sr=43、超时），无则空串。',
+          '· actions 按优先级排序：P0 立即处理（阻塞 / 亏损扩大）、P1 24h 内、P2 观察。每条必须给 reason 和 expectedImpact。actions ≤5 条。',
+          '· envChanged24=true 的所不要评论 pnl24h 变动（baseline 作废）。',
+          '· note ≤20 字要有信息量：不要"运行正常"这种废话，写 fills/网格效率/持仓评价。未配置的所写"未配置"，已停的写"已停"。',
+          '· 只输出 JSON 对象（{ 开头 } 结尾），不加 markdown，不加说明。',
+        ].join('\n'),
+        messages: [{
+          role: 'user',
+          content: '事实块：\n' + JSON.stringify({
+            windowHours24: deltas.hoursSince24,
+            windowHours72: deltas.hoursSince72,
+            overview,
+            perExchange: perFacts,
+          }),
+        }],
+      });
+
+      // 4) 解析 + 兜底
+      const ai = extractJson(aiJsonText) || {};
+      const aiPerMap = {};
+      if (Array.isArray(ai.perExchange)) for (const it of ai.perExchange) { if (it?.key) aiPerMap[it.key] = it; }
+
+      // 5) 合并成最终 JSON
+      const perExchangeFinal = KEYS.map((key) => {
+        const f = perFacts.find((x) => x.key === key);
+        const a = aiPerMap[key] || {};
+        return {
+          key, name: f.name, state: f.state, market: f.market,
+          pnl24h: f.pnl24h, fills24: f.fills24, gridEff: f.gridEff, utilPct: f.utilPct,
+          gridCount: f.gridCount, openOrders: f.openOrders,
+          equity: f.equity, uPnl: f.uPnl,
+          note: typeof a.note === 'string' ? a.note.slice(0, 40) : '',
+        };
+      });
+      const risks = Array.isArray(ai.risks) ? ai.risks.slice(0, 6).map((r) => ({
+        key: String(r.key || '').slice(0, 3),
+        sev: ['warn', 'critical'].includes(r.sev) ? r.sev : 'warn',
+        timestamp: String(r.timestamp || '').slice(0, 8),
+        issue: String(r.issue || '').slice(0, 60),
+        code: String(r.code || '').slice(0, 20),
+        hint: String(r.hint || '').slice(0, 60),
+      })) : [];
+      const actions = Array.isArray(ai.actions) ? ai.actions.slice(0, 5).map((x) => ({
+        priority: ['P0', 'P1', 'P2'].includes(x.priority) ? x.priority : 'P2',
+        key: String(x.key || '').slice(0, 3),
+        action: String(x.action || '').slice(0, 60),
+        reason: String(x.reason || '').slice(0, 80),
+        expectedImpact: String(x.expectedImpact || '').slice(0, 60),
+      })).sort((a, b) => a.priority.localeCompare(b.priority)) : [];
+
+      const finalJson = {
+        t: Date.now(),
+        windowHours24: deltas.hoursSince24,
+        windowHours72: deltas.hoursSince72,
+        overview: {
+          ...overview,
+          healthSummary: typeof ai.healthSummary === 'string' ? ai.healthSummary.slice(0, 60) : '',
+        },
+        perExchange: perExchangeFinal,
+        risks, actions,
+      };
+
+      // 6) 渲染文本 + 存 + 推送
+      const text = this._renderReport(finalJson);
+      this.report = { t: finalJson.t, text, json: finalJson };
       this._rebaseline(); // 下一期从现在起算
-      notify('【网格机器人·日报】\n' + this.report.text).catch(() => {});
+      notify('【网格机器人·日报】\n' + text).catch(() => {});
       return this.report;
     } finally { this._busy.report = false; }
+  }
+
+  /** Round 222：把结构化 JSON 渲成 Telegram 友好的可读文本（<1500 字）。 */
+  _renderReport(j) {
+    const lines = [];
+    const now = new Date(j.t || Date.now());
+    const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const winTxt = j.windowHours24 ? `近${j.windowHours24}h` : '本期';
+    lines.push(`【日报】${ts} · ${winTxt}`);
+    lines.push('━━━━━━━━━━━━━━━━━━━━━');
+
+    // 1) 总账户
+    const ov = j.overview || {};
+    lines.push('📊 总账户');
+    if (ov.totalEquity != null) {
+      const pnl = ov.totalPnl24h;
+      const pct = ov.totalPnl24hPct;
+      const arrow = pnl == null ? '' : (pnl > 0 ? '↑ +' : pnl < 0 ? '↓ ' : '· ');
+      const pnlStr = pnl == null ? '(基线未就绪)' : `(${arrow}${pnl.toFixed(2)}${pct != null ? `, ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : ''})`;
+      lines.push(`  权益: $${fmtNum(ov.totalEquity)} ${pnlStr}`);
+    } else {
+      lines.push('  权益: (待更新)');
+    }
+    const volTxt = ov.totalVolume24h != null ? `$${fmtVol(ov.totalVolume24h)}` : '-';
+    lines.push(`  成交量: ${volTxt} · 活跃: ${ov.activeCount}/${ov.activeTotal}`);
+    if (ov.healthSummary) lines.push(`  健康: ${ov.healthSummary}`);
+    lines.push('');
+
+    // 2) 分家
+    lines.push('🏢 分家');
+    const perRunning = j.perExchange.filter((p) => p.state === 'running' || p.state === 'paused');
+    const perStopped = j.perExchange.filter((p) => p.state !== 'running' && p.state !== 'paused');
+    // 用固定宽度对齐 key（2 字符）+ name（8 字符 pad）
+    for (const p of perRunning) {
+      const icon = STATE_ICON[p.state] || '⚪';
+      const name = padRight(p.name, 8);
+      const mkt = p.market ? shortMarket(p.market) : '-';
+      const pnl = p.pnl24h == null ? '  -   ' : (p.pnl24h >= 0 ? `+$${p.pnl24h.toFixed(2)}` : `-$${Math.abs(p.pnl24h).toFixed(2)}`);
+      const eff = p.gridEff != null ? ` (${Math.round(p.gridEff * 100)}%)` : '';
+      const fillsPart = (p.fills24 != null && p.gridCount) ? `${p.fills24}fills/${p.gridCount}格${eff}` : (p.fills24 != null ? `${p.fills24}fills` : '');
+      const util = p.utilPct != null ? ` · util ${p.utilPct}%` : '';
+      const note = p.note ? ` — ${p.note}` : '';
+      lines.push(`  ${icon} ${p.key} ${name}· ${mkt} · ${pnl} · ${fillsPart}${util}${note}`);
+    }
+    if (perStopped.length) {
+      const grouped = perStopped.map((p) => p.key).join('/');
+      lines.push(`  ⚪ ${grouped} · 未配置或已停`);
+    }
+    lines.push('');
+
+    // 3) 风险
+    if (j.risks.length) {
+      lines.push('⚠️ 风险');
+      for (const r of j.risks) {
+        const icon = SEV_ICON[r.sev] || '⚠️';
+        const codeTxt = r.code ? ` (${r.code})` : '';
+        const hintTxt = r.hint ? ` → ${r.hint}` : '';
+        lines.push(`  ${icon} ${r.timestamp || '现在'} ${r.key} ${r.issue}${codeTxt}${hintTxt}`);
+      }
+      lines.push('');
+    }
+
+    // 4) 建议
+    if (j.actions.length) {
+      lines.push('✅ 建议 (优先级排序)');
+      for (const a of j.actions) {
+        lines.push(`  ☐ ${a.priority} ${a.key} ${a.action} · ${a.reason}${a.expectedImpact ? ` → ${a.expectedImpact}` : ''}`);
+      }
+    }
+    lines.push('━━━━━━━━━━━━━━━━━━━━━');
+    return lines.join('\n');
   }
 
   // ---------- 3) 市况分析 ----------
@@ -614,6 +901,38 @@ class AiService {
   }
 
   _save() {
-    try { saveSnapshot('ai', { report: this.report, market: this.market, baseline: this._baseline, reportDoneDay: this._reportDoneDay }); } catch { /* ignore */ }
+    try {
+      saveSnapshot('ai', {
+        report: this.report,
+        market: this.market,
+        baseline: this._baseline,                 // 保留旧字段以便回滚兼容
+        baselineHistory: this._baselineHistory,   // Round 222：3 槽 ring buffer
+        reportDoneDay: this._reportDoneDay,
+      });
+    } catch { /* ignore */ }
   }
+}
+
+// ---------- Round 222：日报渲染小工具 ----------
+function fmtNum(v) {
+  if (v == null || !Number.isFinite(v)) return '-';
+  return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtVol(v) {
+  if (v == null || !Number.isFinite(v)) return '-';
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return (v / 1_000_000).toFixed(2) + 'M';
+  if (abs >= 1000) return (v / 1000).toFixed(1) + 'K';
+  return v.toFixed(2);
+}
+function padRight(s, n) {
+  s = String(s || '');
+  // 中文按 2 字符宽度粗略处理，只对 pad 用；西文 name（EXNAMES）没中文所以简单 pad 就够
+  if (s.length >= n) return s;
+  return s + ' '.repeat(n - s.length);
+}
+function shortMarket(name) {
+  // 'BTC-USD' → 'BTC', 'BTC/USDT' → 'BTC'
+  const m = String(name || '').match(/^([A-Za-z0-9]{2,10})[\-/]/);
+  return m ? m[1].toUpperCase() : String(name).slice(0, 8);
 }
