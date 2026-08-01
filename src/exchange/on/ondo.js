@@ -326,7 +326,8 @@ export class OndoExchange extends EventEmitter {
     } catch { /* 忽略，下面兜底逐单撤 */ }
     // 兜底：从 exchange 拉真实 open orders 逐单撤——批量删除可能 silent 成功但
     // 实际留 orphan（用户遇到过 Perpl 132 单遗留同类问题）
-    const exchangeOrders = await this.fetchOpenOrders(Number(marketId)).catch(() => []);
+    // Round 226b：fetchOpenOrders 接口挂时会返 null（信号：不可信），|| [] 兜底避免 iterate 崩。
+    const exchangeOrders = (await this.fetchOpenOrders(Number(marketId)).catch(() => [])) || [];
     for (const o of exchangeOrders) {
       const oid = String(o.orderId ?? o.id ?? '');
       if (oid) await this.cancelOrder(Number(marketId), oid).catch(() => {});
@@ -347,11 +348,18 @@ export class OndoExchange extends EventEmitter {
     if (!symbol) return [];
     // Ondo 参数名不完全确定：`open=true` 可能返空，`state=open` 是 TradingView UDF
     // 常见格式；再兜底不带过滤器（拿全部再本地过滤）。哪个先命中就用哪个。
+    // Round 226b：区分 "所有 endpoint 都 throw"（接口挂）与 "成功但返 []"（真 0 单）。
+    // 之前全落到 return [] → bot.reconcileOpenOrders 触发 massVanish 假警报（用户观察
+    // 到 Telegram 5 次"交易所返回 0 单本地 66 单"就是这条路径）。同 Round 222a
+    // Phoenix 修法：接口挂返 null，让 bot line 920 `!Array.isArray(real) → return` 跳过对账。
+    let anyOk = false;
+    let lastErr = null;
     for (const q of [`market=${encodeURIComponent(symbol)}&open=true`,
                      `market=${encodeURIComponent(symbol)}&state=open`,
                      `market=${encodeURIComponent(symbol)}`]) {
       try {
         const j = await this._req('GET', `/v1/perps/orders?${q}`);
+        anyOk = true;
         let arr = Array.isArray(j) ? j : (j.result || j.orders || j.data || []);
         // 若未按 open 过滤，我们自己过滤掉已成交/已撤销
         arr = arr.filter((o) => {
@@ -365,7 +373,11 @@ export class OndoExchange extends EventEmitter {
             side: o.side,
           }));
         }
-      } catch { /* try next */ }
+      } catch (e) { lastErr = e; /* try next */ }
+    }
+    if (!anyOk) {
+      this._lastFetchOrdersErr = lastErr?.message || String(lastErr || 'all endpoints failed');
+      return null;
     }
     return [];
   }
