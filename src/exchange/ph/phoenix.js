@@ -383,15 +383,19 @@ export class PhoenixExchange extends EventEmitter {
   }
 
   async fetchOpenOrders(_marketId) {
-    if (!this._authorityPubkey) return [];
+    // Round 222a: Phoenix orders_v2 endpoint 返 "Trader not found" 即使
+    // /v1/trader/state 显示 active。API 未完成或需要不同 auth (subaccount PDA)。
+    // 返 null 让 bot 走 "unknown state" 分支跳过 reconcile —— 而不是返 []
+    // 让 bot 误判"链上 0 单本地 40 单"触发 massVanish/vanish alert 循环。
+    if (!this._authorityPubkey) return null;
     try {
       const orders = await this._req(
         'GET',
-        `/v1/traders/${this._authorityPubkey}/orders_v2?status=open`,
+        `/v1/traders/${this._authorityPubkey}/orders_v2?status=open&trader_pda_index=0&limit=100`,
         null,
         true,
       );
-      if (!Array.isArray(orders)) return [];
+      if (!Array.isArray(orders)) return null;
       return orders.map((o) => ({
         orderId: String(o.orderId || o.id),
         price: Number(o.priceInTicks || o.price || 0),
@@ -399,7 +403,7 @@ export class PhoenixExchange extends EventEmitter {
       }));
     } catch (e) {
       this.lastError = e.message;
-      return [];
+      return null;   // 关键：不返 [] 假装"链上 0 单"
     }
   }
 
@@ -505,6 +509,9 @@ export class PhoenixExchange extends EventEmitter {
       const bars = await this._req('GET', `/v1/candles/${m.symbol}?timeframe=${tf}&limit=${limit || 100}`);
       if (!Array.isArray(bars)) return [];
       return bars.map((b) => ({
+        // Round 222a: 前端 chart 期望 c.time 字段（ms）—— 其他 8 家都返 time。
+        // Round 213 用 t 导致前端 Invalid Date 崩。同时 keep t 兼容 analyzeTrend。
+        time: Number(b.time),
         t: Number(b.time),
         open: Number(b.markOpen || b.open),
         high: Number(b.markHigh || b.high),
