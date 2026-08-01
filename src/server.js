@@ -12,6 +12,17 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+// Round 221: 全局 unhandledRejection/uncaughtException handler。防止 3rd-party
+// SDK (Solana web3.js WebSocket subscription client 遇 429) 抛未处理 rejection
+// 把整个 Node 进程 killed → 502 gateway。log 记下但不 exit。
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason?.message || reason);
+  if (reason?.stack) console.error(reason.stack.split('\n').slice(0, 5).join('\n'));
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err?.message || err);
+  if (err?.stack) console.error(err.stack.split('\n').slice(0, 5).join('\n'));
+});
 import { getConfig, ROOT } from './config.js';
 import { createExchange as createDeExchange } from './exchange/de/index.js';
 import { createExchange as createExExchange } from './exchange/ex/index.js';
