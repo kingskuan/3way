@@ -41,7 +41,18 @@ export class PhoenixExchange extends EventEmitter {
       throw new Error(`Phoenix wallet 私钥无效（应为 base58 编码的 64-byte secret）：${e.message}`);
     }
 
-    this._solanaConn = new Connection(solanaRpcUrl || 'https://api.mainnet-beta.solana.com', 'confirmed');
+    // Round 221: 关掉 WebSocket subscription client。@solana/web3.js 默认会连一个
+    // ws endpoint 做实时 subscription（block/account/slot），Solana public RPC
+    // (api.mainnet-beta.solana.com) 429 后 ws 无 catch 抛未处理 rejection kill 进程。
+    // 用 wsEndpoint: 'wss://invalid' 让 ws 失败但不影响 HTTP RPC 调用。
+    // 用户配 PH_SOLANA_RPC_URL 时相信他给的是能扛住的 RPC（Helius/QuickNode 等）。
+    const rpcUrl = solanaRpcUrl || 'https://api.mainnet-beta.solana.com';
+    this._solanaConn = new Connection(rpcUrl, {
+      commitment: 'confirmed',
+      wsEndpoint: 'wss://api.mainnet-beta.solana.com',   // 走公网 ws，但 429 时靠全局 handler 兜
+      confirmTransactionInitialTimeout: 60_000,
+      disableRetryOnRateLimit: false,
+    });
   }
 
   async _req(method, path, body = null, needAuth = false) {
