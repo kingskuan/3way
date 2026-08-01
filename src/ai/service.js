@@ -179,6 +179,11 @@ class AiService {
           if (Array.isArray(arr)) exchOO = arr.length;
         } catch { /* keep stale value */ }
       }
+      // Round 228: exchangeOpenOrders=null 表示"接口暂不可靠"（Phoenix/Perpl orders_v2
+       // 返 Trader not found、Ondo 3 endpoint 全 throw 等），不是真的挂单同步失败。
+      // 把 null 折成 trackedOrders → AI 看到 chain==tracked，不会误报"chainOrders=null 挂单未同步"。
+      // unreliable-listing 交易所（hasReliableOrderListing=false）本来就靠 WS 对齐，不需要 chain 数字。
+      const safeChainOO = (exchOO == null) ? s.openOrders : exchOO;
       out[key] = {
         exchange: EXNAMES[key], tradeMode: s.mode,
         running: s.running, recovery: s.recovery,
@@ -188,7 +193,7 @@ class AiService {
         equity: s.equity, balance: s.balance,
         realizedPnl: s.realizedPnl, unrealizedPnl: s.unrealizedPnl, returnPct: s.returnPct,
         position: s.position,
-        trackedOrders: s.openOrders, exchangeOpenOrders: exchOO,
+        trackedOrders: s.openOrders, exchangeOpenOrders: safeChainOO,
         completedRungs: s.stats?.completedRungs, volume: s.volume,
         gridConfig: s.config ? {
           mode: s.config.mode, lower: s.config.lower, upper: s.config.upper,
@@ -247,19 +252,35 @@ class AiService {
       this.sentinelHistory.unshift(this.sentinel);
       if (this.sentinelHistory.length > 20) this.sentinelHistory.pop();
       this.sentinelError = null;
-      // 推送策略：非 ok 且（级别变化 或 距上次推送>30分钟）才推，避免刷屏
+      // 推送策略（Round 228 · 签名去重）：只推 "attention 状态签名" 变化的告警，
+      // 或距上次推送 >30 分钟才允许重推同签名。签名 = 排序好的 [key+level+summary前16字]
+      // 集合。这样 Ondo 一直浮亏（AI 级别在 warn↔critical 之间飘）不会每 5-15 分钟就
+      // 推一条，但真新 DEX 进入 warn 或 summary 明显变化仍能触发推送。
       const lv = this.sentinel.level;
-      if (lv !== 'ok' && (lv !== this._lastPushLevel || Date.now() - this._lastPushAt > 30 * 60_000)) {
-        this._lastPushAt = Date.now(); this._lastPushLevel = lv;
-        const perTxt = this.sentinel.per
+      if (lv !== 'ok') {
+        const sig = this.sentinel.per
           ? Object.entries(this.sentinel.per)
               .filter(([, v]) => v && v.level && v.level !== 'ok')
-              .map(([k, v]) => `${EXNAMES[k]}：${v.summary}${v.advice ? `（建议：${v.advice}）` : ''}`)
-              .join('\n')
-          : this.sentinel.detail;
-        notify(`【网格机器人·${lv === 'critical' ? '严重' : '注意'}】${this.sentinel.summary}\n${perTxt}`).catch(() => {});
+              .map(([k, v]) => `${k}:${(v.summary || '').slice(0, 16)}`)
+              .sort()
+              .join('|')
+          : `overall:${(this.sentinel.summary || '').slice(0, 24)}`;
+        const changed = sig !== this._lastPushSig;
+        const cold = Date.now() - this._lastPushAt > 30 * 60_000;
+        if (changed || cold) {
+          this._lastPushAt = Date.now();
+          this._lastPushLevel = lv;
+          this._lastPushSig = sig;
+          const perTxt = this.sentinel.per
+            ? Object.entries(this.sentinel.per)
+                .filter(([, v]) => v && v.level && v.level !== 'ok')
+                .map(([k, v]) => `${EXNAMES[k]}：${v.summary}${v.advice ? `（建议：${v.advice}）` : ''}`)
+                .join('\n')
+            : this.sentinel.detail;
+          notify(`【网格机器人·${lv === 'critical' ? '严重' : '注意'}】${this.sentinel.summary}\n${perTxt}`).catch(() => {});
+        }
       }
-      if (lv === 'ok') this._lastPushLevel = 'ok';
+      if (lv === 'ok') { this._lastPushLevel = 'ok'; this._lastPushSig = ''; }
       return this.sentinel;
     } catch (e) {
       this.sentinelError = e?.message || String(e);
