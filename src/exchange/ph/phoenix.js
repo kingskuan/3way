@@ -402,20 +402,27 @@ export class PhoenixExchange extends EventEmitter {
     // /v1/trader/state 显示 active。API 未完成或需要不同 auth (subaccount PDA)。
     // 返 null 让 bot 走 "unknown state" 分支跳过 reconcile —— 而不是返 []
     // 让 bot 误判"链上 0 单本地 40 单"触发 massVanish/vanish alert 循环。
+    // Round 230：先 probe 找能 work 的 endpoint（有可能是 /orders 无 _v2 或 /open_orders）
     if (!this._authorityPubkey) return null;
+    const tmpl = await this._probeOrdersEndpoint();
+    if (!tmpl) return null;
+    const path = tmpl.replace('{LIMIT}', '100');
     try {
-      const orders = await this._req(
-        'GET',
-        `/v1/traders/${this._authorityPubkey}/orders_v2?status=open&trader_pda_index=0&limit=100`,
-        null,
-        true,
-      );
+      const orders = await this._req('GET', path, null, true);
       if (!Array.isArray(orders)) return null;
-      return orders.map((o) => ({
-        orderId: String(o.orderId || o.id),
-        price: Number(o.priceInTicks || o.price || 0),
-        side: (o.side === 'Bid' || o.side === 'buy') ? 'buy' : 'sell',
-      }));
+      const m = null;   // 逐单 map，marketId 从 side path 里查 markets
+      return orders.map((o) => {
+        const symbol = o.symbol || o.market;
+        const mid = this._marketSymbolToId.get(symbol);
+        const mm = mid != null ? this.markets.get(mid) : null;
+        let price = Number(o.price ?? o.limitPrice ?? 0);
+        if (!price && o.priceInTicks && mm) price = Number(o.priceInTicks) * mm.stepPrice;
+        return {
+          orderId: String(o.orderId ?? o.id ?? o.order_id ?? ''),
+          price,
+          side: (o.side === 'Bid' || o.side === 'buy') ? 'buy' : 'sell',
+        };
+      }).filter((x) => x.orderId);
     } catch (e) {
       this.lastError = e.message;
       return null;   // 关键：不返 [] 假装"链上 0 单"
@@ -465,6 +472,106 @@ export class PhoenixExchange extends EventEmitter {
 
   async reconcileOpenOrders() { return true; }
 
+  // Round 230: Phoenix 没有 WS fill event / orders_v2 endpoint 又返 "Trader not found"
+  // → volume/completedRungs 一直卡 0。probe 一组候选 endpoint，找到能返数组的就 cache
+  // 起来循环 poll，emit 'fill' 给 bot 累计 stats.volume。也 probe 一遍 orders 端点，
+  // 让 fetchOpenOrders 能真的看到链上单。
+  async _probeFillsEndpoint() {
+    if (this._fillsProbed) return this._fillsPath;
+    this._fillsProbed = true;
+    const pk = this._authorityPubkey;
+    const candidates = [
+      `/v1/traders/${pk}/fills?limit=50`,
+      `/v1/traders/${pk}/fills_v2?limit=50`,
+      `/v1/traders/${pk}/trades?limit=50`,
+      `/v1/traders/${pk}/execution-history?limit=50`,
+      `/v1/traders/${pk}/execution_history?limit=50`,
+      `/v1/traders/${pk}/orders_v2?status=filled&limit=50&trader_pda_index=0`,
+      `/v1/fills?authority=${pk}&limit=50`,
+      `/v1/trades?authority=${pk}&limit=50`,
+    ];
+    for (const path of candidates) {
+      try {
+        const data = await this._req('GET', path, null, true);
+        if (Array.isArray(data)) {
+          this._fillsPath = path.replace(/limit=\d+/, 'limit={LIMIT}');
+          try { console.log(`[Phoenix] fills endpoint 探到：${path} → ${data.length} 条`); } catch {}
+          return this._fillsPath;
+        }
+      } catch { /* try next */ }
+    }
+    try { console.log('[Phoenix] fills endpoint 全部探空，volume 追踪不可用'); } catch {}
+    return null;
+  }
+
+  async _probeOrdersEndpoint() {
+    if (this._ordersProbed) return this._ordersPath;
+    this._ordersProbed = true;
+    const pk = this._authorityPubkey;
+    const candidates = [
+      `/v1/traders/${pk}/orders?status=open&trader_pda_index=0&limit=100`,
+      `/v1/traders/${pk}/open_orders?limit=100`,
+      `/v1/traders/${pk}/orders_v2?status=open&trader_pda_index=0&limit=100`,
+      `/v1/traders/${pk}/orders?limit=100`,
+      `/v1/open-orders?authority=${pk}&limit=100`,
+    ];
+    for (const path of candidates) {
+      try {
+        const data = await this._req('GET', path, null, true);
+        if (Array.isArray(data)) {
+          this._ordersPath = path.replace(/limit=\d+/, 'limit={LIMIT}');
+          try { console.log(`[Phoenix] orders endpoint 探到：${path} → ${data.length} 条`); } catch {}
+          return this._ordersPath;
+        }
+      } catch { /* try next */ }
+    }
+    try { console.log('[Phoenix] orders endpoint 全部探空，chain-orders 追踪不可用'); } catch {}
+    return null;
+  }
+
+  async _pollFills() {
+    if (!this._authorityPubkey || !this._authToken) return;
+    const tmpl = await this._probeFillsEndpoint();
+    if (!tmpl) return;
+    const path = tmpl.replace('{LIMIT}', '50');
+    let arr;
+    try { arr = await this._req('GET', path, null, true); }
+    catch (e) { this.lastError = `fills poll: ${e.message}`; return; }
+    if (!Array.isArray(arr)) return;
+    this._knownFillIds = this._knownFillIds || new Set();
+    for (const f of arr) {
+      const fid = String(
+        f.fillId ?? f.id ?? f.tradeId ?? f.trade_id ?? f.sequence ?? f.slot ?? f.signature ?? ''
+      );
+      if (!fid || this._knownFillIds.has(fid)) continue;
+      this._knownFillIds.add(fid);
+      const symbol = f.symbol || f.market || f.market_symbol;
+      const marketId = this._marketSymbolToId.get(symbol);
+      if (!marketId) continue;
+      const m = this.markets.get(marketId);
+      // 价格：Phoenix 用 priceInTicks 或直接 price
+      let price = Number(f.price ?? f.fillPrice ?? f.fill_price ?? 0);
+      if (!price && f.priceInTicks && m) price = Number(f.priceInTicks) * m.stepPrice;
+      // 数量：baseLots 或 size
+      let size = Number(f.size ?? f.baseSize ?? f.fillSize ?? f.fill_size ?? f.base_size ?? 0);
+      if (!size && f.numBaseLots && m) size = Number(f.numBaseLots) * m.stepSize;
+      if (!(price > 0 && size > 0)) continue;
+      const rawSide = f.side || f.direction || '';
+      const side = /^b(id|uy)$/i.test(rawSide) ? 'buy' : 'sell';
+      this.emit('fill', {
+        marketId, side, price, sizeBase: size,
+        orderId: String(f.orderId ?? f.order_id ?? f.clientOrderId ?? fid),
+        clientOrderId: String(f.clientOrderId ?? f.client_order_id ?? ''),
+        levelIndex: undefined,
+      });
+    }
+    // 缓存 dedup 集不无限长
+    if (this._knownFillIds.size > 500) {
+      const keep = [...this._knownFillIds].slice(-250);
+      this._knownFillIds = new Set(keep);
+    }
+  }
+
   start() {
     if (this._pollTimer) return;
     // 首次立刻拉一批 top 市场价格（BTC/ETH/SOL 优先）
@@ -478,6 +585,8 @@ export class PhoenixExchange extends EventEmitter {
         this._pollCount++;
         if (this._pollCount % 3 === 0 && this._authToken) {
           await this._refreshBalance();
+          // Round 230: fills 每 30s poll 一次（跟 balance 一起，省 auth 调用）
+          await this._pollFills().catch((e) => { this.lastError = `pollFills: ${e.message}`; });
         }
       } catch (e) {
         this.lastError = e.message;
