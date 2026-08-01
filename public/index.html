@@ -4785,14 +4785,18 @@ function renderOverview(data) {
   const tip = $('tot-vol-tip');
   if (tip) {
     // Round 74：区分"未运行"（灰色标签）与"运行中 0 成交"（无标签）
+    // Round 229：数字改用同 eqTip 的 NEON green + glow —— 之前 v4 黄底把默认色顶成
+    // 深墨（--v4-ink=#0A0A0A），tooltip 黑底 → 数字看不见。
+    const NEON = '#39ff14';
+    const GLOW = '0 0 4px rgba(57,255,20,0.5)';
     tip.innerHTML = perEx
       .sort((a,b) => b.vol - a.vol)
       .map(x => {
         const tag = x.running ? '' : ' <span style="color:var(--v2-mut);font-size:10px">(未运行)</span>';
-        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-mut)">${x.name}${tag}</span><span class="tt-num">${fmt(x.vol)}</span></div>`;
+        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-txt);font-weight:500">${x.name}${tag}</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(x.vol)}</span></div>`;
       })
       .join('')
-      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span>合计</span><span class="tt-num">${fmt(totVolume)}</span></div>`;
+      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span style="color:var(--v2-txt)">合计</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(totVolume)}</span></div>`;
   }
   // Round 84：简化——只显示 X 运行中（不再拼 DE / EX / RS / ON / PL / SX : LIVE...）
   $('tot-running').innerHTML = running === 0
@@ -5926,20 +5930,17 @@ async function bulkResetDemo(btn) {
     const track = document.getElementById('v4-ticker-track');
     if (!track) return;
     const items = [];
+    // Round 229：ticker 改成每所 TVL（=账户 equity）——之前 PnL+格数用户在下方
+    // tot-pnl / tot-rungs 已经看得到，蓝色 bar 换成账户余额情报密度更高。
     KEYS.forEach(([k, name]) => {
-      const pnlEl = document.getElementById(`ov-${k}-pnl`);
-      const rungsEl = document.getElementById(`ov-${k}-rungs`);
-      const pnlTxt = pnlEl ? (pnlEl.textContent || '').trim() : '—';
-      const rungsTxt = rungsEl ? (rungsEl.textContent || '').trim() : '';
-      // 判断涨跌：文本里带 -/负号 → down；否则 up
-      const isDn = /^-|亏|▼/.test(pnlTxt);
-      const arrow = isDn ? '▼' : '▲';
-      const cls = isDn ? 'tk-dn' : 'tk-up';
+      const eqEl = document.getElementById(`ov-${k}-eq`);
+      const eqTxt = eqEl ? (eqEl.textContent || '').trim() : '—';
+      // 有余额显示 tvl；balance=0 或 "—" 时标灰"未启用"避免刷屏 9 条 0
+      const isEmpty = !eqTxt || eqTxt === '—' || eqTxt === '0' || eqTxt === '0.00';
       items.push(
         `<span class="v4-ticker-item">
           <span class="tk-name">${name}</span>
-          <span class="tk-num ${cls}">${arrow} ${pnlTxt}</span>
-          ${rungsTxt && rungsTxt !== '—' ? `<span class="tk-sep">·</span><span class="tk-num">${rungsTxt}格</span>` : ''}
+          <span class="tk-num ${isEmpty ? 'tk-dn' : 'tk-up'}" style="opacity:${isEmpty ? 0.5 : 1}">TVL ${isEmpty ? '—' : '$' + eqTxt}</span>
         </span>`
       );
     });
