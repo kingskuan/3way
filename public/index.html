@@ -1227,20 +1227,26 @@ input[type=number], .kv .val, .conn, .badge, code, pre,
   padding: 0 20px !important;
   min-height: 56px !important;
 }
-.header-logo-txt {
+/* Round 224 hotfix: 提高 .header-logo .header-logo-txt 特异性 (0,2,0) 才能
+   赢过老 line 469 的 .header-logo span (0,1,1)——否则 QnV 字被强制白色不可见。 */
+.header-logo .header-logo-txt,
+.header-logo span.header-logo-txt {
   font-family: var(--v4-ff-display) !important;
   font-weight: 900 !important;
   font-size: 18px !important;
   letter-spacing: -0.04em !important;
   color: var(--v4-ink) !important;
   text-shadow: none !important;
+  background: none !important;
+  -webkit-text-fill-color: var(--v4-ink) !important;
 }
+/* Round 224 hotfix: logo 不要在格里（跟 v3 Round 77 一致 · 裸 logo 风格） */
 .header-logo-img {
-  border: 2px solid var(--v4-ink) !important;
-  border-radius: 8px !important;
-  background: var(--v4-bg-secondary) !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
   box-shadow: none !important;
-  padding: 2px;
+  padding: 0 !important;
 }
 .header-sep {
   background: var(--v4-ink) !important;
