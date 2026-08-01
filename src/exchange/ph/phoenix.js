@@ -21,6 +21,11 @@ export class PhoenixExchange extends EventEmitter {
     this.dataSource = 'connecting';
     this.lastOkAt = 0;
     this.lastError = null;
+    // Round 228: Phoenix orders_v2 endpoint 返 "Trader not found"，fetchOpenOrders
+    // 已经按 Round 222a 返 null。同 Perpl / StandX 的做法声明 unreliable，让 bot 走
+    // WS-authoritative 分支，同时 sentinel snapshot 也会 sanitize 掉 null，别再报"挂单未同步"
+    // 假警报（用户 Telegram 收到 chainOrders=null 已经好几次）。
+    this.hasReliableOrderListing = false;
     this.balance = 0;
     this.realizedPnl = 0;
     this.orders = new Map();
