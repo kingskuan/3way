@@ -1516,6 +1516,14 @@ input[type=number], .kv .val, .conn, .badge, code, pre,
   .total-card:first-child .val { font-size: 36px !important; }
   .total-card .val { font-size: 22px !important; }
 }
+/* Round 227：两个 tooltip（总权益 / 总交易量分所展开）的数字都用主总权益 .val
+   同款 mono 字体，视觉统一（用户反馈"折字体"不一致，要求跟总权益那套走）。 */
+.total-card [id$="-tip"] .tt-num {
+  font-family: var(--v4-ff-mono) !important;
+  font-weight: 900 !important;
+  letter-spacing: -0.02em !important;
+  font-variant-numeric: tabular-nums !important;
+}
 
 /* — 按钮：粗边 + 硬影 + 按压 ———————————————————————— */
 .btn {
@@ -4769,10 +4777,10 @@ function renderOverview(data) {
       .sort((a,b) => b.eq - a.eq)
       .map(x => {
         const tag = x.running ? '' : ' <span style="color:var(--v2-mut);font-size:10px">(未运行)</span>';
-        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-txt);font-weight:500">${x.name}${tag}</span><span style="font-variant-numeric:tabular-nums;color:${NEON};font-weight:700;text-shadow:${GLOW}">${fmt(x.eq)}</span></div>`;
+        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-txt);font-weight:500">${x.name}${tag}</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(x.eq)}</span></div>`;
       })
       .join('')
-      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span style="color:var(--v2-txt)">合计</span><span style="font-variant-numeric:tabular-nums;color:${NEON};font-weight:800;text-shadow:${GLOW}">${fmt(totEquity)}</span></div>`;
+      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span style="color:var(--v2-txt)">合计</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(totEquity)}</span></div>`;
   }
   const tip = $('tot-vol-tip');
   if (tip) {
@@ -4781,10 +4789,10 @@ function renderOverview(data) {
       .sort((a,b) => b.vol - a.vol)
       .map(x => {
         const tag = x.running ? '' : ' <span style="color:var(--v2-mut);font-size:10px">(未运行)</span>';
-        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-mut)">${x.name}${tag}</span><span style="font-variant-numeric:tabular-nums">${fmt(x.vol)}</span></div>`;
+        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-mut)">${x.name}${tag}</span><span class="tt-num">${fmt(x.vol)}</span></div>`;
       })
       .join('')
-      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span>合计</span><span style="font-variant-numeric:tabular-nums">${fmt(totVolume)}</span></div>`;
+      + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span>合计</span><span class="tt-num">${fmt(totVolume)}</span></div>`;
   }
   // Round 84：简化——只显示 X 运行中（不再拼 DE / EX / RS / ON / PL / SX : LIVE...）
   $('tot-running').innerHTML = running === 0
