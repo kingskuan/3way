@@ -375,9 +375,13 @@ export class PhoenixExchange extends EventEmitter {
       await this._signAndSubmitInstructions(instructionsData);
     } catch { /* silent, fall back to per-order cancel from fetchOpenOrders */ }
     // 兜底：从 exchange 拉真单逐单撤
+    // Round 222b: fetchOpenOrders 现在返 null 表示"unknown state"，for-of null 崩。
+    // 只有拉到真实数组才逐单撤；null 时相信 /v1/ix/cancel-all-orders 已经清了。
     const real = await this.fetchOpenOrders(marketId);
-    for (const o of real) {
-      await this.cancelOrder(marketId, o.orderId).catch(() => {});
+    if (Array.isArray(real)) {
+      for (const o of real) {
+        await this.cancelOrder(marketId, o.orderId).catch(() => {});
+      }
     }
     return true;
   }
