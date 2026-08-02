@@ -588,9 +588,13 @@ export class GridBot {
     if (this.fills.length > 50) this.fills.pop();
 
     const isRecovery = !!(act && act.recovery);
+    // Round 237: 只在 有 act 且 明确 opening=false 时才算 closing。之前 fallback
+    // "neutral mode sell = closing" 让 Phoenix 12 个 short opening 单被误判为
+    // completedRungs → gridProfit +$739（无中生有）→ Round 154 策略无效熔断。
+    // 无 act = bot 不能确认这单是不是自己下的（restart / 外部下单 / poll-based fill），
+    // 不加 gridProfit 更安全。真 closing 会 replacement 重挂后有 act，下轮正确记账。
     const closing = isRecovery ? true
-      : (act ? act.opening === false
-             : ((this.config.mode === 'short') ? f.side === 'buy' : f.side === 'sell'));
+      : (act ? act.opening === false : false);
     if (closing) {
       this.stats.completedRungs++;
       // Incremental accumulation with the ACTUAL fill size: adjustRange no longer
