@@ -419,6 +419,17 @@ export class PhoenixExchange extends EventEmitter {
     const marketId = Number(o.marketId);
     const m = this.markets.get(marketId);
     if (!m) throw new Error(`Phoenix 未知 marketId=${marketId}`);
+    // Round 250: auth 挂 (real-readonly) 时静默跳过下单，不 throw 不 retry。
+    // 之前手动 bot fill 后补单 → auth 拒 → bot _queueRetry 5 次 → alert →
+    // 哨兵每 5 min 升级告警刷 Telegram。返 {orderId:null, skipped:true} 让 bot
+    // 认为"跳过"不算失败（同 Round 234 Unhealthy trader 防 loop 的 pattern）。
+    if (this.dataSource === 'real-readonly') {
+      if (!this._authSkipLogged || Date.now() - this._authSkipLogged > 300_000) {
+        this._authSkipLogged = Date.now();
+        try { console.log(`[Phoenix] placeLimitOrder 跳过：auth 挂 (real-readonly)，等 backoff 结束再补单`); } catch {}
+      }
+      return { orderId: null, skipped: true };
+    }
     const side = o.side === 'buy' ? 'Bid' : 'Ask';
     // priceInTicks = price / priceTickSize; numBaseLots = sizeBase / baseLotSize
     const priceInTicks = Math.round(Number(o.price) / m.stepPrice);
