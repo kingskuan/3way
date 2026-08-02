@@ -498,20 +498,31 @@ export class PhoenixExchange extends EventEmitter {
     if (!m) return true;
     // Round 219: cancel-all-orders 需要 traderPdaIndex
     const body = { authority: this._authorityPubkey, traderPdaIndex: 0, symbol: m.displayName };
+    // Round 249: 之前 try/catch 吞了 auth 错误还返 true —— emergency-cleanup 认为
+    // 撤成功但实际 auth 挂 backoff 一单都没动。用户按紧急清但 Phoenix web 显示 73 单
+    // 还挂着就是这个 bug。现在保留 primary error 到最后，只有 fallback fetchOpenOrders
+    // 拿到真单并全部逐单撤才吞掉 primary error。
+    let primaryErr = null;
     try {
       const instructionsData = await this._req('POST', '/v1/ix/cancel-all-orders', body, true);
       await this._signAndSubmitInstructions(instructionsData);
-    } catch { /* silent, fall back to per-order cancel from fetchOpenOrders */ }
+      return true;   // full-market cancel 成功就 done
+    } catch (e) { primaryErr = e; }
     // 兜底：从 exchange 拉真单逐单撤
     // Round 222b: fetchOpenOrders 现在返 null 表示"unknown state"，for-of null 崩。
     // 只有拉到真实数组才逐单撤；null 时相信 /v1/ix/cancel-all-orders 已经清了。
     const real = await this.fetchOpenOrders(marketId);
-    if (Array.isArray(real)) {
+    if (Array.isArray(real) && real.length > 0) {
+      let cancelledAny = false;
       for (const o of real) {
-        await this.cancelOrder(marketId, o.orderId).catch(() => {});
+        try { await this.cancelOrder(marketId, o.orderId); cancelledAny = true; }
+        catch { /* 逐单可能部分成功 */ }
       }
+      if (cancelledAny) return true;   // 至少撤了一部分，视为 partial success
     }
-    return true;
+    // Round 249: fallback 也没救 → 明确 throw 让 emergency-cleanup 记 cleanupErr
+    if (primaryErr) throw primaryErr;
+    return true;   // 无 primary error 且 real 是 null/空，认为链上本来就空
   }
 
   async fetchOpenOrders(_marketId) {

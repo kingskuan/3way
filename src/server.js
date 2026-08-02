@@ -434,9 +434,15 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
             }
           }
           // 再跑一次 cancelAll 兜底
+          // Round 249: 对没本地 oid 的市场也调 cancelAll —— Phoenix 73 单挂着 QnV
+          // 一个 oid 都没跟踪（fetchOpenOrders 返 null + bot 没跑），但 cancelAll
+          // API 不需要 oid 列表，直接按 market 全撤。跟 primary 撤单同价值。
           let cleanupErr = null;
           try { await exchange.cancelAll?.(mktId); }
-          catch (e) { cleanupErr = e?.message || String(e); }
+          catch (e) {
+            cleanupErr = e?.message || String(e);
+            if (failMessages.length < 5) failMessages.push(`${m.displayName} cancelAll: ${cleanupErr.slice(0, 100)}`);
+          }
           totalCancelled += cancelledHere;
           totalFailed += failedHere;
           let closedHere = false;
@@ -450,7 +456,9 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
               if (failMessages.length < 5) failMessages.push(`${m.displayName} closePosition: ${(e?.message || e).slice(0, 100)}`);
             }
           }
-          if (cancelledHere > 0 || failedHere > 0 || closedHere) {
+          // Round 249: cleanupErr 也要触发 perMarket 记录 —— 用户能看到"哪些市场
+          // cancelAll 挂了"，之前无 oid + 无 closePosition 的市场被静默 skip 掉。
+          if (cancelledHere > 0 || failedHere > 0 || closedHere || cleanupErr) {
             perMarket.push({
               market: m.displayName,
               cancelled: cancelledHere,
