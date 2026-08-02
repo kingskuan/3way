@@ -936,6 +936,45 @@ const server = http.createServer(async (request, res) => {
       });
     }
 
+    // Round 236: 各 DEX 头版 TVL (defillama)。ticker 从这拉替代之前显示的用户账户余额
+    // defillama /overview/derivatives (24h volume) 已进付费墙，free /tvl/{slug} 只有 TVL
+    // Ondo/Phoenix perp DEX 太新还没上 defillama → 显示 N/A
+    if (p === '/api/dex-metrics') {
+      const slugs = {
+        de: 'decibel',        // Derivatives $29.9M
+        ex: 'extended-perps', // Derivatives $127M
+        rs: 'risex',          // Derivatives $16.8M
+        on: null,             // Ondo perp 未上 defillama
+        pl: 'perpl',          // Derivatives $6.9M
+        sx: 'standx-perps',   // Derivatives (少数没数据)
+        bg: 'bitget',         // CEX $4.96B
+        bu: 'bitunix',        // CEX $215.5M
+        ph: null,             // Phoenix perp 未上 defillama
+      };
+      const cache = global._dexMetricsCache = global._dexMetricsCache || {};
+      const now = Date.now();
+      const CACHE_TTL = 60 * 60 * 1000; // 1h
+      if (cache.data && (now - cache.t) < CACHE_TTL) {
+        return send(res, 200, cache.data);
+      }
+      const results = {};
+      const tasks = Object.entries(slugs).map(async ([key, slug]) => {
+        if (!slug) { results[key] = { tvl: null }; return; }
+        try {
+          const r = await fetch(`https://api.llama.fi/tvl/${encodeURIComponent(slug)}`, {
+            signal: AbortSignal.timeout(5000),
+          });
+          const txt = (await r.text()).trim();
+          const tvl = Number(txt);
+          results[key] = { tvl: Number.isFinite(tvl) && tvl > 0 ? tvl : null, slug };
+        } catch { results[key] = { tvl: null, slug }; }
+      });
+      await Promise.all(tasks);
+      cache.t = now;
+      cache.data = results;
+      return send(res, 200, results);
+    }
+
     if (p === '/api/env' && request.method === 'POST') {
       try {
         const { key, value } = await readBody(request);
