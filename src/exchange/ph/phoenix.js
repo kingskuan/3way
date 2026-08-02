@@ -85,21 +85,40 @@ export class PhoenixExchange extends EventEmitter {
     if (this._authToken && Date.now() < this._authTokenExpiresAt - 60_000) return;
     // Round 235: auth 429 backoff —— token 过期后每 poll (10s) 都触发 re-auth，
     // 每次都被 Phoenix API 429 rate-limit → 死循环刷屏 lastError。cache 上次失败时间，
-    // 60s 内不重试 nonce，避免 self-inflict rate limit。
+    // backoff 内不重试 nonce，避免 self-inflict rate limit。
+    // Round 241: 固定 60s 挡不住持续 IP rate limit（QC 部署 20+ min 每 60-90s 就再 429，
+    // 26 条噪音）。改成指数退避：60→120→240→480→960→1800s（cap 30min），成功后 reset。
     if (this._authBackoffUntil && Date.now() < this._authBackoffUntil) {
       throw new Error(`Phoenix auth backoff 中（还有 ${Math.round((this._authBackoffUntil - Date.now())/1000)}s）`);
     }
+    // Round 241: mutex 防并发 —— _pollFills / fetchOpenOrders / _refreshBalance 同时
+    // 到期时会 race 打双份 auth 请求，log 里同秒 duplicate 429 就是这个。用 Promise
+    // lock 让 concurrent caller share 一次 auth 结果。
+    if (this._authInflight) {
+      return this._authInflight;
+    }
+    this._authInflight = this._doAuth().finally(() => { this._authInflight = null; });
+    return this._authInflight;
+  }
+
+  _bumpAuthBackoff(kind) {
+    // Round 241: 指数退避。首次 60s，成功一次前每次翻倍到 cap 30min。
+    const cur = this._authBackoffMs || 0;
+    const next = cur > 0 ? Math.min(cur * 2, 1800_000) : 60_000;
+    this._authBackoffMs = next;
+    this._authBackoffUntil = Date.now() + next;
+    try { console.log(`[Phoenix] auth ${kind} 429 → backoff ${Math.round(next/1000)}s (指数退避防 IP rate limit)`); } catch {}
+  }
+
+  async _doAuth() {
     // 1. 拿 nonce（字段是 wallet_pubkey，不是 pubkey；Round 213 直接打 API 探到）
     const nonceRes = await fetch(`${BASE_URL}/v1/auth/nonce?wallet_pubkey=${this._authorityPubkey}`, {
       signal: AbortSignal.timeout(10000),
     });
     if (!nonceRes.ok) {
       const t = await nonceRes.text();
-      // 429 → 加 backoff 60s；其他错继续 throw 不 backoff
-      if (nonceRes.status === 429) {
-        this._authBackoffUntil = Date.now() + 60_000;
-        try { console.log(`[Phoenix] auth nonce 429 → backoff 60s（防 self-inflict rate limit）`); } catch {}
-      }
+      // 429 → 指数退避；其他错继续 throw 不 backoff
+      if (nonceRes.status === 429) this._bumpAuthBackoff('nonce');
       throw new Error(`Phoenix nonce 拉取失败：HTTP ${nonceRes.status} · ${t.slice(0, 200)}`);
     }
     const nonceData = await nonceRes.json();
@@ -136,10 +155,7 @@ export class PhoenixExchange extends EventEmitter {
     });
     if (!loginRes.ok) {
       const t = await loginRes.text();
-      if (loginRes.status === 429) {
-        this._authBackoffUntil = Date.now() + 60_000;
-        try { console.log(`[Phoenix] auth login 429 → backoff 60s`); } catch {}
-      }
+      if (loginRes.status === 429) this._bumpAuthBackoff('login');
       throw new Error(`Phoenix login 失败：HTTP ${loginRes.status} · ${t.slice(0, 200)}`);
     }
     const loginData = await loginRes.json();
@@ -151,6 +167,9 @@ export class PhoenixExchange extends EventEmitter {
     const expiresInSec = Number(loginData?.expires_in) || 3600;
     this._authTokenExpiresAt = Date.now() + expiresInSec * 1000;
     if (!this._authToken) throw new Error(`Phoenix login 响应无 access_token：${JSON.stringify(loginData).slice(0, 200)}`);
+    // Round 241: 成功一次 → reset 指数退避计数
+    this._authBackoffMs = 0;
+    this._authBackoffUntil = 0;
   }
 
   async init() {
