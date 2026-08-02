@@ -389,6 +389,13 @@ class Autopilot {
       this._log(key, 'skip', '走合成行情（未连真实交易所），Autopilot 不接管');
       return;
     }
+    // Round 242: real-readonly = auth 挂了/backoff 中，只能读不能写。若还起单
+    // 会走 80 次 place-order 全被 backoff 拒 → 挂上 0/80 → 熔断循环。QC 截图
+    // Phoenix「挂上 0/80，成功率低 · Phoenix auth backoff 中（还有 31s）」就是这情况。
+    if (ex?.dataSource === 'real-readonly') {
+      this._log(key, 'skip', `${key} auth 挂了（real-readonly），等 auth 恢复再起单 · ${ex.lastError || ''}`.slice(0, 200));
+      return;
+    }
     if (stale) {
       this._log(key, 'skip', `交易所数据 ${Math.round((now - ex.lastOkAt) / 1000)}s 未更新，跳过本轮`);
       return;
@@ -1132,6 +1139,7 @@ class Autopilot {
     // 检查交易所健康
     if (ex?.dataSource === 'connecting') { this._log(key, 'farm-skip', '交易所连接中'); return; }
     if (ex?.dataSource === 'synthetic') { this._log(key, 'farm-skip', '合成行情，farm 不能跑'); return; }
+    if (ex?.dataSource === 'real-readonly') { this._log(key, 'farm-skip', 'auth 挂了（real-readonly），farm 也别烧'); return; }
 
     // Round 186：balance guard。BG/BU 用户撤资后 balance=0，farm cycle 每 60s
     // 打一次拒单 log 污染决策面板。$0 直接 skip 并 15min 内不再重试，给用户
