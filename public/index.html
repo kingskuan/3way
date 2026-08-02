@@ -1773,13 +1773,17 @@ th {
    加大 z-index 并加明显 hard shadow 让浮层立体感更强，且限最大高度 240px
    超出滚动，防止 tooltip 太长把整个下面的 overview 都盖住。 */
 #tot-eq-tip, #tot-vol-tip {
-  z-index: 50 !important;
+  /* Round 243: fixed + z-index:9999 逃出父 .total-card 的 stacking context，
+     否则下方 DEX 卡（DOM 后出现的兄弟）自己形成 stacking 覆盖 tooltip 下半部分。
+     top/left 由 JS 在 show 时用 getBoundingClientRect() 算出。 */
+  position: fixed !important;
+  z-index: 9999 !important;
   background: #FFFDF3 !important;   /* Round 242: v2-panel 黑框在 v4 黄底违和 → 白底 */
   color: var(--v4-ink) !important;
   box-shadow: 4px 4px 0 var(--v4-ink), 6px 6px 20px rgba(0,0,0,0.4) !important;
   border: 2px solid var(--v4-ink) !important;
   border-radius: 8px !important;
-  max-height: 240px !important;
+  max-height: 60vh !important;
   overflow-y: auto !important;
 }
 #tot-eq-tip *, #tot-vol-tip * {
@@ -4680,18 +4684,36 @@ function updateHdrSummary() {
   }
 }
 
+// Round 243: tooltip 从 position:absolute (困在父卡) 改成 position:fixed (viewport 顶层)，
+// 需要 JS 在 show 时用 anchor.getBoundingClientRect() 算 viewport 坐标 —— 这样才能真正
+// 覆盖下方 DEX 卡而不是被兄弟节点的 stacking context 挡住。
+function positionTipFixed(tip, anchor) {
+  if (!tip || !anchor) return;
+  const rect = anchor.getBoundingClientRect();
+  const gap = 6;
+  // anchor 下方 6px 起，宽度跟随 anchor（右边界不出屏）
+  const left = Math.max(8, rect.left);
+  const width = Math.min(rect.width, window.innerWidth - left - 8);
+  tip.style.left = left + 'px';
+  tip.style.top = (rect.bottom + gap) + 'px';
+  tip.style.width = width + 'px';
+  tip.style.right = 'auto';   // 覆盖 inline right:0
+}
+
 // 总交易量 tooltip：桌面悬停显示、手机点击 toggle
 let _volTipStuck = false;
 function volTipShow(on) {
   const tip = $('tot-vol-tip');
   if (!tip) return;
   if (_volTipStuck) return;   // click 锁住时不受 hover 影响
+  if (on) positionTipFixed(tip, tip.parentElement);
   tip.style.display = on ? 'block' : 'none';
 }
 function volTipToggle() {
   const tip = $('tot-vol-tip');
   if (!tip) return;
   _volTipStuck = !_volTipStuck;
+  if (_volTipStuck) positionTipFixed(tip, tip.parentElement);
   tip.style.display = _volTipStuck ? 'block' : 'none';
 }
 
@@ -4701,12 +4723,14 @@ function eqTipShow(on) {
   const tip = $('tot-eq-tip');
   if (!tip) return;
   if (_eqTipStuck) return;
+  if (on) positionTipFixed(tip, tip.parentElement);
   tip.style.display = on ? 'block' : 'none';
 }
 function eqTipToggle() {
   const tip = $('tot-eq-tip');
   if (!tip) return;
   _eqTipStuck = !_eqTipStuck;
+  if (_eqTipStuck) positionTipFixed(tip, tip.parentElement);
   tip.style.display = _eqTipStuck ? 'block' : 'none';
 }
 
