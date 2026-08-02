@@ -1772,12 +1772,17 @@ th {
 /* Round 240：总权益/总交易量 tooltip 展开时挡下方卡的问题。
    加大 z-index 并加明显 hard shadow 让浮层立体感更强，且限最大高度 240px
    超出滚动，防止 tooltip 太长把整个下面的 overview 都盖住。 */
+/* Round 245: 撤 Round 243 的 position:fixed —— fixed 有 2 副作用：
+   1) 手机窄屏 rect.bottom + gap 可能出屏，点击 tooltip 不显示
+   2) 滚动时 tooltip 停在旧 viewport 位置，anchor 移走了 → 看起来"跟着页面动"
+   改回 position:absolute（跟父卡走天然对齐），stacking 问题在 .total-row 上
+   加 z-index:100 一次性解决（整行拔高到 DEX 卡上方）。 */
+.total-row {
+  position: relative !important;
+  z-index: 100 !important;
+}
 #tot-eq-tip, #tot-vol-tip {
-  /* Round 243: fixed + z-index:9999 逃出父 .total-card 的 stacking context，
-     否则下方 DEX 卡（DOM 后出现的兄弟）自己形成 stacking 覆盖 tooltip 下半部分。
-     top/left 由 JS 在 show 时用 getBoundingClientRect() 算出。 */
-  position: fixed !important;
-  z-index: 9999 !important;
+  z-index: 50 !important;
   background: #FFFDF3 !important;   /* Round 242: v2-panel 黑框在 v4 黄底违和 → 白底 */
   color: var(--v4-ink) !important;
   box-shadow: 4px 4px 0 var(--v4-ink), 6px 6px 20px rgba(0,0,0,0.4) !important;
@@ -4695,36 +4700,21 @@ function updateHdrSummary() {
   }
 }
 
-// Round 243: tooltip 从 position:absolute (困在父卡) 改成 position:fixed (viewport 顶层)，
-// 需要 JS 在 show 时用 anchor.getBoundingClientRect() 算 viewport 坐标 —— 这样才能真正
-// 覆盖下方 DEX 卡而不是被兄弟节点的 stacking context 挡住。
-function positionTipFixed(tip, anchor) {
-  if (!tip || !anchor) return;
-  const rect = anchor.getBoundingClientRect();
-  const gap = 6;
-  // anchor 下方 6px 起，宽度跟随 anchor（右边界不出屏）
-  const left = Math.max(8, rect.left);
-  const width = Math.min(rect.width, window.innerWidth - left - 8);
-  tip.style.left = left + 'px';
-  tip.style.top = (rect.bottom + gap) + 'px';
-  tip.style.width = width + 'px';
-  tip.style.right = 'auto';   // 覆盖 inline right:0
-}
-
+// Round 245: 撤 Round 243 的 positionTipFixed —— fixed 定位有副作用
+// (窄屏出屏 + 滚动不跟随)。tooltip 保持 position:absolute 天然跟父卡，
+// stacking 问题在 CSS 通过 .total-row z-index:100 解决（整行拔高）。
 // 总交易量 tooltip：桌面悬停显示、手机点击 toggle
 let _volTipStuck = false;
 function volTipShow(on) {
   const tip = $('tot-vol-tip');
   if (!tip) return;
   if (_volTipStuck) return;   // click 锁住时不受 hover 影响
-  if (on) positionTipFixed(tip, tip.parentElement);
   tip.style.display = on ? 'block' : 'none';
 }
 function volTipToggle() {
   const tip = $('tot-vol-tip');
   if (!tip) return;
   _volTipStuck = !_volTipStuck;
-  if (_volTipStuck) positionTipFixed(tip, tip.parentElement);
   tip.style.display = _volTipStuck ? 'block' : 'none';
 }
 
@@ -4734,14 +4724,12 @@ function eqTipShow(on) {
   const tip = $('tot-eq-tip');
   if (!tip) return;
   if (_eqTipStuck) return;
-  if (on) positionTipFixed(tip, tip.parentElement);
   tip.style.display = on ? 'block' : 'none';
 }
 function eqTipToggle() {
   const tip = $('tot-eq-tip');
   if (!tip) return;
   _eqTipStuck = !_eqTipStuck;
-  if (_eqTipStuck) positionTipFixed(tip, tip.parentElement);
   tip.style.display = _eqTipStuck ? 'block' : 'none';
 }
 
