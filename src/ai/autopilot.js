@@ -401,6 +401,19 @@ class Autopilot {
       return;
     }
 
+    // Round 248: 零余额 skip —— Bitget/Bitunix 被 user offboarded 后 balance≈0
+    // equity≈0，autopilot 拿 fallback $1000 试起 80 单结果全部 place-order 失败
+    // 触发熔断。若 bot 未 running 且 balance<$5 && equity<$5，视为 offboarded，
+    // 每 30 min 只 log 一次静默 skip（不刷屏）。用户重新充值后自动恢复决策。
+    const curForBal = bot.getState();
+    if (!curForBal.running && Number(curForBal.balance || 0) < 5 && Number(curForBal.equity || 0) < 5) {
+      const lastOffboardLog = st._lastOffboardLogAt || 0;
+      if (now - lastOffboardLog > 30 * 60_000) {
+        st._lastOffboardLogAt = now;
+        this._log(key, 'skip', `${key} 余额=$${(curForBal.balance || 0).toFixed(2)} equity=$${(curForBal.equity || 0).toFixed(2)}（已 offboarded 无资金），autopilot 不接管`);
+      }
+      return;
+    }
     // 3. 护栏：日亏损
     //    额外要求 cur.balance > 0：LIVE 适配器 init 窗口偶尔 balance=0，
     //    dayStartEquity>0 会误判成 100% 亏损，直接给假熔断。用 balance 兜底。
