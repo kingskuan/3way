@@ -245,6 +245,26 @@ export class PhoenixExchange extends EventEmitter {
   }
 
   async _signAndSubmitInstructions(instructionsData) {
+    // Round 233: 80 单 seed 让 Helius RPC 内部 confirmTransaction 轮询 429 洪水
+    // （3:15:21 log 20+ 条 "Server responded with 429 ... Retrying after Xms"）。
+    // 序列化所有 tx submission + 500ms 间隔，让 RPC 匀速吃单不 burst。
+    const chain = this._solanaSubmitChain || Promise.resolve();
+    let releaseNext;
+    const gate = new Promise((r) => { releaseNext = r; });
+    this._solanaSubmitChain = chain.then(() => gate).catch(() => {});
+    await chain.catch(() => {});
+    const minGap = 500;
+    const wait = Math.max(0, (this._lastSubmitAt || 0) + minGap - Date.now());
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    try {
+      return await this._doSignAndSubmit(instructionsData);
+    } finally {
+      this._lastSubmitAt = Date.now();
+      releaseNext();
+    }
+  }
+
+  async _doSignAndSubmit(instructionsData) {
     // Round 219: Phoenix 实际返 [{ data: [byte...], keys: [{pubkey,isSigner,isWritable}], programId? }]
     // 不是 base64 VersionedTransaction。要 build TransactionInstruction + Transaction 手工签名。
     // place-limit-order 返 [{data,keys,programId}]
@@ -298,7 +318,20 @@ export class PhoenixExchange extends EventEmitter {
       skipPreflight: false,
       maxRetries: 3,
     });
-    await this._solanaConn.confirmTransaction(sig, 'confirmed');
+    // Round 233: confirmTransaction 内部每 500ms poll getSignatureStatuses；
+    // Helius 被打爆时每 poll 都 429 → 无限 backoff 卡死 30s+。加 8s Promise.race
+    // 兜底：过 8s 未 confirm 就当"已经发出"（trades-history poll 会 30-90s 内补记账），
+    // 不阻塞下一单起单。sig 已经拿到、tx 也 broadcast 了，"没等到 confirm" != "失败"。
+    try {
+      await Promise.race([
+        this._solanaConn.confirmTransaction(sig, 'confirmed'),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('confirmTimeout8s')), 8000)),
+      ]);
+    } catch (e) {
+      if (!/confirmTimeout/.test(e.message)) throw e;
+      // silent: log 一条方便诊断
+      try { console.log(`[Phoenix] confirmTransaction 8s 超时 sig=${sig.slice(0, 12)}… 继续（trades-history 会补记账）`); } catch {}
+    }
     return [sig];
   }
 
@@ -535,12 +568,14 @@ export class PhoenixExchange extends EventEmitter {
       try {
         await this._pollPrices();
         this.lastOkAt = Date.now();
-        // 每 3 次 poll 刷 balance/positions（省 auth 调用）
+        // 每 3 次 poll 刷 balance/positions（省 auth 调用），每 9 次 poll 拉 fills（90s）
         if (!this._pollCount) this._pollCount = 0;
         this._pollCount++;
         if (this._pollCount % 3 === 0 && this._authToken) {
           await this._refreshBalance();
-          // Round 230: fills 每 30s poll 一次（跟 balance 一起，省 auth 调用）
+        }
+        // Round 233: fills poll 30s → 90s 缓解 Phoenix API rate_limited 429
+        if (this._pollCount % 9 === 0) {
           await this._pollFills().catch((e) => { this.lastError = `pollFills: ${e.message}`; });
         }
       } catch (e) {
