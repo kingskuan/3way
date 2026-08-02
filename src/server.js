@@ -1201,6 +1201,16 @@ async function initExchange(exchange, name, exCfg) {
       console.error('  ➤ 连接超时，接口被网络拦截，或代理未正确转发。');
     }
     console.error(`  该交易所将以离线模式运行（行情可能使用合成数据）。\n`);
+    // Round 248: init 失败后 dataSource 停在 'connecting'（默认），Autopilot 的
+    // connecting-skip 每 tick 只 log 一次「等就绪」但永远不会就绪 → 决策日志噪音。
+    // 改成 'synthetic'（合成/离线），Autopilot 的 synthetic-skip 分支挡住更明确
+    // (「未连真实交易所，Autopilot 不接管」)，也让 UI 显示更准。
+    try {
+      if (exchange && typeof exchange === 'object') {
+        exchange.dataSource = 'synthetic';
+        exchange.lastError = String(e?.message || e).slice(0, 200);
+      }
+    } catch { /* ignore */ }
     // 不退出，让其他交易所继续工作
   }
 }
