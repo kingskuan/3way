@@ -5926,29 +5926,45 @@ async function bulkResetDemo(btn) {
     ['on','Ondo'],    ['pl','Perpl'],    ['sx','StandX'],
     ['bg','Bitget'],  ['bu','Bitunix'],  ['ph','Phoenix'],
   ];
+  // Round 236：ticker 改成 defillama 头版 TVL（真 DEX 总规模），不是用户账户余额。
+  // 缓存 1 小时，同 server /api/dex-metrics。Ondo/Phoenix perp DEX 未上 defillama 显示 —
+  let _dexMetrics = null;
+  async function fetchDexMetrics() {
+    try {
+      const r = await fetch('/api/dex-metrics');
+      const j = await r.json();
+      _dexMetrics = j;
+      paintTicker();
+    } catch {}
+  }
+  function fmtTvl(usd) {
+    if (!usd || usd <= 0) return '—';
+    if (usd >= 1e9) return '$' + (usd / 1e9).toFixed(2) + 'B';
+    if (usd >= 1e6) return '$' + (usd / 1e6).toFixed(1) + 'M';
+    if (usd >= 1e3) return '$' + (usd / 1e3).toFixed(0) + 'K';
+    return '$' + usd.toFixed(0);
+  }
   function paintTicker(){
     const track = document.getElementById('v4-ticker-track');
     if (!track) return;
     const items = [];
-    // Round 229：ticker 改成每所 TVL（=账户 equity）——之前 PnL+格数用户在下方
-    // tot-pnl / tot-rungs 已经看得到，蓝色 bar 换成账户余额情报密度更高。
     KEYS.forEach(([k, name]) => {
-      const eqEl = document.getElementById(`ov-${k}-eq`);
-      const eqTxt = eqEl ? (eqEl.textContent || '').trim() : '—';
-      // 有余额显示 tvl；balance=0 或 "—" 时标灰"未启用"避免刷屏 9 条 0
-      const isEmpty = !eqTxt || eqTxt === '—' || eqTxt === '0' || eqTxt === '0.00';
+      const tvl = _dexMetrics?.[k]?.tvl;
+      const label = fmtTvl(tvl);
+      const isEmpty = label === '—';
       items.push(
         `<span class="v4-ticker-item">
           <span class="tk-name">${name}</span>
-          <span class="tk-num ${isEmpty ? 'tk-dn' : 'tk-up'}" style="opacity:${isEmpty ? 0.5 : 1}">TVL ${isEmpty ? '—' : '$' + eqTxt}</span>
+          <span class="tk-num ${isEmpty ? 'tk-dn' : 'tk-up'}" style="opacity:${isEmpty ? 0.5 : 1}">TVL ${label}</span>
         </span>`
       );
     });
-    // 复制一次做无缝滚动
     track.innerHTML = items.join('') + items.join('');
   }
+  fetchDexMetrics();   // 首次
   paintTicker();
   setInterval(paintTicker, 5_000);
+  setInterval(fetchDexMetrics, 60 * 60_000);   // 每小时刷 defillama
 })();
 </script>
 </body>
