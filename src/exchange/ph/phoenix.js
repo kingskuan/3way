@@ -107,7 +107,11 @@ export class PhoenixExchange extends EventEmitter {
     const next = cur > 0 ? Math.min(cur * 2, 1800_000) : 60_000;
     this._authBackoffMs = next;
     this._authBackoffUntil = Date.now() + next;
-    try { console.log(`[Phoenix] auth ${kind} 429 → backoff ${Math.round(next/1000)}s (指数退避防 IP rate limit)`); } catch {}
+    // Round 242: auth 挂了 → 降级 real-readonly，让 autopilot skip 起单，
+    // 避免 80 次 place-order 全被 backoff 拒 → 挂上 0/80 → 熔断循环。
+    this.dataSource = 'real-readonly';
+    this.lastError = `auth ${kind} 429 → backoff ${Math.round(next/1000)}s`;
+    try { console.log(`[Phoenix] auth ${kind} 429 → backoff ${Math.round(next/1000)}s (指数退避防 IP rate limit) · dataSource=real-readonly`); } catch {}
   }
 
   async _doAuth() {
@@ -170,6 +174,12 @@ export class PhoenixExchange extends EventEmitter {
     // Round 241: 成功一次 → reset 指数退避计数
     this._authBackoffMs = 0;
     this._authBackoffUntil = 0;
+    // Round 242: auth 恢复 → dataSource 从 real-readonly 升回 real，autopilot 恢复起单
+    if (this.dataSource === 'real-readonly') {
+      this.dataSource = 'real';
+      this.lastError = '';
+      try { console.log('[Phoenix] auth 恢复成功 · dataSource=real → autopilot 可重新起单'); } catch {}
+    }
   }
 
   async init() {

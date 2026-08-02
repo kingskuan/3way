@@ -1774,11 +1774,20 @@ th {
    超出滚动，防止 tooltip 太长把整个下面的 overview 都盖住。 */
 #tot-eq-tip, #tot-vol-tip {
   z-index: 50 !important;
+  background: #FFFDF3 !important;   /* Round 242: v2-panel 黑框在 v4 黄底违和 → 白底 */
+  color: var(--v4-ink) !important;
   box-shadow: 4px 4px 0 var(--v4-ink), 6px 6px 20px rgba(0,0,0,0.4) !important;
   border: 2px solid var(--v4-ink) !important;
   border-radius: 8px !important;
   max-height: 240px !important;
   overflow-y: auto !important;
+}
+#tot-eq-tip *, #tot-vol-tip * {
+  color: var(--v4-ink) !important;
+}
+#tot-eq-tip .val, #tot-vol-tip .val,
+#tot-eq-tip .num, #tot-vol-tip .num {
+  color: var(--v4-accent-good) !important;   /* neon 数字保留 */
 }
 
 /* — 上下涨跌颜色 —————————————————————————— */
