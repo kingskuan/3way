@@ -522,10 +522,15 @@ export class PhoenixExchange extends EventEmitter {
     //             side ('bid'|'ask'), price, baseQty, remainingBaseQty, ... }
     // status 过滤客户端做（服务端 orderStatus 参数没生效）。
     if (!this._authorityPubkey) return null;
+    // Round 246: auth 挂了（real-readonly）直接返 null 让哨兵 fallback，不返 []。
+    // 用户看到 Telegram spam「Phoenix 挂单漂移 链 43/交易所 0」= 就是这个 case：
+    // auth 挂时 endpoint 返老数据 filter 后 0 → 哨兵误判 drift。
+    if (this.dataSource === 'real-readonly') return null;
+    const LIMIT = 100;
     try {
       const resp = await this._req(
         'GET',
-        `/v1/trader/${this._authorityPubkey}/order-history?limit=100`,
+        `/v1/trader/${this._authorityPubkey}/order-history?limit=${LIMIT}`,
         null,
         true,
       );
@@ -539,6 +544,14 @@ export class PhoenixExchange extends EventEmitter {
         this._ordersLogged = true;
         try { console.log(`[Phoenix] order-history 返 ${arr.length} 单，其中 open ${open.length} 单 (sample: ${JSON.stringify(arr[0] || {}).slice(0, 250)})`); } catch {}
       }
+      // Round 246: 分页边界 heuristic —— arr 塞满 limit 但 open 大量减少 (< 3)，
+      // 极大概率是老 open 单被挤出 100 窗口，不是真的被撤/成交。返 null 而不是 []
+      // 让 Round 228 fallback 用 tracked 数量替代，避免哨兵 false drift alert。
+      if (arr.length >= LIMIT && open.length < 3 && (this._lastOpenCount || 0) >= 10) {
+        try { console.log(`[Phoenix] order-history hit limit=${LIMIT} 但 open=${open.length} << lastKnown=${this._lastOpenCount}，视为分页盲区返 null`); } catch {}
+        return null;
+      }
+      this._lastOpenCount = open.length;
       return open.map((o) => ({
         orderId: String(o.orderSequenceNumber ?? o.orderId ?? o.id ?? ''),
         price: Number(o.price),
