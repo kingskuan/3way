@@ -21,11 +21,9 @@ export class PhoenixExchange extends EventEmitter {
     this.dataSource = 'connecting';
     this.lastOkAt = 0;
     this.lastError = null;
-    // Round 228: Phoenix orders_v2 endpoint 返 "Trader not found"，fetchOpenOrders
-    // 已经按 Round 222a 返 null。同 Perpl / StandX 的做法声明 unreliable，让 bot 走
-    // WS-authoritative 分支，同时 sentinel snapshot 也会 sanitize 掉 null，别再报"挂单未同步"
-    // 假警报（用户 Telegram 收到 chainOrders=null 已经好几次）。
-    this.hasReliableOrderListing = false;
+    // Round 231: 逆向找到 orders_v2 真参数 (pdaIndex/orderStatus camelCase) 后 fetchOpenOrders
+    // 能真的返数组了。撤销 Round 228 的 unreliable 声明，bot 恢复正常 reconcile 通路。
+    this.hasReliableOrderListing = true;
     this.balance = 0;
     this.realizedPnl = 0;
     this.orders = new Map();
@@ -398,34 +396,39 @@ export class PhoenixExchange extends EventEmitter {
   }
 
   async fetchOpenOrders(_marketId) {
-    // Round 222a: Phoenix orders_v2 endpoint 返 "Trader not found" 即使
-    // /v1/trader/state 显示 active。API 未完成或需要不同 auth (subaccount PDA)。
-    // 返 null 让 bot 走 "unknown state" 分支跳过 reconcile —— 而不是返 []
-    // 让 bot 误判"链上 0 单本地 40 单"触发 massVanish/vanish alert 循环。
-    // Round 230：先 probe 找能 work 的 endpoint（有可能是 /orders 无 _v2 或 /open_orders）
+    // Round 231: 逆向 phoenix.trade web app 后确认真参数：
+    // /v1/traders/{wallet}/orders_v2?pdaIndex=0&orderStatus=open (camelCase!)
+    // 响应 {data:[...], prevCursor, nextCursor, hasMore}。
+    // Round 222a 的 "Trader not found" 就是因为 pdaIndex 不传 API 找不到 subaccount。
     if (!this._authorityPubkey) return null;
-    const tmpl = await this._probeOrdersEndpoint();
-    if (!tmpl) return null;
-    const path = tmpl.replace('{LIMIT}', '100');
     try {
-      const orders = await this._req('GET', path, null, true);
-      if (!Array.isArray(orders)) return null;
-      const m = null;   // 逐单 map，marketId 从 side path 里查 markets
-      return orders.map((o) => {
-        const symbol = o.symbol || o.market;
+      const resp = await this._req(
+        'GET',
+        `/v1/traders/${this._authorityPubkey}/orders_v2?pdaIndex=0&orderStatus=open&limit=100`,
+        null,
+        true,
+      );
+      const arr = Array.isArray(resp) ? resp : (Array.isArray(resp?.data) ? resp.data : null);
+      if (!arr) return null;
+      if (!this._ordersLogged) {
+        this._ordersLogged = true;
+        try { console.log(`[Phoenix] orders_v2 返 ${arr.length} 单 (sample: ${JSON.stringify(arr[0] || {}).slice(0, 200)})`); } catch {}
+      }
+      return arr.map((o) => {
+        const symbol = o.marketSymbol || o.market_symbol || o.symbol || o.market;
         const mid = this._marketSymbolToId.get(symbol);
         const mm = mid != null ? this.markets.get(mid) : null;
-        let price = Number(o.price ?? o.limitPrice ?? 0);
+        let price = Number(o.price ?? o.limitPrice ?? o.limit_price ?? 0);
         if (!price && o.priceInTicks && mm) price = Number(o.priceInTicks) * mm.stepPrice;
         return {
-          orderId: String(o.orderId ?? o.id ?? o.order_id ?? ''),
+          orderId: String(o.orderId ?? o.order_id ?? o.id ?? ''),
           price,
           side: (o.side === 'Bid' || o.side === 'buy') ? 'buy' : 'sell',
         };
       }).filter((x) => x.orderId);
     } catch (e) {
-      this.lastError = e.message;
-      return null;   // 关键：不返 [] 假装"链上 0 单"
+      this.lastError = `fetchOpenOrders: ${e.message}`;
+      return null;
     }
   }
 
@@ -472,87 +475,44 @@ export class PhoenixExchange extends EventEmitter {
 
   async reconcileOpenOrders() { return true; }
 
-  // Round 230: Phoenix 没有 WS fill event / orders_v2 endpoint 又返 "Trader not found"
-  // → volume/completedRungs 一直卡 0。probe 一组候选 endpoint，找到能返数组的就 cache
-  // 起来循环 poll，emit 'fill' 给 bot 累计 stats.volume。也 probe 一遍 orders 端点，
-  // 让 fetchOpenOrders 能真的看到链上单。
-  async _probeFillsEndpoint() {
-    if (this._fillsProbed) return this._fillsPath;
-    this._fillsProbed = true;
-    const pk = this._authorityPubkey;
-    const candidates = [
-      `/v1/traders/${pk}/fills?limit=50`,
-      `/v1/traders/${pk}/fills_v2?limit=50`,
-      `/v1/traders/${pk}/trades?limit=50`,
-      `/v1/traders/${pk}/execution-history?limit=50`,
-      `/v1/traders/${pk}/execution_history?limit=50`,
-      `/v1/traders/${pk}/orders_v2?status=filled&limit=50&trader_pda_index=0`,
-      `/v1/fills?authority=${pk}&limit=50`,
-      `/v1/trades?authority=${pk}&limit=50`,
-    ];
-    for (const path of candidates) {
-      try {
-        const data = await this._req('GET', path, null, true);
-        if (Array.isArray(data)) {
-          this._fillsPath = path.replace(/limit=\d+/, 'limit={LIMIT}');
-          try { console.log(`[Phoenix] fills endpoint 探到：${path} → ${data.length} 条`); } catch {}
-          return this._fillsPath;
-        }
-      } catch { /* try next */ }
-    }
-    try { console.log('[Phoenix] fills endpoint 全部探空，volume 追踪不可用'); } catch {}
-    return null;
-  }
-
-  async _probeOrdersEndpoint() {
-    if (this._ordersProbed) return this._ordersPath;
-    this._ordersProbed = true;
-    const pk = this._authorityPubkey;
-    const candidates = [
-      `/v1/traders/${pk}/orders?status=open&trader_pda_index=0&limit=100`,
-      `/v1/traders/${pk}/open_orders?limit=100`,
-      `/v1/traders/${pk}/orders_v2?status=open&trader_pda_index=0&limit=100`,
-      `/v1/traders/${pk}/orders?limit=100`,
-      `/v1/open-orders?authority=${pk}&limit=100`,
-    ];
-    for (const path of candidates) {
-      try {
-        const data = await this._req('GET', path, null, true);
-        if (Array.isArray(data)) {
-          this._ordersPath = path.replace(/limit=\d+/, 'limit={LIMIT}');
-          try { console.log(`[Phoenix] orders endpoint 探到：${path} → ${data.length} 条`); } catch {}
-          return this._ordersPath;
-        }
-      } catch { /* try next */ }
-    }
-    try { console.log('[Phoenix] orders endpoint 全部探空，chain-orders 追踪不可用'); } catch {}
-    return null;
-  }
-
+  // Round 231: 逆向 phoenix.trade web app JS bundle 找到真实 endpoint 和参数。
+  // 关键：Round 230 用 status/trader_pda_index (snake_case) 全错。真参数 orderStatus/pdaIndex
+  // (camelCase)。响应是 {data:[...], prevCursor, nextCursor, hasMore} wrapper 不是裸数组。
+  // 之前 "Trader not found" 就是因为 pdaIndex 不传导致 API 找不到 subaccount。
   async _pollFills() {
     if (!this._authorityPubkey || !this._authToken) return;
-    const tmpl = await this._probeFillsEndpoint();
-    if (!tmpl) return;
-    const path = tmpl.replace('{LIMIT}', '50');
-    let arr;
-    try { arr = await this._req('GET', path, null, true); }
-    catch (e) { this.lastError = `fills poll: ${e.message}`; return; }
-    if (!Array.isArray(arr)) return;
+    let resp;
+    try {
+      resp = await this._req(
+        'GET',
+        `/v1/traders/${this._authorityPubkey}/trades_v2?pdaIndex=0&limit=50`,
+        null,
+        true,
+      );
+    } catch (e) { this.lastError = `pollFills: ${e.message}`; return; }
+    // 兼容裸数组 vs {data:[...]} wrapper
+    const arr = Array.isArray(resp) ? resp : (Array.isArray(resp?.data) ? resp.data : null);
+    if (!arr) return;
+    // 首次 poll 只 seed dedup set 不 emit（否则历史 fill 会一次性把 volume 打爆）
+    const isFirst = !this._knownFillIds;
     this._knownFillIds = this._knownFillIds || new Set();
+    if (isFirst && arr.length > 0) {
+      try { console.log(`[Phoenix] trades_v2 首次 poll ${arr.length} 条历史 fill，seed dedup set 不 emit（sample: ${JSON.stringify(arr[0]).slice(0, 300)}）`); } catch {}
+    }
     for (const f of arr) {
       const fid = String(
-        f.fillId ?? f.id ?? f.tradeId ?? f.trade_id ?? f.sequence ?? f.slot ?? f.signature ?? ''
+        f.eventIndex ?? f.event_index ?? f.slot ?? f.tradeId ?? f.trade_id ?? f.id ?? f.sequence ?? f.signature ?? ''
       );
-      if (!fid || this._knownFillIds.has(fid)) continue;
+      if (!fid) continue;
+      if (this._knownFillIds.has(fid)) continue;
       this._knownFillIds.add(fid);
-      const symbol = f.symbol || f.market || f.market_symbol;
+      if (isFirst) continue;   // seed only 不 emit
+      const symbol = f.marketSymbol || f.market_symbol || f.symbol || f.market;
       const marketId = this._marketSymbolToId.get(symbol);
       if (!marketId) continue;
       const m = this.markets.get(marketId);
-      // 价格：Phoenix 用 priceInTicks 或直接 price
       let price = Number(f.price ?? f.fillPrice ?? f.fill_price ?? 0);
       if (!price && f.priceInTicks && m) price = Number(f.priceInTicks) * m.stepPrice;
-      // 数量：baseLots 或 size
       let size = Number(f.size ?? f.baseSize ?? f.fillSize ?? f.fill_size ?? f.base_size ?? 0);
       if (!size && f.numBaseLots && m) size = Number(f.numBaseLots) * m.stepSize;
       if (!(price > 0 && size > 0)) continue;
@@ -565,10 +525,8 @@ export class PhoenixExchange extends EventEmitter {
         levelIndex: undefined,
       });
     }
-    // 缓存 dedup 集不无限长
     if (this._knownFillIds.size > 500) {
-      const keep = [...this._knownFillIds].slice(-250);
-      this._knownFillIds = new Set(keep);
+      this._knownFillIds = new Set([...this._knownFillIds].slice(-250));
     }
   }
 
