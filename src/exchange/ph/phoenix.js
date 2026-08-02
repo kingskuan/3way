@@ -502,7 +502,10 @@ export class PhoenixExchange extends EventEmitter {
       );
       const arr = Array.isArray(resp) ? resp : (Array.isArray(resp?.data) ? resp.data : null);
       if (!arr) return null;
-      const open = arr.filter((o) => String(o.status || '').toLowerCase() === 'open');
+      // Round 239: Phoenix 真实 API 用 'active' 不是 'open'（Round 232 猜错了）。
+      // 实测响应 status 有：active（等 fill），cancelled，filled。改成 whitelist 多个"open-like"状态。
+      const OPEN_STATES = new Set(['open', 'active', 'new', 'placed', 'accepted']);
+      const open = arr.filter((o) => OPEN_STATES.has(String(o.status || '').toLowerCase()));
       if (!this._ordersLogged) {
         this._ordersLogged = true;
         try { console.log(`[Phoenix] order-history 返 ${arr.length} 单，其中 open ${open.length} 单 (sample: ${JSON.stringify(arr[0] || {}).slice(0, 250)})`); } catch {}
