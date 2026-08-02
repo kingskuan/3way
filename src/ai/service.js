@@ -200,7 +200,17 @@ class AiService {
           gridCount: s.config.gridCount, sizeBase: s.config.sizeBase,
           leverage: s.config.leverage, outOfRangeAction: s.config.outOfRangeAction,
         } : null,
-        recentAlerts: (s.alerts || []).slice(0, 5).map((a) => `${new Date(a.t).toLocaleTimeString('zh-CN')} ${a.message}`),
+        // Round 250: real-readonly (auth 挂) 时过滤掉补单/挂单相关 alerts —— 这些
+        // 是 auth 挂的副作用不是真的问题。让哨兵 AI 看不到就不会每 5 min 升级
+        // 告警刷屏。用户 Telegram 收到 6 条 Phoenix 补单失败告警就是这个 bug。
+        recentAlerts: (s.alerts || [])
+          .filter((a) => {
+            if (ex?.dataSource !== 'real-readonly') return true;
+            const msg = String(a.message || '');
+            return !/补单|补挂|挂单漂移|订单缺失|连续.*失败/.test(msg);
+          })
+          .slice(0, 5)
+          .map((a) => `${new Date(a.t).toLocaleTimeString('zh-CN')} ${a.message}`),
       };
     }
     return out;
