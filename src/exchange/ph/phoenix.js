@@ -83,12 +83,23 @@ export class PhoenixExchange extends EventEmitter {
   async _ensureAuth() {
     // Token 还有效则直接返回
     if (this._authToken && Date.now() < this._authTokenExpiresAt - 60_000) return;
+    // Round 235: auth 429 backoff —— token 过期后每 poll (10s) 都触发 re-auth，
+    // 每次都被 Phoenix API 429 rate-limit → 死循环刷屏 lastError。cache 上次失败时间，
+    // 60s 内不重试 nonce，避免 self-inflict rate limit。
+    if (this._authBackoffUntil && Date.now() < this._authBackoffUntil) {
+      throw new Error(`Phoenix auth backoff 中（还有 ${Math.round((this._authBackoffUntil - Date.now())/1000)}s）`);
+    }
     // 1. 拿 nonce（字段是 wallet_pubkey，不是 pubkey；Round 213 直接打 API 探到）
     const nonceRes = await fetch(`${BASE_URL}/v1/auth/nonce?wallet_pubkey=${this._authorityPubkey}`, {
       signal: AbortSignal.timeout(10000),
     });
     if (!nonceRes.ok) {
       const t = await nonceRes.text();
+      // 429 → 加 backoff 60s；其他错继续 throw 不 backoff
+      if (nonceRes.status === 429) {
+        this._authBackoffUntil = Date.now() + 60_000;
+        try { console.log(`[Phoenix] auth nonce 429 → backoff 60s（防 self-inflict rate limit）`); } catch {}
+      }
       throw new Error(`Phoenix nonce 拉取失败：HTTP ${nonceRes.status} · ${t.slice(0, 200)}`);
     }
     const nonceData = await nonceRes.json();
@@ -125,6 +136,10 @@ export class PhoenixExchange extends EventEmitter {
     });
     if (!loginRes.ok) {
       const t = await loginRes.text();
+      if (loginRes.status === 429) {
+        this._authBackoffUntil = Date.now() + 60_000;
+        try { console.log(`[Phoenix] auth login 429 → backoff 60s`); } catch {}
+      }
       throw new Error(`Phoenix login 失败：HTTP ${loginRes.status} · ${t.slice(0, 200)}`);
     }
     const loginData = await loginRes.json();
