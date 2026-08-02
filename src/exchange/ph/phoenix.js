@@ -396,36 +396,32 @@ export class PhoenixExchange extends EventEmitter {
   }
 
   async fetchOpenOrders(_marketId) {
-    // Round 231: 逆向 phoenix.trade web app 后确认真参数：
-    // /v1/traders/{wallet}/orders_v2?pdaIndex=0&orderStatus=open (camelCase!)
-    // 响应 {data:[...], prevCursor, nextCursor, hasMore}。
-    // Round 222a 的 "Trader not found" 就是因为 pdaIndex 不传 API 找不到 subaccount。
+    // Round 232：Round 231 用 plural /v1/traders/{wallet}/orders_v2 被 API 拒 "Trader not found"
+    // —— plural URL 的 pk 是 trader PDA，我们只有 wallet。改用 singular endpoint
+    // /v1/trader/{wallet}/order-history 直接吃 wallet + unauth 就通。
+    // 响应字段：{ orderSequenceNumber, marketSymbol, status ('open'|'cancelled'|'filled'|...),
+    //             side ('bid'|'ask'), price, baseQty, remainingBaseQty, ... }
+    // status 过滤客户端做（服务端 orderStatus 参数没生效）。
     if (!this._authorityPubkey) return null;
     try {
       const resp = await this._req(
         'GET',
-        `/v1/traders/${this._authorityPubkey}/orders_v2?pdaIndex=0&orderStatus=open&limit=100`,
+        `/v1/trader/${this._authorityPubkey}/order-history?limit=100`,
         null,
         true,
       );
       const arr = Array.isArray(resp) ? resp : (Array.isArray(resp?.data) ? resp.data : null);
       if (!arr) return null;
+      const open = arr.filter((o) => String(o.status || '').toLowerCase() === 'open');
       if (!this._ordersLogged) {
         this._ordersLogged = true;
-        try { console.log(`[Phoenix] orders_v2 返 ${arr.length} 单 (sample: ${JSON.stringify(arr[0] || {}).slice(0, 200)})`); } catch {}
+        try { console.log(`[Phoenix] order-history 返 ${arr.length} 单，其中 open ${open.length} 单 (sample: ${JSON.stringify(arr[0] || {}).slice(0, 250)})`); } catch {}
       }
-      return arr.map((o) => {
-        const symbol = o.marketSymbol || o.market_symbol || o.symbol || o.market;
-        const mid = this._marketSymbolToId.get(symbol);
-        const mm = mid != null ? this.markets.get(mid) : null;
-        let price = Number(o.price ?? o.limitPrice ?? o.limit_price ?? 0);
-        if (!price && o.priceInTicks && mm) price = Number(o.priceInTicks) * mm.stepPrice;
-        return {
-          orderId: String(o.orderId ?? o.order_id ?? o.id ?? ''),
-          price,
-          side: (o.side === 'Bid' || o.side === 'buy') ? 'buy' : 'sell',
-        };
-      }).filter((x) => x.orderId);
+      return open.map((o) => ({
+        orderId: String(o.orderSequenceNumber ?? o.orderId ?? o.id ?? ''),
+        price: Number(o.price),
+        side: (o.side === 'bid' || o.side === 'Bid' || o.side === 'buy') ? 'buy' : 'sell',
+      })).filter((x) => x.orderId);
     } catch (e) {
       this.lastError = `fetchOpenOrders: ${e.message}`;
       return null;
@@ -475,55 +471,56 @@ export class PhoenixExchange extends EventEmitter {
 
   async reconcileOpenOrders() { return true; }
 
-  // Round 231: 逆向 phoenix.trade web app JS bundle 找到真实 endpoint 和参数。
-  // 关键：Round 230 用 status/trader_pda_index (snake_case) 全错。真参数 orderStatus/pdaIndex
-  // (camelCase)。响应是 {data:[...], prevCursor, nextCursor, hasMore} wrapper 不是裸数组。
-  // 之前 "Trader not found" 就是因为 pdaIndex 不传导致 API 找不到 subaccount。
+  // Round 232：Round 231 用 /v1/traders/{pk}/trades_v2 结果 API 返 "Trader not found"
+  // — 因为 plural traders/{pk} 的 pk 是 trader PDA，不是 wallet。web app 用
+  // /v1/trader/{wallet}/trades-history（singular）也 work 且直接用 wallet + unauth 就通。
+  // 响应字段实测：
+  //   { fillId, marketSymbol, price, baseLotsDelta (signed, base units),
+  //     virtualQuoteLotsDelta (quote $), timestamp, fees, ... }
+  // baseLotsDelta 负=卖出/开空，正=买入/平空。size = |baseLotsDelta|。
   async _pollFills() {
-    if (!this._authorityPubkey || !this._authToken) return;
+    if (!this._authorityPubkey) return;
     let resp;
     try {
       resp = await this._req(
         'GET',
-        `/v1/traders/${this._authorityPubkey}/trades_v2?pdaIndex=0&limit=50`,
+        `/v1/trader/${this._authorityPubkey}/trades-history?limit=50`,
         null,
         true,
       );
     } catch (e) { this.lastError = `pollFills: ${e.message}`; return; }
-    // 兼容裸数组 vs {data:[...]} wrapper
     const arr = Array.isArray(resp) ? resp : (Array.isArray(resp?.data) ? resp.data : null);
     if (!arr) return;
-    // 首次 poll 只 seed dedup set 不 emit（否则历史 fill 会一次性把 volume 打爆）
     const isFirst = !this._knownFillIds;
     this._knownFillIds = this._knownFillIds || new Set();
-    if (isFirst && arr.length > 0) {
-      try { console.log(`[Phoenix] trades_v2 首次 poll ${arr.length} 条历史 fill，seed dedup set 不 emit（sample: ${JSON.stringify(arr[0]).slice(0, 300)}）`); } catch {}
+    if (isFirst) {
+      try { console.log(`[Phoenix] trades-history 首次 poll ${arr.length} 条历史 fill，seed dedup set 不 emit${arr.length > 0 ? ` (sample: ${JSON.stringify(arr[0]).slice(0, 400)})` : ''}`); } catch {}
     }
+    let emitted = 0;
     for (const f of arr) {
-      const fid = String(
-        f.eventIndex ?? f.event_index ?? f.slot ?? f.tradeId ?? f.trade_id ?? f.id ?? f.sequence ?? f.signature ?? ''
-      );
-      if (!fid) continue;
+      const fid = String(f.fillId ?? f.signature ?? `${f.slot}:${f.slotIndex}:${f.eventIndex}`);
+      if (!fid || fid === 'undefined:undefined:undefined') continue;
       if (this._knownFillIds.has(fid)) continue;
       this._knownFillIds.add(fid);
-      if (isFirst) continue;   // seed only 不 emit
-      const symbol = f.marketSymbol || f.market_symbol || f.symbol || f.market;
+      if (isFirst) continue;
+      const symbol = f.marketSymbol;
       const marketId = this._marketSymbolToId.get(symbol);
       if (!marketId) continue;
-      const m = this.markets.get(marketId);
-      let price = Number(f.price ?? f.fillPrice ?? f.fill_price ?? 0);
-      if (!price && f.priceInTicks && m) price = Number(f.priceInTicks) * m.stepPrice;
-      let size = Number(f.size ?? f.baseSize ?? f.fillSize ?? f.fill_size ?? f.base_size ?? 0);
-      if (!size && f.numBaseLots && m) size = Number(f.numBaseLots) * m.stepSize;
+      const price = Number(f.price);
+      const baseDelta = Number(f.baseLotsDelta);
+      const size = Math.abs(baseDelta);
       if (!(price > 0 && size > 0)) continue;
-      const rawSide = f.side || f.direction || '';
-      const side = /^b(id|uy)$/i.test(rawSide) ? 'buy' : 'sell';
+      const side = baseDelta > 0 ? 'buy' : 'sell';
       this.emit('fill', {
         marketId, side, price, sizeBase: size,
-        orderId: String(f.orderId ?? f.order_id ?? f.clientOrderId ?? fid),
-        clientOrderId: String(f.clientOrderId ?? f.client_order_id ?? ''),
+        orderId: String(f.orderSequenceNumber ?? fid),
+        clientOrderId: '',
         levelIndex: undefined,
       });
+      emitted++;
+    }
+    if (emitted > 0) {
+      try { console.log(`[Phoenix] trades-history emit ${emitted} 新 fill`); } catch {}
     }
     if (this._knownFillIds.size > 500) {
       this._knownFillIds = new Set([...this._knownFillIds].slice(-250));
