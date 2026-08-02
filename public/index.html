@@ -1781,6 +1781,14 @@ th {
   position: relative !important;
   z-index: 100 !important;
 }
+/* Round 247: Round 245 的 z-index:100 意外把 header 里的 9/9 LIVE popup 顶到下方，
+   用户展开 hover 时被 total-card 遮盖。给 header 及其 popup wrap 更高 z-index。 */
+#hdr-summary-wrap {
+  z-index: 200 !important;
+}
+#hdr-details {
+  z-index: 201 !important;
+}
 #tot-eq-tip, #tot-vol-tip {
   z-index: 50 !important;
   background: #FFFDF3 !important;   /* Round 242: v2-panel 黑框在 v4 黄底违和 → 白底 */
@@ -5537,13 +5545,13 @@ function apRender(s) {
       rows.push(`
         <div style="border:1px solid rgba(148,163,184,0.25);border-radius:8px;padding:10px;background:var(--v2-panel,#111a2e)">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <span style="font-size:11px;font-weight:600;letter-spacing:.5px">${name}</span>
+            <span style="font-size:11px;font-weight:700;letter-spacing:.5px;color:#fff;text-shadow:0 0 6px rgba(255,255,255,0.6)">${name}</span>
             <span style="font-size:11px;color:${color}">${icon} ${status}</span>
           </div>
           <div style="font-size:20px;font-weight:700;color:${color};line-height:1.1">${effPct != null ? (effPct >= 0 ? '+' : '') + effPct.toFixed(0) + '%' : '—'}</div>
-          <div style="font-size:10px;color:var(--v2-mut);margin-top:4px">
-            理论 <span style="color:var(--v2-txt)">${gp >= 0 ? '+' : ''}${gp.toFixed(1)}</span> ·
-            真实 <span style="color:var(--v2-txt)">${ed != null ? (ed >= 0 ? '+' : '') + ed.toFixed(1) : '—'}</span>
+          <div style="font-size:10px;color:#cbd5e1;margin-top:4px">
+            理论 <span style="color:#fff">${gp >= 0 ? '+' : ''}${gp.toFixed(1)}</span> ·
+            真实 <span style="color:#fff">${ed != null ? (ed >= 0 ? '+' : '') + ed.toFixed(1) : '—'}</span>
           </div>
         </div>
       `);
