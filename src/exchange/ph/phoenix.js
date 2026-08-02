@@ -223,20 +223,43 @@ export class PhoenixExchange extends EventEmitter {
         }
         this.balance = totalMicro / 1e6;
       }
-      // 仓位从 positions 字段拿（如果有；空 wallet 不会有）
-      if (Array.isArray(state?.positions)) {
-        this.positions.clear();
-        for (const p of state.positions) {
-          const mid = this._marketSymbolToId.get(p.symbol);
-          if (mid != null) {
+      // Round 234: positions 藏在 snapshot.subaccounts[*].positions（不是 state.positions）
+      // Field 实测：{ symbol, basePositionLots: '-6561' (string int, 有符号), entryPriceUsd: '72.97' }
+      // sizeBase = basePositionLots × 10^-baseLotsDecimals (来自 market metadata)
+      // 之前代码读 state.positions 恒为 undefined → this.positions 一直空 → bot 认为 position=None
+      // → Autopilot 认为空仓可开新 grid → Phoenix 拒单 "cannot increase exposure"（因已有 short）
+      // → 无限失败循环（用户 Telegram 收到"下单失败 508 次"根因）
+      this.positions.clear();
+      const subs2 = state?.snapshot?.subaccounts;
+      if (Array.isArray(subs2)) {
+        for (const sub of subs2) {
+          const posArr = Array.isArray(sub?.positions) ? sub.positions : [];
+          for (const p of posArr) {
+            const symbol = p.symbol;
+            const mid = this._marketSymbolToId.get(symbol);
+            if (mid == null) continue;
+            const m = this.markets.get(mid);
+            const lotsInt = Number(p.basePositionLots || 0);
+            if (!Number.isFinite(lotsInt) || lotsInt === 0) continue;
+            const sizeBase = lotsInt * (m?.stepSize || 1);
             this.positions.set(mid, {
               marketId: mid,
-              sizeBase: Number(p.baseSize || p.sizeBase || 0),
-              entryPrice: Number(p.avgEntryPrice || p.entryPrice || 0),
-              unrealizedPnl: Number(p.unrealizedPnl || 0),
+              sizeBase,   // 有符号: 负=short 正=long
+              entryPrice: Number(p.entryPriceUsd || p.entryPrice || 0),
+              unrealizedPnl: 0,   // Phoenix 不直接返 uPnL，前端算：(current - entry) × sizeBase
               leverage: Number(p.leverage || 10),
             });
           }
+        }
+        if (this.positions.size > 0 && !this._positionsLogged) {
+          this._positionsLogged = true;
+          try {
+            const dump = [...this.positions.entries()].map(([id, p]) => {
+              const m = this.markets.get(id);
+              return `${m?.displayName ?? id}: ${p.sizeBase.toFixed(3)} @ $${p.entryPrice.toFixed(2)}`;
+            }).join(', ');
+            console.log(`[Phoenix] positions 首次同步：${dump}`);
+          } catch {}
         }
       }
     } catch (e) {
@@ -363,6 +386,25 @@ export class PhoenixExchange extends EventEmitter {
     // 而不是 place-isolated-limit-order（后者每次要 transfer_amount 新建 isolated subaccount，
     // 每笔单一个 subaccount = 80 网格 80 个隔离账户，架构完全不适合网格）
     // 字段用全 camelCase：Round 219 探到 traderPdaIndex/priceInTicks/numBaseLots
+    // Round 234：起单前防抱头 —— 已有 short/long 仓时不再加同向仓位。避免 Phoenix
+    // "Unhealthy trader cannot increase exposure" 拒单后 bot 死循环重试 → 508/min alert flood。
+    // return null 而不是 throw：bot.js 的 .catch 不触发 → 不 _placeFails++/不 alert/不 retry。
+    // 静默跳过 = 网格半边先不铺，等 reduceOnly 平仓单先落地释放保证金。
+    const existing = this.positions.get(marketId);
+    if (existing && existing.sizeBase !== 0 && !o.reduceOnly) {
+      const wantIncrease = (o.side === 'sell' && existing.sizeBase < 0)
+                       || (o.side === 'buy' && existing.sizeBase > 0);
+      if (wantIncrease) {
+        // 首次跳过 log 一次做诊断，之后静默
+        if (!this._skipLoggedFor) this._skipLoggedFor = new Set();
+        const key = `${marketId}:${o.side}`;
+        if (!this._skipLoggedFor.has(key)) {
+          this._skipLoggedFor.add(key);
+          try { console.log(`[Phoenix] 跳过 ${o.side} ${m.displayName}：已持 ${existing.sizeBase.toFixed(3)} 同向仓位（防 Unhealthy trader 拒单）`); } catch {}
+        }
+        return { orderId: null, skipped: true };
+      }
+    }
     const body = {
       authority: this._authorityPubkey,
       traderPdaIndex: 0,
@@ -462,11 +504,22 @@ export class PhoenixExchange extends EventEmitter {
   }
 
   async fetchPositions() {
+    // Round 234: positions 在 snapshot.subaccounts[*].positions 不是 state.positions（同 _refreshBalance 同 bug）
     if (!this._authorityPubkey) return [];
     try {
       const state = await this._req('GET', `/v1/trader/state/${this._authorityPubkey}`, null, true);
-      const positions = state?.positions || [];
-      return Array.isArray(positions) ? positions : [];
+      const subs = state?.snapshot?.subaccounts;
+      if (!Array.isArray(subs)) return [];
+      const out = [];
+      for (const sub of subs) {
+        const posArr = Array.isArray(sub?.positions) ? sub.positions : [];
+        for (const p of posArr) {
+          const lots = Number(p.basePositionLots || 0);
+          if (lots === 0) continue;
+          out.push(p);
+        }
+      }
+      return out;
     } catch (e) {
       this.lastError = e.message;
       return [];
