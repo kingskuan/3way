@@ -1747,8 +1747,39 @@ th {
   border-left: 4px solid var(--v4-ink) !important;
   border-radius: 0 6px 6px 0 !important;
   padding: 8px 10px !important;
+  color: var(--v4-ink) !important;
 }
 #ap-log .log-item:has(b) { border-left-color: var(--v4-accent-hot) !important; }
+#ap-log .log-item * { color: var(--v4-ink) !important; }
+/* Round 240：Autopilot 每所状态卡（JS 生成，inline style 用了 --bg2 v2 深色）
+   在 v4 黄底会变成深底深字看不见。强制覆盖背景色 + ink 深黑文字。 */
+#ap-state > div,
+#ap-per-ex > div {
+  background: #FFFDF3 !important;
+  border: 2px solid var(--v4-ink) !important;
+  border-radius: 8px !important;
+  color: var(--v4-ink) !important;
+  box-shadow: 3px 3px 0 var(--v4-ink) !important;
+}
+#ap-state > div *,
+#ap-per-ex > div * {
+  color: var(--v4-ink) !important;
+}
+#ap-state > div .muted,
+#ap-per-ex > div .muted {
+  color: var(--v4-ink-soft) !important;
+}
+/* Round 240：总权益/总交易量 tooltip 展开时挡下方卡的问题。
+   加大 z-index 并加明显 hard shadow 让浮层立体感更强，且限最大高度 240px
+   超出滚动，防止 tooltip 太长把整个下面的 overview 都盖住。 */
+#tot-eq-tip, #tot-vol-tip {
+  z-index: 50 !important;
+  box-shadow: 4px 4px 0 var(--v4-ink), 6px 6px 20px rgba(0,0,0,0.4) !important;
+  border: 2px solid var(--v4-ink) !important;
+  border-radius: 8px !important;
+  max-height: 240px !important;
+  overflow-y: auto !important;
+}
 
 /* — 上下涨跌颜色 —————————————————————————— */
 .up   { color: var(--v4-accent-good) !important; font-weight: 800 !important; }
