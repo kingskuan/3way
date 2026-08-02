@@ -1793,6 +1793,17 @@ th {
 #tot-eq-tip .num, #tot-vol-tip .num {
   color: var(--v4-accent-good) !important;   /* neon 数字保留 */
 }
+/* Round 244: (未运行) 标签要 stand out —— 上一行的 * !important 把它顶成
+   深墨跟主文字同色 → 分不清哪些所停了。给专用 class 恢复灰色 + italic。 */
+#tot-eq-tip .tt-off, #tot-vol-tip .tt-off {
+  color: #8b8680 !important;
+  font-style: italic !important;
+  font-size: 10px !important;
+  font-weight: 400 !important;
+}
+#tot-eq-tip .row-off, #tot-vol-tip .row-off {
+  opacity: 0.55;   /* 整行调暗，更醒目「这家停了」 */
+}
 
 /* — 上下涨跌颜色 —————————————————————————— */
 .up   { color: var(--v4-accent-good) !important; font-weight: 800 !important; }
@@ -4840,8 +4851,9 @@ function renderOverview(data) {
       .slice()
       .sort((a,b) => b.eq - a.eq)
       .map(x => {
-        const tag = x.running ? '' : ' <span style="color:var(--v2-mut);font-size:10px">(未运行)</span>';
-        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-txt);font-weight:500">${x.name}${tag}</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(x.eq)}</span></div>`;
+        const tag = x.running ? '' : ' <span class="tt-off">(未运行)</span>';
+        const rowCls = x.running ? '' : 'row-off';
+        return `<div class="${rowCls}" style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-txt);font-weight:500">${x.name}${tag}</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(x.eq)}</span></div>`;
       })
       .join('')
       + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span style="color:var(--v2-txt)">合计</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(totEquity)}</span></div>`;
@@ -4856,8 +4868,9 @@ function renderOverview(data) {
     tip.innerHTML = perEx
       .sort((a,b) => b.vol - a.vol)
       .map(x => {
-        const tag = x.running ? '' : ' <span style="color:var(--v2-mut);font-size:10px">(未运行)</span>';
-        return `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-txt);font-weight:500">${x.name}${tag}</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(x.vol)}</span></div>`;
+        const tag = x.running ? '' : ' <span class="tt-off">(未运行)</span>';
+        const rowCls = x.running ? '' : 'row-off';
+        return `<div class="${rowCls}" style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--v2-txt);font-weight:500">${x.name}${tag}</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(x.vol)}</span></div>`;
       })
       .join('')
       + `<div style="border-top:1px solid rgba(148,163,184,0.15);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:12px;font-weight:600"><span style="color:var(--v2-txt)">合计</span><span class="tt-num" style="color:${NEON};text-shadow:${GLOW}">${fmt(totVolume)}</span></div>`;
