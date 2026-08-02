@@ -300,13 +300,19 @@ export class GridBot {
     if (typeof this.ex.start === 'function') this.ex.start();
 
     // ---- seed the ladder (every seed order is an OPENING leg) ----
+    // Round 251: 计 start 阶段被适配器主动 skip 的单数（Round 234 防抱头 / Round 250
+    // Phoenix real-readonly 都会返 {skipped:true} 不 throw），让 _alert 显示得更清楚。
+    this._startSkipped = 0;
     const seeds = seedOrders({ levels: this.grid.levels, price: this.lastPrice, mode: this.config.mode, spacing: this.grid.spacing });
     for (const s of seeds) await this._place({ ...s, opening: true });
 
     if (this.startBalance == null && typeof this.ex.balance === 'number') this.startBalance = this.ex.balance;
     this.running = true;
     this._startReconcileTimer();
-    this._alert(`已启动 ${this.config.displayName} ${labelMode(this.config.mode)}，${this.grid.count} 格，间距 ${this.grid.spacing}（${this.risk.spacingPct}%），杠杆 ${leverage}x，挂出 ${this.active.size} 单。`);
+    const skipNote = this._startSkipped > 0
+      ? `（${this._startSkipped} 单跳过：适配器防抱头/auth 挂时主动 skip，非失败）`
+      : '';
+    this._alert(`已启动 ${this.config.displayName} ${labelMode(this.config.mode)}，${this.grid.count} 格，间距 ${this.grid.spacing}（${this.risk.spacingPct}%），杠杆 ${leverage}x，挂出 ${this.active.size} 单${skipNote}。`);
     this._changed();
     return this.getState();
   }
@@ -523,6 +529,11 @@ export class GridBot {
         return null;
       });
       if (r?.orderId) this.active.set(String(r.orderId), { levelIndex: lvl, side: o.side, price: o.price, sizeBase, opening, recovery: !!o.recovery, placedAt: Date.now() });
+      else if (r?.skipped === true) {
+        // Round 251: 适配器主动 skip（Phoenix 防抱头 Round 234 / real-readonly Round 250）
+        // 不算失败也不 retry；累计到 _startSkipped 让 bot.start 的 _alert 显示。
+        if (typeof this._startSkipped === 'number') this._startSkipped++;
+      }
     } finally {
       this._pendingLevels.delete(lvl);
     }
