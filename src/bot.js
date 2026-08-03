@@ -143,6 +143,24 @@ export class GridBot {
     this.ex.on('fill', this._onFill);
     this.ex.on('price', this._onPrice);
     if (typeof this.ex.start === 'function') this.ex.start();
+    // Round 257: chain 空 vs local 有单检测 —— restart 前用户手动清了 chain
+    // (Phoenix 网页 Close All + Cancel All) 后重启，snap.active 里还有 stale N 单。
+    // Round 252 让 Phoenix hasReliableOrderListing=false → reconcile 的 massVanish
+    // 永远不触发 → bot 卡「以为在跑」→ autopilot 不 restart → 挂 0 单。
+    // 在 resume 时显式 fetchOpenOrders 一次：若返 [] (真的空) 而 local 有 tracked
+    // → 用户清过了，清 local + running=false 让 autopilot next tick fresh start。
+    // fetchOpenOrders 返 null (unknown) 不清，保守。
+    try {
+      const chainOrders = await this.ex.fetchOpenOrders?.(this.config.marketId);
+      if (Array.isArray(chainOrders) && chainOrders.length === 0 && this.active.size > 0) {
+        const wasSize = this.active.size;
+        this.active.clear();
+        this.running = false;
+        this._alert(`⚠️ 恢复检测：chain 已空但 snapshot 里有 ${wasSize} 单 stale tracking（可能你在 QnV 外手动清了）。清 local + 标未运行，让 autopilot 重新起单。`);
+        this._changed();
+        return this.getState();
+      }
+    } catch { /* fetchOpenOrders 抛就走原路径，保守 */ }
     this.running = true;
     this._startReconcileTimer();
     this._alert(`已恢复运行中的 ${this.config.displayName} ${labelMode(this.config.mode)}：接管 ${this.active.size} 个挂单，正在与交易所对账…`);
