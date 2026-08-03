@@ -436,17 +436,10 @@ export class PhoenixExchange extends EventEmitter {
     const marketId = Number(o.marketId);
     const m = this.markets.get(marketId);
     if (!m) throw new Error(`Phoenix 未知 marketId=${marketId}`);
-    // Round 250: auth 挂 (real-readonly) 时静默跳过下单，不 throw 不 retry。
-    // 之前手动 bot fill 后补单 → auth 拒 → bot _queueRetry 5 次 → alert →
-    // 哨兵每 5 min 升级告警刷 Telegram。返 {orderId:null, skipped:true} 让 bot
-    // 认为"跳过"不算失败（同 Round 234 Unhealthy trader 防 loop 的 pattern）。
-    if (this.dataSource === 'real-readonly') {
-      if (!this._authSkipLogged || Date.now() - this._authSkipLogged > 300_000) {
-        this._authSkipLogged = Date.now();
-        try { console.log(`[Phoenix] placeLimitOrder 跳过：auth 挂 (real-readonly)，等 backoff 结束再补单`); } catch {}
-      }
-      return { orderId: null, skipped: true };
-    }
+    // Round 250 + 256: Round 250 之前 real-readonly 时静默跳过下单。但 Round 255/256
+    // 后 /v1/ix/* 试跳过 Bearer 也许能通 —— 真正授权在 Solana 签名，Bearer 只是身份
+    // 提示。所以 real-readonly 时还是尝试下单，让下面的 needAuth=false 走一遍看能不
+    // 能通。若真的被拒 (401 fallback 也失败) 才 return skipped 让 bot 别 retry。
     const side = o.side === 'buy' ? 'Bid' : 'Ask';
     // priceInTicks = price / priceTickSize; numBaseLots = sizeBase / baseLotSize
     const priceInTicks = Math.round(Number(o.price) / m.stepPrice);
@@ -485,7 +478,29 @@ export class PhoenixExchange extends EventEmitter {
       priceInTicks,
       numBaseLots,
     };
-    const instructionsData = await this._req('POST', '/v1/ix/place-limit-order', body, true);
+    // Round 256: 试跳过 Bearer auth，同 Round 255 cancel-order 一样思路 ——
+    // /v1/ix/* 只是 build 未签名 Solana instructions，真正授权在 Solana 签名。
+    // Phoenix auth API 一直 429 rate_limited 时唯一救命路径。若无 Bearer 401，
+    // 再 fallback 到需 Bearer 路径；若 Bearer 也没（backoff 中）就返 skipped 让
+    // bot 不 retry 不 alert（同 Round 250 的静默 skip）。
+    let instructionsData;
+    try {
+      instructionsData = await this._req('POST', '/v1/ix/place-limit-order', body, false);
+    } catch (e) {
+      if (!/401|403|unauthorized/i.test(e.message)) throw e;
+      try {
+        instructionsData = await this._req('POST', '/v1/ix/place-limit-order', body, true);
+      } catch (e2) {
+        if (/backoff/i.test(e2.message)) {
+          if (!this._authSkipLogged || Date.now() - this._authSkipLogged > 300_000) {
+            this._authSkipLogged = Date.now();
+            try { console.log(`[Phoenix] placeLimitOrder 跳过：无 auth + 需 Bearer 但 backoff 中，等 backoff 结束再补单`); } catch {}
+          }
+          return { orderId: null, skipped: true };
+        }
+        throw e2;
+      }
+    }
     const sigs = await this._signAndSubmitInstructions(instructionsData);
     const orderId = sigs[0] || ('ph-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
     this.orders.set(orderId, {
