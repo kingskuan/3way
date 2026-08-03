@@ -964,8 +964,19 @@ class Autopilot {
       try {
         await ex.cancelAll(pick.marketId);
       } catch (e) {
-        this._log(key, 'skip', `${pick.name} 起单前清残留失败：${e?.message || e}，跳过本轮避免叠加挂单`);
-        return;
+        // Round 261: Phoenix real-readonly 时 cancelAll 会因 auth backoff throw
+        //（no-Bearer 若被 Phoenix 拒 → 回落到 Bearer 分支 → 命中 _ensureAuth
+        // "auth backoff 中" throw）→ 此处 catch 让 autopilot 整轮 skip → Round 260
+        // 白搭。此路径下 bot 已知未运行（前面 cur.running=false 分支才走到这里），
+        // Round 258 保证 bot.active 为空，Round 234 防抱头 + Round 254 stray-check
+        // 兜底防重复挂单。所以 Phoenix backoff 时警告而非 skip，让 place 层试。
+        const msg = String(e?.message || e);
+        const isPhoenixBackoff = key === 'ph' && ex?.dataSource === 'real-readonly' && /backoff|429/i.test(msg);
+        if (!isPhoenixBackoff) {
+          this._log(key, 'skip', `${pick.name} 起单前清残留失败：${msg}，跳过本轮避免叠加挂单`);
+          return;
+        }
+        this._log(key, 'warn-nocancel', `${pick.name} cancelAll 挂 auth backoff，继续起单让 no-Bearer place 试 · ${msg}`.slice(0, 200));
       }
       // Round 159 → 161：新市场开仓前清 gridProfit + 重打 startBalance 基线。
       // 否则 bot.stats.gridProfit / startBalance 从上一市场累积过来，Round 154
@@ -998,6 +1009,12 @@ class Autopilot {
             uniq.add(m);
           }
           failReason = ` · 失败原因：${[...uniq].join(' | ')}`;
+        }
+        // Round 261: Phoenix real-readonly 时 place 层 return {skipped:true} 不 alert，
+        // recentAlerts 上面的 regex 匹配不到。补一条明确的 backoff 反馈让用户知道原因，
+        // 而不是看到"仅挂上 0/80 成功率低"没上下文。
+        if (!failReason && key === 'ph' && ex?.dataSource === 'real-readonly') {
+          failReason = ` · 失败原因：Phoenix auth backoff 中（${String(ex.lastError || '').slice(0, 80)}），no-Bearer 路径也没通`;
         }
       }
       const rateNote = (actual < gridCount * 0.75)
