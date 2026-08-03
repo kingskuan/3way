@@ -401,6 +401,36 @@ class Autopilot {
       return;
     }
 
+    // Round 254: Phoenix chain 有孤儿仓位/挂单时，autopilot 不接管。
+    // 用户报告 QnV 显示 Phoenix BNB · 0/32 挂上，但 Phoenix 网页有 BTC 短仓
+    // + 41 BTC 老单 = QnV 跟 chain 完全脱节。因为 auth 挂 (Round 249 cancelAll
+    // rethrow) → rotate abort → bot 卡在错误 market；autopilot 又选新 market
+    // 起单但 chain 老残留一直不清。改：只要 Phoenix chain 有任何 position/order
+    // 而 bot 又不是在跑那些的，autopilot 静默 skip，等用户手动去 phoenix.trade
+    // 撤干净或平仓再接管。
+    if (key === 'ph' && ex && typeof ex.positions?.forEach === 'function') {
+      const curCfg = bot.getState()?.config;
+      const curMktId = curCfg ? Number(curCfg.marketId) : null;
+      let stray = 0;
+      let strayMarkets = [];
+      ex.positions.forEach((p, mid) => {
+        if (!p || !Number.isFinite(p.sizeBase) || p.sizeBase === 0) return;
+        // Round 254: 只算跟当前 bot config marketId 不一样的仓位
+        if (curMktId != null && Number(mid) === curMktId) return;
+        stray++;
+        const m = ex.markets?.get?.(Number(mid));
+        strayMarkets.push(m?.displayName || `mid=${mid}`);
+      });
+      if (stray > 0) {
+        const lastLogAt = st._lastStrayLogAt || 0;
+        if (now - lastLogAt > 30 * 60_000) {
+          st._lastStrayLogAt = now;
+          this._log(key, 'skip', `Phoenix chain 有 ${stray} 个非当前 market 的仓位残留 (${strayMarkets.slice(0, 3).join(',')})，等用户手动 phoenix.trade 清理，autopilot 暂不接管`);
+        }
+        return;
+      }
+    }
+
     // Round 248: 零余额 skip —— Bitget/Bitunix 被 user offboarded 后 balance≈0
     // equity≈0，autopilot 拿 fallback $1000 试起 80 单结果全部 place-order 失败
     // 触发熔断。若 bot 未 running 且 balance<$5 && equity<$5，视为 offboarded，
