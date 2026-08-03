@@ -508,7 +508,15 @@ export class PhoenixExchange extends EventEmitter {
       orders: [String(orderId)],
     };
     try {
-      const instructionsData = await this._req('POST', '/v1/ix/cancel-order', body, true);
+      // Round 255: 试跳过 Bearer auth —— /v1/ix/* 只是返未签名 Solana instructions，
+      // 真正授权靠钱包签名。auth 挂时也能撤单。若 endpoint 强制 Bearer 会 401 → fallback。
+      let instructionsData;
+      try {
+        instructionsData = await this._req('POST', '/v1/ix/cancel-order', body, false);
+      } catch (e) {
+        if (!/401|403|unauthorized/i.test(e.message)) throw e;
+        instructionsData = await this._req('POST', '/v1/ix/cancel-order', body, true);
+      }
       await this._signAndSubmitInstructions(instructionsData);
       this.orders.delete(String(orderId));
       return true;
@@ -532,7 +540,15 @@ export class PhoenixExchange extends EventEmitter {
     // 拿到真单并全部逐单撤才吞掉 primary error。
     let primaryErr = null;
     try {
-      const instructionsData = await this._req('POST', '/v1/ix/cancel-all-orders', body, true);
+      // Round 255: 试跳过 Bearer auth —— 真正授权靠 Solana 签名，Bearer 只是身份提示。
+      // Phoenix auth API 挂 backoff 时唯一救命路径。
+      let instructionsData;
+      try {
+        instructionsData = await this._req('POST', '/v1/ix/cancel-all-orders', body, false);
+      } catch (e) {
+        if (!/401|403|unauthorized/i.test(e.message)) throw e;
+        instructionsData = await this._req('POST', '/v1/ix/cancel-all-orders', body, true);
+      }
       await this._signAndSubmitInstructions(instructionsData);
       return true;   // full-market cancel 成功就 done
     } catch (e) { primaryErr = e; }
