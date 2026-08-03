@@ -23,7 +23,13 @@ export class PhoenixExchange extends EventEmitter {
     this.lastError = null;
     // Round 231: 逆向找到 orders_v2 真参数 (pdaIndex/orderStatus camelCase) 后 fetchOpenOrders
     // 能真的返数组了。撤销 Round 228 的 unreliable 声明，bot 恢复正常 reconcile 通路。
-    this.hasReliableOrderListing = true;
+    // Round 252: 回到 unreliable —— Round 232 endpoint 改成了 order-history（历史交易
+    // 日志，含 cancelled/filled）而不是真的 open orders API。当 41 open 单被后续
+    // recent 100 events (cancel/fill) 挤出窗口时，filter status='active' 返 0 → 哨兵
+    // 报「链上41单/交易所0」假告警（QC 截图: Phoenix 网页 41 orders + 1 position 全
+    // 在，QnV 本地 41 tracked = 完全同步，但告警刷屏）。跟 Perpl 一样声明 unreliable
+    // 让 Round 228 的 safeChainOO=trackedOrders 兜底接管，chain==tracked 不报 drift。
+    this.hasReliableOrderListing = false;
     this.balance = 0;
     this.realizedPnl = 0;
     this.orders = new Map();
