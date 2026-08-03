@@ -192,11 +192,19 @@ export class PhoenixExchange extends EventEmitter {
     // 拉市场（不需 auth）
     try {
       const markets = await this._req('GET', '/v1/view/exchange/markets');
+      // Round 253: 从源头过滤 Phoenix stock markets —— Round 220 只在 autopilot
+      // 挑候选时过滤，但 rotate/用户手动切/persisted config 都能绕过 → 用户看
+      // 到 QnV Phoenix 显示 NVDA 运行 0/32 挂上就是这样。
+      // 股票 market 的 tickSize 缩放跟 API 返 K 线不一致（Round 220：API 返 $835 UI 显 $201），
+      // 网格铺出去 tick 对不上全被拒。彻底不注册 = 任何路径都选不到。
+      const PH_STOCK_SYMBOLS = /^(NVDA|MU|TSM|AMZN|AAPL|GOOGL|META|CRCL|COIN|ASML|CRWV|MSTR|GOLD|WTIOIL|COST|BABA|WMT|LLY|HOOD|NFLX|UBER|MELI|PLTR|IBIT|SPX|SPY|QQQ)$/i;
       if (Array.isArray(markets)) {
         let idx = 1;
+        let stockFiltered = 0;
         for (const m of markets) {
           if (!m.symbol) continue;
           if (m.marketStatus !== 'active') continue;
+          if (PH_STOCK_SYMBOLS.test(String(m.symbol))) { stockFiltered++; continue; }
           // Phoenix 字段（Round 213 直接打 API 探得）：
           //   tickSize: 价格 tick（整数或小数，具体单位看 asset）
           //   baseLotsDecimals: base lot 小数位（e.g. 2 → 0.01 步长）
@@ -222,6 +230,9 @@ export class PhoenixExchange extends EventEmitter {
           this.markets.set(idx, market);
           this._marketSymbolToId.set(String(m.symbol), idx);
           idx++;
+        }
+        if (stockFiltered > 0) {
+          try { console.log(`[Phoenix] init 过滤 ${stockFiltered} 个 stock market（Round 253：tick 缩放异常，不注册防误选）`); } catch {}
         }
       }
     } catch (e) {

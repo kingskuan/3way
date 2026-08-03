@@ -216,9 +216,15 @@ export class GridBot {
     // 就是这。Ondo 不出问题因为一直只跑 BTC-USD.P，没换过市场。
     if (this.config && Number(this.config.marketId) !== Number(market.marketId)) {
       const oldName = this.config.displayName || `marketId=${this.config.marketId}`;
-      try { await this.ex.cancelAll(this.config.marketId); } catch { /* best effort */ }
+      // Round 253: cancelAll 失败（Phoenix real-readonly Round 249 rethrow）时直接
+      // abort rotate，不留老单残留。之前 catch { /* best effort */ } 静默继续，
+      // 用户看到 QnV 切到 NVDA 但 Phoenix 网页还挂 41 老 BTC 单 = 就是这个。
+      try { await this.ex.cancelAll(this.config.marketId); }
+      catch (e) {
+        throw new Error(`老市场 ${oldName} 撤单失败（${e.message.slice(0, 100)}），切市场 abort。请先手动在交易所网页撤老单或修复 auth，再重试。`);
+      }
       if (typeof this.ex.closePosition === 'function') {
-        try { await this.ex.closePosition(this.config.marketId); } catch { /* best effort */ }
+        try { await this.ex.closePosition(this.config.marketId); } catch { /* closePosition best effort，撤单是主保 */ }
       }
       // Round 146 Bug 3：切市场清 fills。以前不清 → autopilot Round 121 stop-idle
       // 停 A → 起 B 后，fills[0].t 仍是 A 市场的老时间戳 → autopilot 下一 tick 立刻
