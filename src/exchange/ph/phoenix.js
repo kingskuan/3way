@@ -502,14 +502,24 @@ export class PhoenixExchange extends EventEmitter {
       }
     }
     const sigs = await this._signAndSubmitInstructions(instructionsData);
-    const orderId = sigs[0] || ('ph-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
-    this.orders.set(orderId, {
-      orderId, marketId, side: o.side,
+    // Round 259: Solana signature ≠ Phoenix orderSequenceNumber (fetchOpenOrders
+    // 里的 orderId)。之前 return sig 作 orderId → bot.active 存 sig 但 reconcile
+    // 拉 orderSequenceNumber → 永远 mismatch → chain N 单 vs bot 0 tracked。
+    // 用户 QC 截图: Phoenix chain 41 单 + QnV 显示 0/32 = 就是这个。
+    //
+    // 修：返 orderId=null (deferred) —— bot 认为「place 已提交但 orderId 未知」，
+    // 不添加 stale entry 到 active。Reconcile 拉 chain 时会用真的 orderSequenceNumber
+    // adopt。levelIndex 判重靠下一次 reconcile 补上，Round 259 comment 提醒。
+    // orders 内部 map 保留（用 sig 做临时 key）便于 debug，不影响 bot.active 判重。
+    const sig = sigs[0] || ('ph-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+    this.orders.set(sig, {
+      orderId: sig, marketId, side: o.side,
       price: Number(o.price), sizeBase: Number(o.sizeBase),
       levelIndex: o.levelIndex, clientOrderId: o.clientOrderId,
       reduceOnly: !!o.reduceOnly,
+      solanaSig: sig,   // 显式标注是 sig 不是真 orderId
     });
-    return { orderId };
+    return { orderId: null, deferred: true };
   }
 
   async cancelOrder(marketId, orderId) {
