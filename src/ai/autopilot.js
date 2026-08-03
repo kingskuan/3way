@@ -390,11 +390,17 @@ class Autopilot {
       return;
     }
     // Round 242: real-readonly = auth 挂了/backoff 中，只能读不能写。若还起单
-    // 会走 80 次 place-order 全被 backoff 拒 → 挂上 0/80 → 熔断循环。QC 截图
-    // Phoenix「挂上 0/80，成功率低 · Phoenix auth backoff 中（还有 31s）」就是这情况。
+    // 会走 80 次 place-order 全被 backoff 拒 → 挂上 0/80 → 熔断循环。
+    // Round 260: Phoenix 例外 —— Round 256 起 place-limit-order 已经会先跳
+    // Bearer（真授权在 Solana 签名），auth 挂了未必影响下单。放行 ph，让
+    // no-Bearer 路径试；成功了照常算 start，失败了 place 层内部 skip（Round 250
+    // return {skipped:true}）不会打爆 rate limit。其他所无 no-Bearer 兜底，保 skip。
     if (ex?.dataSource === 'real-readonly') {
-      this._log(key, 'skip', `${key} auth 挂了（real-readonly），等 auth 恢复再起单 · ${ex.lastError || ''}`.slice(0, 200));
-      return;
+      if (key !== 'ph') {
+        this._log(key, 'skip', `${key} auth 挂了（real-readonly），等 auth 恢复再起单 · ${ex.lastError || ''}`.slice(0, 200));
+        return;
+      }
+      this._log(key, 'proceed-noauth', `Phoenix real-readonly，试 no-Bearer 路径起单（真授权靠 Solana 签名）· ${ex.lastError || ''}`.slice(0, 200));
     }
     if (stale) {
       this._log(key, 'skip', `交易所数据 ${Math.round((now - ex.lastOkAt) / 1000)}s 未更新，跳过本轮`);
