@@ -115,6 +115,16 @@ export class GridBot {
     // CANCELLED the whole ladder while the position stayed open.
     if (snap.recovery || snap.config.mode === 'recovery') return this._resumeRecovery(snap);
     if (!Array.isArray(snap.active)) throw new Error('无可恢复的运行中网格快照');
+    // Round 258: snapshot active 数组为空 = 上次退出时 bot state 说 running 但没
+    // 任何单 tracked。resume 成 running=true 会让 autopilot 只 "保持" 不重启 →
+    // Phoenix 挂 0 单卡死。只 restore stats 不设 running，让 autopilot fresh start。
+    if (snap.active.length === 0) {
+      this.restore(snap);
+      this.running = false;
+      this._alert(`⚠️ 恢复检测：${snap.config.displayName || '未知市场'} snapshot 无挂单 tracking（0 单），标未运行让 autopilot 重新起单。`);
+      this._changed();
+      return this.getState();
+    }
     this.config = snap.config;
     this.stats = { buys: 0, sells: 0, completedRungs: 0, gridProfit: 0, volume: 0, ...(snap.stats || {}) };
     this.startBalance = snap.startBalance ?? null;
