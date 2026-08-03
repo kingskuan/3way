@@ -697,6 +697,82 @@ export class PhoenixExchange extends EventEmitter {
 
   async reconcileOpenOrders() { return true; }
 
+  /** Round 262: 诊断快照。UI「🔍 诊断 Phoenix 挂单」按钮调 /api/ph/debug 落到这里。
+   *  之前 Phoenix 没实现 getDebugSnapshot → 按钮返 { info: '该适配器未实现…'} 用户点了没反应。
+   *  Phoenix 的痛点特殊：auth 挂 backoff 时读也读不到，得让用户直接看到 auth 状态 +
+   *  各 endpoint 的 raw 响应，才能判断 Round 260 no-Bearer 路径能不能跑。 */
+  async getDebugSnapshot() {
+    const now = Date.now();
+    const out = {
+      dataSource: this.dataSource,
+      lastError: this.lastError,
+      lastOkAt: this.lastOkAt ? new Date(this.lastOkAt).toISOString() : null,
+      lastOkAgeSec: this.lastOkAt ? Math.round((now - this.lastOkAt) / 1000) : null,
+      auth: {
+        hasToken: !!this._authToken,
+        tokenExpiresInSec: this._authTokenExpiresAt
+          ? Math.round((this._authTokenExpiresAt - now) / 1000) : null,
+        backoffMs: this._authBackoffMs || 0,
+        backoffRemainingSec: this._authBackoffUntil
+          ? Math.max(0, Math.round((this._authBackoffUntil - now) / 1000)) : 0,
+        inflight: !!this._authInflight,
+        wallet: this._authorityPubkey
+          ? this._authorityPubkey.slice(0, 8) + '...' + this._authorityPubkey.slice(-6) : null,
+      },
+      localBalance: this.balance,
+      localMarkets: this.markets.size,
+      localOrders: this.orders.size,
+      localOrdersSample: [...this.orders.values()].slice(0, 3),
+      localPositions: this.positions.size,
+      localPositionsSample: [...this.positions.values()].slice(0, 3),
+    };
+    if (!this._authorityPubkey) return out;
+
+    // Probe：Bearer 需要 + no-Bearer 两条路径都试。看用户就知道 Round 260 能否 work：
+    // no-Bearer 若都 200 → real-readonly 起单有戏；若都被拒 → IP 级 rate limit 硬挡。
+    const wallet = this._authorityPubkey;
+    const paths = [
+      { path: `/v1/trader/${wallet}/order-history?limit=100`, label: 'order-history (open orders 来源)' },
+      { path: `/v1/trader/state/${wallet}`, label: 'trader/state (positions + balance 来源)' },
+      { path: `/v1/trader/${wallet}/trades-history?limit=5`, label: 'trades-history (fills 来源)' },
+    ];
+    out.probes = {};
+    for (const { path, label } of paths) {
+      const noAuthKey = `${path} · no-Bearer`;
+      const authKey = `${path} · Bearer`;
+      out.probes[noAuthKey] = await this._probeOne(path, false, label);
+      out.probes[authKey] = await this._probeOne(path, true, label);
+    }
+
+    // 用 fetchOpenOrders 走真实解析逻辑（含 Round 246 real-readonly guard），
+    // 看用户就知道 bot 侧读到的是啥
+    try {
+      const parsed = await this.fetchOpenOrders(0);
+      out.fetchOpenOrdersResult = parsed === null
+        ? 'null (real-readonly guard / API 挂 / 分页盲区)'
+        : `${parsed.length} orders`;
+    } catch (e) { out.fetchOpenOrdersError = e?.message || String(e); }
+
+    return out;
+  }
+
+  async _probeOne(path, needAuth, label) {
+    try {
+      const j = await this._req('GET', path, null, needAuth);
+      const body = JSON.stringify(j);
+      const arr = Array.isArray(j) ? j : (Array.isArray(j?.data) ? j.data : null);
+      return {
+        ok: true,
+        label,
+        preview: body.slice(0, 400),
+        dataLen: arr ? arr.length : null,
+        topKeys: (j && typeof j === 'object' && !Array.isArray(j)) ? Object.keys(j).slice(0, 12) : null,
+      };
+    } catch (e) {
+      return { ok: false, label, error: String(e?.message || e).slice(0, 250) };
+    }
+  }
+
   // Round 232：Round 231 用 /v1/traders/{pk}/trades_v2 结果 API 返 "Trader not found"
   // — 因为 plural traders/{pk} 的 pk 是 trader PDA，不是 wallet。web app 用
   // /v1/trader/{wallet}/trades-history（singular）也 work 且直接用 wallet + unauth 就通。
