@@ -539,7 +539,12 @@ class Autopilot {
         // Round 205: aggressive 完全禁 stop-idle rotate。之前 60min 无成交仍
         // rotate → BTC 冷却 30min → autopilot 重挑 fallback 到 AAPL/HYPE，破坏
         // 挂 BTC 不换策略。aggressive 就是"挂着不换"，让 re-center/narrow 处理。
-        const noFillFloor = this.cfg.riskStyle === 'aggressive' ? Infinity : 60;
+        // Round 265: aggressive Infinity → 720min (12h)。用户 QC /api/autopilot/status
+        // 看到 ex/on aggressive 状态下 5963/5997 min 无成交（~4 天）= 死鱼盘白锁保证金
+        // 白烧 fee/funding。给个天花板：12h 是"挂 BTC 不换"策略下 BTC 也真的死了的
+        // 阈值（震荡日 BTC 3-4h 至少 1 fill），触发后 rotate 挑更活跃市场，30min
+        // 冷却期让当前 stuck 市场进冷却池，autopilot 下 tick 选别的。
+        const noFillFloor = this.cfg.riskStyle === 'aggressive' ? 720 : 60;
         const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
         const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
         if (lastActivity > 0 && noFillMinutes >= noFillFloor) {
@@ -964,19 +969,22 @@ class Autopilot {
       try {
         await ex.cancelAll(pick.marketId);
       } catch (e) {
-        // Round 261: Phoenix real-readonly 时 cancelAll 会因 auth backoff throw
-        //（no-Bearer 若被 Phoenix 拒 → 回落到 Bearer 分支 → 命中 _ensureAuth
-        // "auth backoff 中" throw）→ 此处 catch 让 autopilot 整轮 skip → Round 260
-        // 白搭。此路径下 bot 已知未运行（前面 cur.running=false 分支才走到这里），
-        // Round 258 保证 bot.active 为空，Round 234 防抱头 + Round 254 stray-check
-        // 兜底防重复挂单。所以 Phoenix backoff 时警告而非 skip，让 place 层试。
+        // Round 261/264: Phoenix real-readonly 时 cancelAll 一定会挂 —— 可能是
+        // "auth backoff 中" (client 自我 backoff)、"rate_limited" (Phoenix API 直返)、
+        // 429 (HTTP) 等等各种 text。之前 Round 261 只匹配 /backoff|429/i 结果漏了
+        // Phoenix 官方 "rate_limited" 字串 → 每 tick 死循环：
+        //   proceed-noauth → cancelAll rate_limited → skip → 5min后又 proceed → 又 skip
+        // 简化：**Phoenix + real-readonly 时任何 cancelAll 错都放行**。此路径下 bot
+        // 已知未 running（前面分支才走到这里），Round 258 保证 bot.active 空，
+        // Round 234 防抱头 + Round 254 stray-check 兜底防重复挂单。error text 千变
+        // 万化，不该做 whitelist regex 匹配。
         const msg = String(e?.message || e);
-        const isPhoenixBackoff = key === 'ph' && ex?.dataSource === 'real-readonly' && /backoff|429/i.test(msg);
-        if (!isPhoenixBackoff) {
+        const phReadonly = key === 'ph' && ex?.dataSource === 'real-readonly';
+        if (!phReadonly) {
           this._log(key, 'skip', `${pick.name} 起单前清残留失败：${msg}，跳过本轮避免叠加挂单`);
           return;
         }
-        this._log(key, 'warn-nocancel', `${pick.name} cancelAll 挂 auth backoff，继续起单让 no-Bearer place 试 · ${msg}`.slice(0, 200));
+        this._log(key, 'warn-nocancel', `${pick.name} cancelAll 挂 (Phoenix real-readonly)，继续起单让 no-Bearer place 试 · ${msg}`.slice(0, 200));
       }
       // Round 159 → 161：新市场开仓前清 gridProfit + 重打 startBalance 基线。
       // 否则 bot.stats.gridProfit / startBalance 从上一市场累积过来，Round 154

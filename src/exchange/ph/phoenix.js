@@ -484,17 +484,23 @@ export class PhoenixExchange extends EventEmitter {
     // 再 fallback 到需 Bearer 路径；若 Bearer 也没（backoff 中）就返 skipped 让
     // bot 不 retry 不 alert（同 Round 250 的静默 skip）。
     let instructionsData;
+    const isRateOrAuth = (msg) => /401|403|unauthorized|rate_limited|429|backoff/i.test(msg);
     try {
       instructionsData = await this._req('POST', '/v1/ix/place-limit-order', body, false);
     } catch (e) {
-      if (!/401|403|unauthorized/i.test(e.message)) throw e;
+      // Round 264: 之前只 catch 401/403 走 Bearer fallback，其他 (rate_limited/429/500) 直接
+      // throw 到 bot.js → 80 单 seed 全打 alert + retry。Phoenix 实际返 "rate_limited" 是
+      // IP 级 rate limit（非 auth），Bearer fallback 帮不了。改成：401/403/rate 都试 Bearer；
+      // 若 Bearer 也挂就静默 skip 让 bot 别 retry 别 alert。避免 80 单 seed 生成 80 条
+      // "下单失败 rate_limited" 刷屏 + reconcile 重试雪崩。
+      if (!isRateOrAuth(e.message)) throw e;
       try {
         instructionsData = await this._req('POST', '/v1/ix/place-limit-order', body, true);
       } catch (e2) {
-        if (/backoff/i.test(e2.message)) {
+        if (isRateOrAuth(e2.message)) {
           if (!this._authSkipLogged || Date.now() - this._authSkipLogged > 300_000) {
             this._authSkipLogged = Date.now();
-            try { console.log(`[Phoenix] placeLimitOrder 跳过：无 auth + 需 Bearer 但 backoff 中，等 backoff 结束再补单`); } catch {}
+            try { console.log(`[Phoenix] placeLimitOrder 跳过：IP rate limit / auth backoff 中 (${e2.message.slice(0, 100)})，等窗口过再补单`); } catch {}
           }
           return { orderId: null, skipped: true };
         }
