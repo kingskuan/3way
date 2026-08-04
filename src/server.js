@@ -33,6 +33,7 @@ import { createExchange as createSxExchange } from './exchange/sx/index.js';
 import { createExchange as createBgExchange } from './exchange/bg/index.js';
 import { createExchange as createBuExchange } from './exchange/bu/index.js';
 import { createExchange as createPhExchange } from './exchange/ph/index.js';
+import { createExchange as createNdExchange } from './exchange/nd/index.js';
 import { GridBot } from './bot.js';
 import { analyzeTrend } from './trend.js';
 import { setupProxies, checkProxy } from './proxy.js';
@@ -91,6 +92,9 @@ if ((cfg.host === '0.0.0.0' || cfg.isCloud) && !cfg.dashboardPassword) {
   if (cfg.ph.mode === 'live') {
     if (!cfg.ph.walletPrivateKey) missing.push(['Phoenix ', 'PH_WALLET_PRIVATE_KEY', 'Solana wallet 私钥 (base58 编码)。Round 210 完整实现 wallet 签名']);
   }
+  if (cfg.nd.mode === 'live') {
+    if (!cfg.nd.walletPrivateKey) missing.push(['Nado    ', 'NADO_WALLET_PRIVATE_KEY', 'EVM 钱包私钥 (0x hex)，Ink Chain 上的 Vertex-fork 永续 DEX']);
+  }
   if (missing.length) {
     console.error('\n[启动失败] 有交易所被设为 live 实盘模式，但 .env 里还缺以下凭据：\n');
     for (const [ex, key, where] of missing) {
@@ -115,7 +119,7 @@ if (proxyResult.used) {
     console.log('[代理检测] ✓ 代理正常，当前出口 IP: ' + chk.ip);
   } else {
     console.error('[代理检测] ✗ 代理无法联网：' + chk.error);
-    const hasLive = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph'].some((k) => cfg[k].mode === 'live');
+    const hasLive = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd'].some((k) => cfg[k].mode === 'live');
     if (hasLive) {
       console.error('  实盘模式已中止启动，以免在断网状态下运行造成挂单失控。');
       process.exit(1);
@@ -137,6 +141,7 @@ const sxExchange = createSxExchange(cfg.sx);
 const bgExchange = createBgExchange(cfg.bg);
 const buExchange = createBuExchange(cfg.bu);
 const phExchange = await createPhExchange(cfg.ph);
+const ndExchange = createNdExchange(cfg.nd);
 
 const deBot = new GridBot(deExchange, { onChange: (s) => saveSnapshot('de', s) });
 const exBot = new GridBot(exExchange, { onChange: (s) => saveSnapshot('ex', s) });
@@ -147,6 +152,7 @@ const sxBot = new GridBot(sxExchange, { onChange: (s) => saveSnapshot('sx', s) }
 const bgBot = new GridBot(bgExchange, { onChange: (s) => saveSnapshot('bg', s) });
 const buBot = new GridBot(buExchange, { onChange: (s) => saveSnapshot('bu', s) });
 const phBot = new GridBot(phExchange, { onChange: (s) => saveSnapshot('ph', s) });
+const ndBot = new GridBot(ndExchange, { onChange: (s) => saveSnapshot('nd', s) });
 
 // Restore cumulative stats / config from the previous run (display continuity).
 // Trading does NOT auto-resume; stray-order cleanup happens after each exchange
@@ -160,29 +166,30 @@ sxBot.restore(loadSnapshot('sx'));
 bgBot.restore(loadSnapshot('bg'));
 buBot.restore(loadSnapshot('bu'));
 phBot.restore(loadSnapshot('ph'));
+ndBot.restore(loadSnapshot('nd'));
 
 // Belt-and-suspenders: ensure every exchange always has an 'error' listener so a
 // stray emit can never crash the process (the GridBot also attaches one).
-for (const ex of [deExchange, exExchange, rsExchange, onExchange, plExchange, sxExchange, bgExchange, buExchange, phExchange]) {
+for (const ex of [deExchange, exExchange, rsExchange, onExchange, plExchange, sxExchange, bgExchange, buExchange, phExchange, ndExchange]) {
   ex.on('error', (e) => { try { console.error('[DEX 错误] ' + (e?.message || e)); } catch {} });
 }
 
 // ── AI 服务（哨兵/日报/分析/对话/出区间建议）────────────────────────────────
 const aiService = createAiService({
-  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot, ph: phBot },
-  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange, bu: buExchange, ph: phExchange },
+  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot, ph: phBot, nd: ndBot },
+  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange, bu: buExchange, ph: phExchange, nd: ndExchange },
 });
 aiService.start();
 
 // ── AI Autopilot（无脑一键：AI 自动选币 + 起网格 + 熔断护栏 + Telegram 复盘）
 const autopilot = createAutopilot({
-  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot, ph: phBot },
-  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange, bu: buExchange, ph: phExchange },
+  bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot, ph: phBot, nd: ndBot },
+  exchanges: { de: deExchange, ex: exExchange, rs: rsExchange, on: onExchange, pl: plExchange, sx: sxExchange, bg: bgExchange, bu: buExchange, ph: phExchange, nd: ndExchange },
 });
 autopilot.start();
 
 // ── 宠物系统（每家 DEX 一只宠物，交易量累积成养料，6 阶进化）
-const pets = createPets({ bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot, ph: phBot } });
+const pets = createPets({ bots: { de: deBot, ex: exBot, rs: rsBot, on: onBot, pl: plBot, sx: sxBot, bg: bgBot, bu: buBot, ph: phBot, nd: ndBot } });
 pets.start();
 
 // SSE 客户端集合（按 DEX 分组）
@@ -195,6 +202,7 @@ const sxClients = new Set();
 const bgClients = new Set();
 const buClients = new Set();
 const phClients = new Set();
+const ndClients = new Set();
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────────
 const MIME = {
@@ -542,6 +550,7 @@ const sxHandler = makeExchangeHandler('/api/sx', sxBot, sxExchange, cfg.sx, sxCl
 const bgHandler = makeExchangeHandler('/api/bg', bgBot, bgExchange, cfg.bg, bgClients, 'Bitget');
 const buHandler = makeExchangeHandler('/api/bu', buBot, buExchange, cfg.bu, buClients, 'Bitunix');
 const phHandler = makeExchangeHandler('/api/ph', phBot, phExchange, cfg.ph, phClients, 'Phoenix');
+const ndHandler = makeExchangeHandler('/api/nd', ndBot, ndExchange, cfg.nd, ndClients, 'Nado');
 
 // ── HTTP Basic Auth 中间件（有 DASHBOARD_PASSWORD 才启用） ──────────────────
 // 时间常量比较，避免旁路时间攻击。
@@ -598,6 +607,7 @@ const server = http.createServer(async (request, res) => {
         bg: pick(bgBot.getState(), cfg.bg.mode),
         bu: pick(buBot.getState(), cfg.bu.mode),
         ph: pick(phBot.getState(), cfg.ph.mode),
+        nd: pick(ndBot.getState(), cfg.nd.mode),
       });
     }
 
@@ -620,6 +630,7 @@ const server = http.createServer(async (request, res) => {
         bg: pick(bgBot.getState(), cfg.bg.mode),
         bu: pick(buBot.getState(), cfg.bu.mode),
         ph: pick(phBot.getState(), cfg.ph.mode),
+        nd: pick(ndBot.getState(), cfg.nd.mode),
       };
       res.write(`data: ${JSON.stringify(initial, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))}\n\n`);
       const overviewClients = server._overviewClients;
@@ -958,6 +969,7 @@ const server = http.createServer(async (request, res) => {
         bg: 'bitget',         // CEX $4.96B
         bu: 'bitunix',        // CEX $215.5M
         ph: null,             // Phoenix perp 未上 defillama
+        nd: null,             // Nado 未上 defillama
       };
       const cache = global._dexMetricsCache = global._dexMetricsCache || {};
       const now = Date.now();
@@ -1060,6 +1072,9 @@ const server = http.createServer(async (request, res) => {
     if (p.startsWith('/api/ph/')) {
       return await phHandler(request, res, p.slice('/api/ph'.length), url);
     }
+    if (p.startsWith('/api/nd/')) {
+      return await ndHandler(request, res, p.slice('/api/nd'.length), url);
+    }
 
     // ── 静态文件 ──────────────────────────────────────────────────────────
     let file = p === '/' ? '/index.html' : p;
@@ -1130,6 +1145,10 @@ setInterval(() => {
     const data = `data: ${stringify(phBot.getState())}\n\n`;
     for (const r of phClients) { try { r.write(data); } catch { phClients.delete(r); } }
   }
+  if (ndClients.size > 0) {
+    const data = `data: ${stringify(ndBot.getState())}\n\n`;
+    for (const r of ndClients) { try { r.write(data); } catch { ndClients.delete(r); } }
+  }
   if (server._overviewClients.size > 0) {
     const deState = deBot.getState();
     const exState = exBot.getState();
@@ -1140,6 +1159,7 @@ setInterval(() => {
     const bgState = bgBot.getState();
     const buState = buBot.getState();
     const phState = phBot.getState();
+    const ndState = ndBot.getState();
     const overview = {
       de: pick(deState, cfg.de.mode),
       ex: pick(exState, cfg.ex.mode),
@@ -1150,6 +1170,7 @@ setInterval(() => {
       bg: pick(bgState, cfg.bg.mode),
       bu: pick(buState, cfg.bu.mode),
       ph: pick(phState, cfg.ph.mode),
+      nd: pick(ndState, cfg.nd.mode),
     };
     const data = `data: ${stringify(overview)}\n\n`;
     for (const r of server._overviewClients) { try { r.write(data); } catch { server._overviewClients.delete(r); } }
@@ -1233,6 +1254,7 @@ await Promise.all([
   initExchange(bgExchange, 'Bitget', { mode: cfg.bg.mode, apiUrl: 'https://api.bitget.com' }),
   initExchange(buExchange, 'Bitunix', { mode: cfg.bu.mode, apiUrl: 'https://fapi.bitunix.com' }),
   initExchange(phExchange, 'Phoenix', { mode: cfg.ph.mode, apiUrl: 'https://perp-api.phoenix.trade' }),
+  initExchange(ndExchange, 'Nado', { mode: cfg.nd.mode, apiUrl: 'https://gateway.prod.nado.xyz' }),
 ]);
 
 // ── 崩溃恢复 / 续跑 ────────────────────────────────────────────────────────────
@@ -1266,6 +1288,7 @@ await Promise.all([
   resumeIfWasRunning(bgBot, bgExchange, 'bg'),
   resumeIfWasRunning(buBot, buExchange, 'bu'),
   resumeIfWasRunning(phBot, phExchange, 'ph'),
+  resumeIfWasRunning(ndBot, ndExchange, 'nd'),
 ]);
 // Autopilot 迁移补丁：resume 完之后再认领在跑的托管 bot（构造函数里做为时过早，
 // 那时 bot.running 都还是 false）
@@ -1278,7 +1301,7 @@ autopilot.adoptRunningBots();
 // 让 Round 136 anomaly check 有机会执行。
 await Promise.all([
   ['de', deBot], ['ex', exBot], ['rs', rsBot], ['on', onBot],
-  ['pl', plBot], ['sx', sxBot], ['bg', bgBot], ['bu', buBot], ['ph', phBot],
+  ['pl', plBot], ['sx', sxBot], ['bg', bgBot], ['bu', buBot], ['ph', phBot], ['nd', ndBot],
 ].map(async ([k, bot]) => {
   if (typeof bot?.ex?.getStats !== 'function') return;
   try {
