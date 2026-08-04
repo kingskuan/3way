@@ -336,16 +336,21 @@ export class GridBot {
     // ---- seed the ladder (every seed order is an OPENING leg) ----
     // Round 251: 计 start 阶段被适配器主动 skip 的单数（Round 234 防抱头 / Round 250
     // Phoenix real-readonly 都会返 {skipped:true} 不 throw），让 _alert 显示得更清楚。
+    // Round 263: 加 _startDeferred —— Phoenix Round 259 return {orderId:null, deferred:true}
+    // 让 reconcile 从 chain adopt。之前 _place 两个分支都不认这种 return，80 单全"消失"
+    // 在 _startSkipped=0 + active.size=0 → bot 假装 running 但零单零日志 phantom 状态。
     this._startSkipped = 0;
+    this._startDeferred = 0;
     const seeds = seedOrders({ levels: this.grid.levels, price: this.lastPrice, mode: this.config.mode, spacing: this.grid.spacing });
     for (const s of seeds) await this._place({ ...s, opening: true });
 
     if (this.startBalance == null && typeof this.ex.balance === 'number') this.startBalance = this.ex.balance;
     this.running = true;
     this._startReconcileTimer();
-    const skipNote = this._startSkipped > 0
-      ? `（${this._startSkipped} 单跳过：适配器防抱头/auth 挂时主动 skip，非失败）`
-      : '';
+    const notes = [];
+    if (this._startSkipped > 0) notes.push(`${this._startSkipped} 单跳过（适配器防抱头/auth 主动 skip）`);
+    if (this._startDeferred > 0) notes.push(`${this._startDeferred} 单 deferred（tx 已提交但 orderId 未知，等 reconcile 从 chain adopt）`);
+    const skipNote = notes.length ? `（${notes.join(' · ')}）` : '';
     this._alert(`已启动 ${this.config.displayName} ${labelMode(this.config.mode)}，${this.grid.count} 格，间距 ${this.grid.spacing}（${this.risk.spacingPct}%），杠杆 ${leverage}x，挂出 ${this.active.size} 单${skipNote}。`);
     this._changed();
     return this.getState();
@@ -567,6 +572,15 @@ export class GridBot {
         // Round 251: 适配器主动 skip（Phoenix 防抱头 Round 234 / real-readonly Round 250）
         // 不算失败也不 retry；累计到 _startSkipped 让 bot.start 的 _alert 显示。
         if (typeof this._startSkipped === 'number') this._startSkipped++;
+      }
+      else if (r?.deferred === true) {
+        // Round 263: Phoenix Round 259 return {orderId:null, deferred:true} —— tx 已经
+        // submit（Solana sig 在 exchange 侧 _signAndSubmitInstructions 里已经拿到），
+        // 但 chain 上的 orderSequenceNumber 得等 reconcile 从 fetchOpenOrders 拉。
+        // 不 push 到 active 避免用假 id（Round 259 comment）；也不算 skip / fail /
+        // retry。计 _startDeferred 让用户能在 start alert 里看到 "N 单 deferred"，
+        // 别再是 phantom running（0 alerts + 0 orders）无从追查。
+        if (typeof this._startDeferred === 'number') this._startDeferred++;
       }
     } finally {
       this._pendingLevels.delete(lvl);
@@ -1264,6 +1278,10 @@ export class GridBot {
       stats: this.stats,
       openOrders: this.active.size,
       exchangeOpenOrders: this._exchangeOpenOrders,
+      // Round 263: 暴露 _startSkipped / _startDeferred 给 autopilot fill-rate check，
+      // 让 "仅挂上 0/80 成功率低" 能带上真实原因（deferred = tx 已发但 orderId 未知）。
+      startSkipped: this._startSkipped || 0,
+      startDeferred: this._startDeferred || 0,
       openByLevel,
       health: this._health(),
       // Round 107：leverage 兜底 —— 交易所有的没返 leverage 字段（Ondo/Bitget 位置解析后是 null），

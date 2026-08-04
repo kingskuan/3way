@@ -1016,6 +1016,18 @@ class Autopilot {
         if (!failReason && key === 'ph' && ex?.dataSource === 'real-readonly') {
           failReason = ` · 失败原因：Phoenix auth backoff 中（${String(ex.lastError || '').slice(0, 80)}），no-Bearer 路径也没通`;
         }
+        // Round 263: Round 259 让 Phoenix placeLimitOrder return {orderId:null, deferred:true}
+        // 让 reconcile 从 chain adopt orderSequenceNumber。若 chain fetchOpenOrders 拉不到
+        // （unreliable listing / 分页盲区），active.size 一直 0，用户看到 "仅挂上 0/80" 但
+        // 实际上 tx 已经 submit 到 Solana 了。明确告诉用户 deferred 状态别再当 fail。
+        const deferred = Number(finalState.startDeferred) || 0;
+        const skipped = Number(finalState.startSkipped) || 0;
+        if (!failReason && (deferred > 0 || skipped > 0)) {
+          const parts = [];
+          if (deferred > 0) parts.push(`${deferred} 单 deferred（tx 已提交 chain，等 reconcile adopt orderId）`);
+          if (skipped > 0) parts.push(`${skipped} 单 adapter skip（防抱头/auth）`);
+          failReason = ` · ${parts.join(' · ')}`;
+        }
       }
       const rateNote = (actual < gridCount * 0.75)
         ? `（仅挂上 ${actual}/${gridCount}，成功率低${failReason}）` : '';
