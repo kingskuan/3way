@@ -1004,22 +1004,19 @@ class Autopilot {
       try {
         await ex.cancelAll(pick.marketId);
       } catch (e) {
-        // Round 261/264: Phoenix real-readonly 时 cancelAll 一定会挂 —— 可能是
-        // "auth backoff 中" (client 自我 backoff)、"rate_limited" (Phoenix API 直返)、
-        // 429 (HTTP) 等等各种 text。之前 Round 261 只匹配 /backoff|429/i 结果漏了
-        // Phoenix 官方 "rate_limited" 字串 → 每 tick 死循环：
-        //   proceed-noauth → cancelAll rate_limited → skip → 5min后又 proceed → 又 skip
-        // 简化：**Phoenix + real-readonly 时任何 cancelAll 错都放行**。此路径下 bot
-        // 已知未 running（前面分支才走到这里），Round 258 保证 bot.active 空，
-        // Round 234 防抱头 + Round 254 stray-check 兜底防重复挂单。error text 千变
-        // 万化，不该做 whitelist regex 匹配。
+        // Round 261/264/270: Phoenix cancelAll 挂时 —— 可能是 auth backoff、rate_limited、
+        // 429 等各种。之前 Round 264 只在 dataSource='real-readonly' 时放行，但 Round 269
+        // 让 auth 恢复回 'real' 后，Phoenix API 仍能返 rate_limited（IP 级 rate limit 独立
+        // 于 auth）→ 走 skip 分支 → 死循环恢复。
+        // 简化：**Phoenix 只要走到这条路径 (cur.running=false → bot.active 空)，任何 cancelAll
+        // 错都放行**。Round 258 保证 bot.active 空，Round 234 防抱头 + Round 254 stray-check
+        // 兜底防重复挂单。dataSource 状态 fluctuate 不该影响放行判据。
         const msg = String(e?.message || e);
-        const phReadonly = key === 'ph' && ex?.dataSource === 'real-readonly';
-        if (!phReadonly) {
+        if (key !== 'ph') {
           this._log(key, 'skip', `${pick.name} 起单前清残留失败：${msg}，跳过本轮避免叠加挂单`);
           return;
         }
-        this._log(key, 'warn-nocancel', `${pick.name} cancelAll 挂 (Phoenix real-readonly)，继续起单让 no-Bearer place 试 · ${msg}`.slice(0, 200));
+        this._log(key, 'warn-nocancel', `${pick.name} cancelAll 挂 (Phoenix，bot 未运行下安全)，继续起单让 place 层试 · ${msg}`.slice(0, 200));
       }
       // Round 159 → 161：新市场开仓前清 gridProfit + 重打 startBalance 基线。
       // 否则 bot.stats.gridProfit / startBalance 从上一市场累积过来，Round 154
