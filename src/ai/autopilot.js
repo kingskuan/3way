@@ -515,7 +515,29 @@ class Autopilot {
         this._log(key, 'skip', `${cur.config.displayName} 由用户手动启动，Autopilot 不接管`);
         return;
       }
-      if (cur.outOfRange) {
+      // Round 267: 自适应重启 —— 探测「capital 大幅增长但 bot 只挂了一小撮」的场景。
+      // Extended 多币种漏读修好后（Round 266 Fix 1），bot 老状态还是用旧 $1.67 起的 6 单
+      // 挂着，autopilot 下 tick 走 running 分支「保持」→ 12h stop-idle 天花板前
+      // 不 rotate → 剩余 $359 白锁着 12h+。检测条件（全满足才触发）：
+      //   1. openOrders < gridCount × 25%（严重挂单不足，正常运行不会长期这样）
+      //   2. equity > startBalance × 2（capital 至少翻倍：多币种漏读/用户充值/etc.）
+      //   3. openOrders > 0（避免和 Round 266 phantom 0-order 分支冲突）
+      //   4. 30min 冷却（防抖动，start-fail 反复重启）
+      const configGrid = Number(cur.config?.gridCount) || 0;
+      const orders = Number(cur.openOrders) || 0;
+      const eq = Number(cur.equity) || 0;
+      const startBal = Number(cur.startBalance) || 0;
+      const lastAutoRestart = st.lastAutoRestartAt || 0;
+      const cooledDown = now - lastAutoRestart > 30 * 60_000;
+      if (cooledDown && configGrid > 0 && orders > 0 && orders < configGrid * 0.25
+          && startBal > 0 && eq > startBal * 2) {
+        st.lastAutoRestartAt = now;
+        this._log(key, 'auto-restart', `${cur.config.displayName} 挂上 ${orders}/${configGrid} 但当前 equity $${eq.toFixed(2)} 远超起始金 $${startBal.toFixed(2)}（>2x）→ stop 重开用新 capital`);
+        await bot.stop({ closePosition: false }).catch(() => {});
+        st.startedByAutopilot = false;
+        st.startedAt = 0;
+        // fall through 到选币 + start 逻辑（跟 outOfRange 分支同款 pattern）
+      } else if (cur.outOfRange) {
         this._log(key, 'stop', `${cur.config.displayName} 冲出区间，停网格准备重开`);
         await bot.stop({ closePosition: true }).catch(() => {});
         st.startedByAutopilot = false;
