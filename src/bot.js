@@ -242,7 +242,13 @@ export class GridBot {
     // 之前 bot.start(newMarket) 只对 newMarket cancelAll（0 单），老市场
     // 的挂单和仓位全留下。StandX 用户切 BTC→ETH→SOL 三次留 60 单 + 2 仓
     // 就是这。Ondo 不出问题因为一直只跑 BTC-USD.P，没换过市场。
-    if (this.config && Number(this.config.marketId) !== Number(market.marketId)) {
+    // Round 271: Phoenix init 用 `idx=1,2,3...` 递增分配 marketId，每次部署重启
+    // 顺序可能不一样 → 老 bot.config.marketId 跟 autopilot 新选的同 symbol 不匹配
+    // → 触发 rotate 但两者其实是同一市场 → 老市场 cancelAll → Phoenix rate_limited
+    // → throw 「切市场 abort」→ Phoenix 永远起不了。用 displayName 优先判 rotate，
+    // 只有 symbol 真变才走 rotate。
+    const sameMarket = this.config && this.config.displayName === market.displayName;
+    if (this.config && !sameMarket && Number(this.config.marketId) !== Number(market.marketId)) {
       const oldName = this.config.displayName || `marketId=${this.config.marketId}`;
       // Round 253: cancelAll 失败（Phoenix real-readonly Round 249 rethrow）时直接
       // abort rotate，不留老单残留。之前 catch { /* best effort */ } 静默继续，
