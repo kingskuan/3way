@@ -515,24 +515,32 @@ class Autopilot {
         this._log(key, 'skip', `${cur.config.displayName} 由用户手动启动，Autopilot 不接管`);
         return;
       }
-      // Round 267: 自适应重启 —— 探测「capital 大幅增长但 bot 只挂了一小撮」的场景。
-      // Extended 多币种漏读修好后（Round 266 Fix 1），bot 老状态还是用旧 $1.67 起的 6 单
-      // 挂着，autopilot 下 tick 走 running 分支「保持」→ 12h stop-idle 天花板前
-      // 不 rotate → 剩余 $359 白锁着 12h+。检测条件（全满足才触发）：
-      //   1. openOrders < gridCount × 25%（严重挂单不足，正常运行不会长期这样）
-      //   2. equity > startBalance × 2（capital 至少翻倍：多币种漏读/用户充值/etc.）
-      //   3. openOrders > 0（避免和 Round 266 phantom 0-order 分支冲突）
-      //   4. 30min 冷却（防抖动，start-fail 反复重启）
+      // Round 267/268: 自适应重启 —— 探测「bot config 被 undersized 起了」的场景。
+      // 病理：Extended 多币种漏读时用 $1.67 起了 6 grid（config.gridCount=6），Round 266 修好
+      // 后 autopilot 下 tick 走 running 分支「保持」不 rotate → 12h 天花板前白锁 $359。
+      //
+      // Round 267 v1 用 `equity > startBalance × 2` 作判据，但 autopilot 起 bot 前会调
+      // `bot.rebaselinePnl()` 把 startBalance 更新到当前 equity，导致 startBal 永远 ≈ equity，
+      // 判据永远不触发。QC 实盘 Extended startBal=$361.08 equity=$361.04 即是。
+      //
+      // Round 268 改判据：**bot.config.gridCount << 风格默认 gridCount**（配置本身证明起单
+      // 时 undersized）。避开 startBalance 陷阱 + 直接反映 bot 实际配置。
+      // 触发条件（全满足）：
+      //   1. `bot.config.gridCount < style.gridCount × 0.5`（比默认少一半以上）
+      //   2. 且不是 exchangeGridCap 上限市场（RS 硬 cap 50，属正常，不能重开）
+      //   3. openOrders > 0（避免和 Round 266 phantom 0-order 分支重叠）
+      //   4. 30min 冷却（防抖动）
       const configGrid = Number(cur.config?.gridCount) || 0;
       const orders = Number(cur.openOrders) || 0;
-      const eq = Number(cur.equity) || 0;
-      const startBal = Number(cur.startBalance) || 0;
+      const styleGrid = Number(s?.gridCount) || 0;
+      const capForKey = { rs: 50 }[key];   // 跟主流 code 里 exchangeGridCap 保持一致
+      const atCap = capForKey && configGrid >= capForKey;
       const lastAutoRestart = st.lastAutoRestartAt || 0;
       const cooledDown = now - lastAutoRestart > 30 * 60_000;
-      if (cooledDown && configGrid > 0 && orders > 0 && orders < configGrid * 0.25
-          && startBal > 0 && eq > startBal * 2) {
+      if (cooledDown && configGrid > 0 && orders > 0 && styleGrid > 0
+          && configGrid < styleGrid * 0.5 && !atCap) {
         st.lastAutoRestartAt = now;
-        this._log(key, 'auto-restart', `${cur.config.displayName} 挂上 ${orders}/${configGrid} 但当前 equity $${eq.toFixed(2)} 远超起始金 $${startBal.toFixed(2)}（>2x）→ stop 重开用新 capital`);
+        this._log(key, 'auto-restart', `${cur.config.displayName} config gridCount=${configGrid} 远低于风格默认 ${styleGrid}（<50%），起单时 capital 被低估 → stop 重开用新算 capital`);
         await bot.stop({ closePosition: false }).catch(() => {});
         st.startedByAutopilot = false;
         st.startedAt = 0;
