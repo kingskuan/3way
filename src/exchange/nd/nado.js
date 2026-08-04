@@ -102,65 +102,43 @@ export class NadoExchange extends EventEmitter {
   async _refreshBalance() {
     if (!this._client || !this._account) return;
     try {
-      const summary = await this._client.subaccount.getSummary({
+      // Round 273a：真实 SDK 方法名是 getSubaccountSummary（Round 272 猜错了 .getSummary）。
+      // 响应 shape (verified from @nadohq/client 0.1.4 & 0.31.0 d.ts):
+      //   { exists, balances: BalanceWithProduct[], health: HealthStatusByType }
+      //   balances: 混 spot+perp，each { type, productId, amount: BigNumber, ... }
+      //   health: { initial, maintenance, unweighted } each { health, assets, liabilities } BigNumber x18
+      const summary = await this._client.subaccount.getSubaccountSummary({
         subaccountOwner: this._account.address,
         subaccountName: 'default',
       });
-      // Vertex/Nado SDK 返回 BigInt 用 x18 decimals。字段可能是 camelCase 或 snake_case。
-      // Round 273: 尝试多组常见 shape。找到能匹配的就用。都失败保留 raw shape 到 _debugSummaryRaw 供 QC。
+
       const scaled = (v) => {
         if (v == null) return null;
         try {
           const s = String(v);
           if (!s || s === 'undefined') return null;
-          // BigInt x18 → number
           return Number(s) / 1e18;
         } catch { return null; }
       };
 
-      // USDC 通常是 productId=0（quote）。拿 spot_balances / spotBalances 里的 USDC amount。
-      const spotArr = summary?.spotBalances ?? summary?.spot_balances ?? [];
-      const perpArr = summary?.perpBalances ?? summary?.perp_balances ?? [];
-      const usdc = spotArr.find?.((b) => Number(b.productId ?? b.product_id) === 0);
+      // USDC 是 productId=0（quote spot product）。拿 balances 里 type='spot' && productId=0 的 amount。
+      const balances = Array.isArray(summary?.balances) ? summary.balances : [];
+      const usdc = balances.find((b) => Number(b?.productId) === 0);
       const collateralUsdc = scaled(usdc?.amount);
 
-      // Vertex healths[]: [0]=initial, [1]=maintenance, [2]=pnl。equity ≈ health[2] (含未实现盈亏)
-      const healths = summary?.healths ?? summary?.health ?? [];
-      const pnlHealth = Array.isArray(healths) ? healths[2] : null;
-      const equityFromHealth = scaled(pnlHealth?.health);
+      // Equity = unweighted.health（不打折 asset - liability，含未实现盈亏）
+      // 若拿不到 unweighted，退 initial.assets（纯 collateral 价值）
+      const healthByType = summary?.health || {};
+      const equityFromUnweighted = scaled(healthByType.unweighted?.health);
+      const assetsFromInitial = scaled(healthByType.initial?.assets);
 
-      // Fallback：某些结构直接有顶层 balance/equity 字段
-      const balance =
-        (collateralUsdc ??
-        scaled(summary?.balance) ??
-        Number(summary?.balance)) || 0;
-      const equity =
-        (equityFromHealth ??
-        scaled(summary?.equity) ??
-        Number(summary?.equity)) || balance;
+      const balance = collateralUsdc ?? assetsFromInitial ?? 0;
+      const equity = equityFromUnweighted ?? balance;
 
       this.balance = Number.isFinite(balance) ? balance : 0;
       this.equity = Number.isFinite(equity) ? equity : this.balance;
       this.lastOkAt = Date.now();
-
-      // Round 273 debug：balance 解析 0 时把 raw summary shape dump 到 lastError
-      // 供 /api/nd/state 看，找出真实字段路径。QC 后可拆掉。
-      if (this.balance === 0) {
-        const dump = {
-          topKeys: summary ? Object.keys(summary).slice(0, 12) : [],
-          spotLen: spotArr.length, perpLen: perpArr.length,
-          firstSpot: spotArr[0]
-            ? Object.fromEntries(Object.entries(spotArr[0]).slice(0, 8).map(([k, v]) => [k, String(v).slice(0, 40)]))
-            : null,
-          healthsLen: Array.isArray(healths) ? healths.length : 0,
-          healthsSample: Array.isArray(healths) && healths[0]
-            ? Object.fromEntries(Object.entries(healths[0]).slice(0, 6).map(([k, v]) => [k, String(v).slice(0, 40)]))
-            : null,
-        };
-        this.lastError = `debug: bal=0，raw shape: ${JSON.stringify(dump).slice(0, 350)}`;
-      } else {
-        this.lastError = null;
-      }
+      this.lastError = null;
     } catch (e) {
       this.lastError = `拉 subaccount 失败：${e.message}`;
     }
