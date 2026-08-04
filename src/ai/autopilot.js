@@ -798,7 +798,12 @@ class Autopilot {
     // Round 206: balance=0 但 equity>0 用 equity 兜底 —— Extended API 返 balance=0
     // 但 futures 里有钱（$231），旧代码 fallback 到 1000 导致算出 $533 保证金要求，
     // bot start 用真实 $231 检查一律拒。equity fallback 让参数反映真实可用资金。
-    const realCapital = (cur.balance > 0) ? cur.balance : (cur.equity > 0 ? cur.equity : 1000);
+    // Round 266: `balance>0 ? balance : equity` 漏掉多币种账户 —— Extended 用户
+    // USDC=$1.66 + USDT=$378 → balance 只算 USDC 返 $1.66 但 equity=$361（含 USDT）。
+    // 结果 autopilot 用 $1.66 算出只 6/80 单能挂，白白浪费 $360 保证金。
+    // 修：max(balance, equity)。equity 是全部 collateral 加总，永远 >= balance，
+    // 单币种账户 balance≈equity（max 结果一样），多币种 equity 更大（选对）。
+    const realCapital = Math.max(cur.balance || 0, cur.equity || 0) || 1000;
     const capitalUsdc = Math.min(this.cfg.perExchange[key].maxCapitalUsdc || 1000, realCapital);
     const budget = capitalUsdc * 0.8;   // 保留 20% buffer
 
@@ -1040,6 +1045,21 @@ class Autopilot {
       const rateNote = (actual < gridCount * 0.75)
         ? `（仅挂上 ${actual}/${gridCount}，成功率低${failReason}）` : '';
       st.lastActionReason = `选 ${pick.name}（${mode}，${aiReasoning || '规则排序 top1'}），区间 ${lower}~${upper}，${gridCount} 格 x ${sizeBase}${rateNote}`;
+      // Round 266: phantom running 防护 —— actual=0 表示 bot.start() "成功"但一单都没挂上
+      // （Phoenix rate_limit 全 skip / 其他所全部失败）。之前 autopilot 无脑设 startedByAutopilot=true
+      // → 下 tick 走 running 分支「网格运行中，指标正常，保持」→ Round 265 12h 天花板前不 rotate
+      // → phantom running 空等 12h。修：actual=0 立即 stop bot（不平仓 —— 没仓可平）+ 不设
+      // startedByAutopilot，让下 tick 重新决策。若原因是 rate_limit 持续，会 5min 后再试；若缓过
+      // 来，正常挂单。避免 12h 空烧 fee/funding。
+      if (actual === 0) {
+        try { await bot.stop({ closePosition: false }); } catch { /* best-effort */ }
+        st.lastAction = 'start-failed';
+        st.startedByAutopilot = false;
+        st.startedAt = 0;
+        this._log(key, 'start-failed', `${pick.name} start 完成但 openOrders=0（${rateNote.slice(1, -1) || '所有 seed 失败'}），已 stop bot 等下 tick 重试`);
+        this._save();
+        return;
+      }
       // lastDecisionAt 已在函数入口刷新（Round 50），这里不再重复设置
       st.lastAppliedEquity = cur.equity;
       st.startedByAutopilot = true;
