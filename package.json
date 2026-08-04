@@ -1,7 +1,7 @@
 {
   "name": "grid-bot-all",
   "version": "1.0.0",
-  "description": "QnV · 九所整合网格交易机器人：Decibel / Extended / RISEx / Ondo / Perpl / StandX / Bitget / Bitunix / Phoenix，统一仪表盘 + AI Autopilot。",
+  "description": "QnV · 十所整合网格交易机器人：Decibel / Extended / RISEx / Ondo / Perpl / StandX / Bitget / Bitunix / Phoenix / Nado，统一仪表盘 + AI Autopilot。",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
@@ -18,9 +18,12 @@
     "zod": "^3.25.62"
   },
   "optionalDependencies": {
+    "@nadohq/client": "^0.1.0",
     "@solana/web3.js": "^1.95.4",
+    "bignumber.js": "^9.1.2",
     "bs58": "^6.0.0",
     "risex-client": "^0.1.0",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "viem": "^2.21.0"
   }
 }

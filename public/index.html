@@ -35,6 +35,7 @@
   --bg-color: #f97316;   /* Bitget: 橙 */
   --bu-color: #8b5cf6;   /* Bitunix: 紫（跟 pl 淡紫错开，更深） */
   --ph-color: #f472b6;   /* Phoenix: 粉（凤凰浴火色，跟其他家色区分足够） */
+  --nd-color: #22d3ee;   /* Nado: 青（Ink Chain 蓝调，跟 on/pl 错开） */
   --de-bg: #f59e0b18;
   --ex-bg: #3b82f618;
   --rs-bg: #22c55e18;
@@ -44,6 +45,7 @@
   --bg-bg: #f9731618;
   --bu-bg: #8b5cf618;
   --ph-bg: #f472b618;
+  --nd-bg: #22d3ee18;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -1441,6 +1443,7 @@ input[type=number], .kv .val, .conn, .badge, code, pre,
 .ov-card.bg .ov-exname { color: var(--bg-color) !important; }
 .ov-card.bu .ov-exname { color: var(--bu-color) !important; }
 .ov-card.ph .ov-exname { color: var(--ph-color) !important; }
+.ov-card.nd .ov-exname { color: var(--nd-color) !important; }
 
 /* Run dot 在运行中变绿 */
 .ov-exname .run-dot { width: 10px !important; height: 10px !important; border: 2px solid var(--v4-ink) !important; box-shadow: none !important; }
@@ -1989,6 +1992,7 @@ th {
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-bg-dot"></span><span id="hdr-bg" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">BG: PAPER</span></div>
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-bu-dot"></span><span id="hdr-bu" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">BU: PAPER</span></div>
       <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-ph-dot"></span><span id="hdr-ph" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">PH: PAPER</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 4px"><span class="hdot idle" id="hdr-nd-dot"></span><span id="hdr-nd" class="badge badge-paper" style="flex:1;text-align:left;padding:2px 6px">ND: PAPER</span></div>
     </div>
   </div>
   <div class="header-right">
@@ -2010,6 +2014,7 @@ th {
   <button class="tab-btn" onclick="switchTab('bg')"><span style="color:var(--bg-color)">●</span> Bitget</button>
   <button class="tab-btn" onclick="switchTab('bu')"><span style="color:var(--bu-color)">●</span> Bitunix</button>
   <button class="tab-btn" onclick="switchTab('ph')"><span style="color:var(--ph-color)">●</span> Phoenix</button>
+  <button class="tab-btn" onclick="switchTab('nd')"><span style="color:var(--nd-color)">●</span> Nado</button>
   <button class="tab-btn" onclick="switchTab('autopilot')">🚀 Autopilot</button>
   <button class="tab-btn" onclick="switchTab('ai')">🤖 AI</button>
   <button class="tab-btn" onclick="switchTab('settings')">⚙ IP配置</button>
@@ -2307,6 +2312,32 @@ th {
       <div id="ov-ph-ai" class="ai-box muted" style="display:none;margin-top:8px;font-size:12px"></div>
       <div id="ov-ph-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
       <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="switchTab('ph')">进入 Phoenix 控制台 →</button>
+    </div>
+
+    <!-- Nado (第 10 家 · Ink Chain 永续 DEX) -->
+    <div class="ov-card nd">
+      <div class="ov-exname" style="color:var(--nd-color)">
+        <span class="run-dot" id="ov-nd-dot"></span>
+        Nado · Ink Chain 永续
+        <span id="ov-nd-badge" class="badge badge-paper" style="margin-left:auto">PAPER</span>
+      </div>
+      <div id="ov-nd-health" class="exhealth eh-idle">—</div>
+      <div class="ov-pnl" id="ov-nd-pnl">—</div>
+      <div class="ov-sub" id="ov-nd-ret">收益率 —</div>
+      <div style="margin-top:10px">
+        <div class="ov-stat"><span class="lbl">余额</span><span class="val" id="ov-nd-bal">—</span></div>
+        <div class="ov-stat"><span class="lbl">权益</span><span class="val" id="ov-nd-eq">—</span></div>
+        <div class="ov-stat"><span class="lbl">已实现</span><span class="val" id="ov-nd-rpnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">未实现</span><span class="val" id="ov-nd-upnl">—</span></div>
+        <div class="ov-stat"><span class="lbl">交易量</span><span class="val" id="ov-nd-vol">—</span></div>
+        <div class="ov-stat"><span class="lbl">完成网格</span><span class="val" id="ov-nd-rungs">—</span></div>
+        <div class="ov-stat"><span class="lbl">最新价</span><span class="val" id="ov-nd-price">—</span></div>
+        <div class="ov-stat"><span class="lbl">当前市场</span><span class="val" id="ov-nd-mkt">—</span></div>
+      </div>
+      <div id="ov-nd-gridcfg" class="gridcfg" style="display:none"></div>
+      <div id="ov-nd-ai" class="ai-box muted" style="display:none;margin-top:8px;font-size:12px"></div>
+      <div id="ov-nd-trend" class="trend-box trend-idle">趋势监测：等待数据…</div>
+      <button class="btn btn-ghost" style="margin-top:10px;font-size:12px" onclick="switchTab('nd')">进入 Nado 控制台 →</button>
     </div>
   </div>
 
@@ -3492,6 +3523,136 @@ th {
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Nado (第 10 家 · Ink Chain 永续 DEX) -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div id="tab-nd" class="tab-panel">
+<div class="wrap">
+<div class="grid-left-right">
+  <div>
+    <div class="panel nd pet-card" id="nd-pet-card" style="margin-bottom:14px;padding:14px 16px"></div>
+    <div class="panel nd" style="margin-bottom:14px">
+      <div class="panel-title" style="color:var(--v2-txt,#e2e8f0)">Nado · 市场与趋势</div>
+      <label>交易对</label>
+      <select id="nd-market"></select>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>K线周期</label>
+          <select id="nd-interval">
+            <option value="900">15m</option>
+            <option value="3600" selected>1h</option>
+            <option value="14400">4h</option>
+            <option value="86400">1d</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-ghost" style="margin:0;padding:7px" id="nd-refresh-trend">刷新</button>
+        </div>
+      </div>
+      <div style="margin-top:10px" id="nd-rec-box" class="rec-box rec-range">
+        <div class="muted">趋势分析</div>
+        <div class="rec-tag" id="nd-rec-tag">分析中…</div>
+        <div class="rec-detail" id="nd-rec-detail">—</div>
+        <button class="btn btn-ghost" style="margin-top:8px;padding:6px;font-size:12px" id="nd-apply-rec">采用推荐策略 + 自动区间</button>
+      </div>
+      <div class="muted" style="margin-top:10px;font-size:11px;line-height:1.6">
+        💡 Nado 是 Ink Chain 上的 Vertex-fork 永续 DEX，USDC 结算（BTC/ETH/SOL/HYPE），EIP-712 链上签名。<br>
+        ⚠️ 实盘 <code>ND_MODE=live</code> 需要 <code>NADO_WALLET_PRIVATE_KEY</code>（EVM 钱包私钥，0x hex）。<br>
+        ✅ Round X：LIVE 已接入（gateway REST + @nadohq/client + viem 签名）。Autopilot 可托管。
+      </div>
+    </div>
+
+    <div class="panel nd">
+      <div class="panel-title" style="color:var(--v2-txt,#e2e8f0)">Nado · 策略配置</div>
+      <label>网格类型</label>
+      <div class="modes" id="nd-modes">
+        <div class="mode-btn sel" data-mode="neutral">中性<small>双向震荡</small></div>
+        <div class="mode-btn" data-mode="long">做多<small>低买高止</small></div>
+        <div class="mode-btn" data-mode="short">做空<small>高空低止</small></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+        <span class="muted">风格</span>
+        <div class="risk-toggle" id="nd-risk-toggle">
+          <span class="risk-btn sel" data-risk="steady">稳健</span>
+          <span class="risk-btn" data-risk="aggressive">激进</span>
+        </div>
+        <span class="muted" id="nd-risk-hint">成交少·更安全</span>
+      </div>
+      <button class="btn btn-smart" id="nd-smart-fill">🎯 智能填充参数</button>
+      <div class="muted" id="nd-smart-note" style="margin:5px 0 2px"></div>
+      <div class="row">
+        <div><label>下边界</label><input id="nd-lower" type="number" step="any"></div>
+        <div><label>上边界</label><input id="nd-upper" type="number" step="any"></div>
+      </div>
+      <div class="row">
+        <div><label>网格数量</label><input id="nd-grid-count" type="number" value="20" min="2"></div>
+        <div><label>每格数量(币)</label><input id="nd-size-base" type="number" step="any" value="0.001"></div>
+      </div>
+      <div class="row">
+        <div><label>杠杆 (x)</label><input id="nd-leverage" type="number" value="3" min="1"></div>
+        <div>
+          <label>区间外止损策略</label>
+          <select id="nd-auto-stop">
+            <option value="close" selected>冲破区间平仓</option>
+            <option value="recover">只减仓回收阶梯</option>
+          </select>
+        </div>
+      </div>
+      <div class="risk-preview" id="nd-risk-preview"></div>
+      <button class="btn btn-start" id="nd-start-btn">启动 Nado 网格</button>
+      <button class="btn btn-stop" id="nd-stop-btn" disabled>停止 + 撤单 + 平仓</button>
+      <button class="btn btn-ghost" id="nd-adjust-btn" disabled style="margin-top:8px">调整区间（不停止网格）</button>
+      <button class="btn btn-ghost" id="nd-cancel-orders-btn" style="margin-top:8px;border-color:var(--yel);color:var(--yel)">撤销所有挂单（保留持仓）</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel" id="nd-orphan-prompt" style="display:none;margin-bottom:14px;border:1px solid var(--yel)">
+      <div class="panel-title" style="color:var(--yel)">⚠ 检测到未托管持仓 · 请选择处理方式</div>
+      <div id="nd-orphan-info" class="muted" style="margin-bottom:10px;line-height:1.5"></div>
+      <button class="btn btn-ghost" id="nd-orphan-recover" style="border-color:var(--yel);color:var(--yel)">① 只减仓回收阶梯</button>
+      <label style="display:block;font-size:11px;color:var(--mut2);margin-top:6px"><input type="checkbox" id="nd-orphan-above-entry" style="width:auto;margin-right:6px;vertical-align:middle">回收仅在成本价以上减仓</label>
+      <button class="btn btn-ghost" id="nd-orphan-regrid" style="margin-top:8px">② 按现价重开网格</button>
+      <button class="btn btn-stop" id="nd-orphan-close" style="margin-top:8px">③ 市价平仓</button>
+    </div>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">Nado · 账户状态</div>
+      <div class="grid-2" style="gap:10px;margin-bottom:10px">
+        <div><div class="kv"><span class="lbl">运行状态</span><span class="val" id="nd-st-run">未运行</span></div>
+          <div class="kv"><span class="lbl">最新价</span><span class="val" id="nd-st-price">—</span></div>
+          <div class="kv"><span class="lbl">账户余额</span><span class="val" id="nd-st-bal">—</span></div>
+          <div class="kv"><span class="lbl">权益</span><span class="val" id="nd-st-eq">—</span></div></div>
+        <div><div class="kv"><span class="lbl">持仓</span><span class="val" id="nd-st-pos">—</span></div>
+          <div class="kv"><span class="lbl">持仓均价</span><span class="val" id="nd-st-entry">—</span></div>
+          <div class="kv"><span class="lbl">网格利润（理论）</span><span class="val" id="nd-st-rpnl">—</span></div>
+          <div class="kv"><span class="lbl">未实现盈亏</span><span class="val" id="nd-st-upnl">—</span></div></div>
+      </div>
+      <div class="kv"><span class="lbl">总盈亏 / 收益率</span><span class="val" id="nd-st-total">—</span></div>
+      <div class="kv"><span class="lbl">挂单数 / 完成格</span><span class="val" id="nd-st-orders">—</span></div>
+      <button class="btn btn-ghost" id="nd-reset-btn" style="margin-top:8px;font-size:12px">💰 转账后重置基线（只清盈亏，保留成交量）</button>
+      <button class="btn btn-ghost" id="nd-reconnect-btn" style="margin-top:8px;font-size:12px">🔌 重连 DEX（不动挂单/持仓）</button>
+      <button class="btn btn-ghost" id="nd-emergency-cleanup-btn" style="margin-top:8px;font-size:12px;border-color:var(--red);color:var(--red)">🚨 紧急清链上残留（撤所有单+平所有仓）</button>
+    </div>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">价格 / 网格 <span class="chart-market-tag" style="font-size:11px;font-weight:normal;color:var(--mut2);margin-left:6px"></span></div>
+      <div id="nd-range-warn"></div>
+      <div class="chartbox"><canvas id="nd-chart"></canvas></div>
+    </div>
+    <div class="grid-2" style="gap:14px">
+      <div class="panel">
+        <div class="panel-title">成交记录</div>
+        <table><thead><tr><th>时间</th><th>方向</th><th>价格</th><th>数量</th></tr></thead><tbody id="nd-fills"></tbody></table>
+      </div>
+      <div class="panel">
+        <div class="panel-title">运行日志</div>
+        <div class="log" id="nd-alerts"><div class="log-item muted">暂无日志</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
 <!-- TAB: 🚀 Autopilot — AI 无脑一键托管 -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <div id="tab-autopilot" class="tab-panel">
@@ -3655,6 +3816,7 @@ th {
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('bg', this)">分析 Bitget</button>
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('bu', this)">分析 Bitunix</button>
       <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('ph', this)">分析 Phoenix</button>
+      <button class="btn btn-ghost" style="margin:0;width:auto;padding:7px 16px;font-size:12px" onclick="aiAnalyze('nd', this)">分析 Nado</button>
     </div>
     <div id="ai-analyze-box" class="ai-box muted" style="margin-top:10px">综合 4小时/1小时/15分钟 三个周期的指标判断市况，给出区间/格数/间距建议。分析的是该所当前配置的市场。</div>
   </div>
@@ -3806,10 +3968,10 @@ const RISK = {
 };
 
 // ── Tab 切换 ────────────────────────────────────────────────────────────────
-const TAB_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu','ph','autopilot','ai','settings'];
+const TAB_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu','ph','nd','autopilot','ai','settings'];
 // Round 89：只在 DEX 部分（总览 + 7 家）滑动切换。Autopilot/AI/IP 配置
 // 用户是明确要"进去"的，不参与滑动，避免误触。
-const SWIPE_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu','ph'];
+const SWIPE_ORDER = ['overview','de','ex','rs','on','pl','sx','bg','bu','ph','nd'];
 let _currentTab = 'overview';
 
 function switchTab(name) {
@@ -4515,6 +4677,7 @@ const sxCtrl = makeExchangeCtrl('sx', 'sx-chart');
 const bgCtrl = makeExchangeCtrl('bg', 'bg-chart');
 const buCtrl = makeExchangeCtrl('bu', 'bu-chart');
 const phCtrl = makeExchangeCtrl('ph', 'ph-chart');
+const ndCtrl = makeExchangeCtrl('nd', 'nd-chart');
 
 // ── 总览 SSE + 程序运行状态（后端连接心跳）─────────────────────────────────────
 // 服务器每秒推送一次总览数据。只要心跳正常即视为"正常运行"；心跳停止
@@ -4545,7 +4708,7 @@ function updateConnStatus() {
   el.className = 'conn ' + cls;
   txt.textContent = label;
   el.title = '后端连接状态' + (lastBeat ? `（最后更新 ${Math.round(age / 1000)} 秒前）` : '');
-  if (lastBeat && age >= 10000) ['de','ex','rs','on','pl','sx','bg','bu','ph'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
+  if (lastBeat && age >= 10000) ['de','ex','rs','on','pl','sx','bg','bu','ph','nd'].forEach((p) => setExHealth(p, lastOverview[p]?.health, false));
 }
 setInterval(updateConnStatus, 1000);
 updateConnStatus();
@@ -4588,7 +4751,7 @@ const MODE_LABEL = { neutral: '中性', long: '做多', short: '做空' };
 const TREND_LABEL = { up: '上升', down: '下降', range: '震荡' };
 
 async function scanTrends() {
-  for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph']) {
+  for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd']) {
     const box = $(`ov-${p}-trend`);
     if (!box) continue;
     const d = lastOverview[p];
@@ -4686,7 +4849,7 @@ function hdrDetailsToggle() {
 }
 // 从 5 个个体 badge 的 mode（live/paper）+ dot 状态汇总出药丸
 function updateHdrSummary() {
-  const keys = ['de','ex','rs','on','pl','sx','bg','bu','ph'];
+  const keys = ['de','ex','rs','on','pl','sx','bg','bu','ph','nd'];
   const items = keys.map(k => {
     const b = $('hdr-' + k);
     return { k, live: b && b.className.includes('badge-live') };
@@ -4747,7 +4910,7 @@ function renderOverview(data) {
   let totEquity = 0, totBalance = 0, totPnl = 0, totRealized = 0, totUnrealized = 0, totVolume = 0, totRungs = 0;
   let running = 0;
 
-  ['de','ex','rs','on','pl','sx','bg','bu','ph'].forEach(p => {
+  ['de','ex','rs','on','pl','sx','bg','bu','ph','nd'].forEach(p => {
     const d = data[p];
     if (!d) return;
     // Round 176：balance=0 的 DEX 视为 offboarded（用户提走资金/未启用）——
@@ -4827,8 +4990,8 @@ function renderOverview(data) {
   $('tot-volume').textContent = fmt(totVolume);
   $('tot-rungs').textContent = totRungs;
   // 分所交易量 + 权益 tooltip 数据
-  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix' };
-  const perEx = ['de','ex','rs','on','pl','sx','bg','bu','ph'].map(p => {
+  const exNames = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix', nd: 'Nado' };
+  const perEx = ['de','ex','rs','on','pl','sx','bg','bu','ph','nd'].map(p => {
     const v = data[p]?.volume;
     const eq = data[p]?.equity;
     return {
@@ -4878,7 +5041,7 @@ function renderOverview(data) {
   const totMode = $('tot-modes'); if (totMode) totMode.textContent = '';
 
   // Hero 卡的 demo/live 计数（就算 Live 是 0 也照样显示）
-  const modesArr = ['de','ex','rs','on','pl','sx','bg','bu','ph'].map(p => (data[p]?.mode || 'paper').toLowerCase());
+  const modesArr = ['de','ex','rs','on','pl','sx','bg','bu','ph','nd'].map(p => (data[p]?.mode || 'paper').toLowerCase());
   const demoN = modesArr.filter((m) => m === 'paper').length;
   const liveN = modesArr.filter((m) => m === 'live').length;
   const el = $('tot-mode-summary');
@@ -5029,7 +5192,7 @@ async function aiPickModel(modelId, displayName) {
     alert(`❌ 测试请求失败：${e.message}`);
   }
 }
-const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix', ph:'Phoenix' };
+const AI_EXNAME = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix', ph:'Phoenix', nd:'Nado' };
 const AI_ACTION_LABEL = {
   adjust_range:'调整网格区间', stop_grid:'停止网格', cancel_orders:'撤销全部挂单（保留持仓）',
   close_position:'市价平仓', reconnect:'重连 DEX', start_recovery:'启动只减仓回收阶梯', start_grid:'启动网格',
@@ -5148,7 +5311,7 @@ async function aiRefreshStatus() {
       }
       if (document.activeElement !== $('ov-ai-mkt-min')) $('ov-ai-mkt-min').placeholder = s.marketMin;
       if (document.activeElement !== $('ov-ai-sent-min')) $('ov-ai-sent-min').placeholder = s.sentinelMin;
-      for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph']) {
+      for (const p of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd']) {
         const el = $(`ov-${p}-ai`);
         const per = s.sentinel && s.sentinel.per ? s.sentinel.per[p] : null;
         if (el && per) {
@@ -5417,7 +5580,7 @@ aiRefreshStatus();
 setInterval(aiRefreshStatus, 30000);
 
 // ── 🚀 Autopilot UI ─────────────────────────────────────────────────────────
-const AP_EX = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix', ph:'Phoenix' };
+const AP_EX = { de:'Decibel', ex:'Extended', rs:'RISEx', on:'Ondo', pl:'Perpl', sx:'StandX', bg:'Bitget', bu:'Bitunix', ph:'Phoenix', nd:'Nado' };
 const AP_ACTION_ICON = {
   none:'—', start:'🟢', started:'🟢', stop:'🛑', adjusted:'🔄',
   skip:'⏭', skipped:'⏭', error:'❌', emergency_stop:'🚨',
@@ -5518,7 +5681,7 @@ function apRender(s) {
   if (effBox) {
     const rows = [];
     const overview = window.lastOverview || {};
-    for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph']) {
+    for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph','nd']) {
       const d = overview[k] || {};
       const gp = Number(d.stats?.gridProfit) || 0;
       const ed = d.equityDelta;
@@ -5541,7 +5704,7 @@ function apRender(s) {
       } else {
         status = 'N/A';
       }
-      const name = ({de:'Decibel',ex:'Extended',rs:'RISEx',on:'Ondo',pl:'Perpl',sx:'StandX',bg:'Bitget',bu:'Bitunix',ph:'Phoenix'})[k];
+      const name = ({de:'Decibel',ex:'Extended',rs:'RISEx',on:'Ondo',pl:'Perpl',sx:'StandX',bg:'Bitget',bu:'Bitunix',ph:'Phoenix',nd:'Nado'})[k];
       rows.push(`
         <div style="border:1px solid rgba(148,163,184,0.25);border-radius:8px;padding:10px;background:var(--v2-panel,#111a2e)">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -5659,6 +5822,7 @@ const PET_COLORS = {
   de:'var(--de-color,#f59e0b)', ex:'var(--ex-color,#3b82f6)', rs:'var(--rs-color,#10b981)',
   on:'var(--on-color,#06b6d4)', pl:'var(--pl-color,#ec4899)', sx:'#8b5cf6', bg:'var(--bg-color,#f97316)',
   bu:'var(--bu-color,#8b5cf6)', ph:'var(--ph-color,#f472b6)',
+  nd:'var(--nd-color,#22d3ee)',
 };
 function petFmtNum(n) {
   if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
@@ -5749,7 +5913,7 @@ async function petsRefresh() {
     const j = await r.json();
     const species = j.species || {};
     const pets = j.pets || {};
-    for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph']) {
+    for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph','nd']) {
       const entry = pets[k];
       const sp = species[k];
       if (entry && sp) petRenderCard(k, entry, sp, j.thresholds);
@@ -5767,17 +5931,17 @@ setInterval(petsRefresh, 60_000);
 const NUM_SELECTORS = [
   '#tot-equity', '#tot-pnl', '#tot-balance', '#tot-realized',
   '#tot-unrealized', '#tot-volume', '#tot-rungs',
-  '#ov-de-pnl', '#ov-ex-pnl', '#ov-rs-pnl', '#ov-on-pnl', '#ov-pl-pnl', '#ov-sx-pnl', '#ov-bg-pnl', '#ov-bu-pnl', '#ov-ph-pnl',
-  '#ov-de-bal', '#ov-ex-bal', '#ov-rs-bal', '#ov-on-bal', '#ov-pl-bal', '#ov-sx-bal', '#ov-bg-bal', '#ov-bu-bal', '#ov-ph-bal',
-  '#ov-de-eq',  '#ov-ex-eq',  '#ov-rs-eq',  '#ov-on-eq',  '#ov-pl-eq',  '#ov-sx-eq',  '#ov-bg-eq',  '#ov-bu-eq',  '#ov-ph-eq',
-  '#ov-de-price','#ov-ex-price','#ov-rs-price','#ov-on-price','#ov-pl-price','#ov-sx-price','#ov-bg-price','#ov-bu-price','#ov-ph-price',
-  '#ov-de-rpnl','#ov-ex-rpnl','#ov-rs-rpnl','#ov-on-rpnl','#ov-pl-rpnl','#ov-sx-rpnl','#ov-bg-rpnl','#ov-bu-rpnl','#ov-ph-rpnl',
-  '#ov-de-upnl','#ov-ex-upnl','#ov-rs-upnl','#ov-on-upnl','#ov-pl-upnl','#ov-sx-upnl','#ov-bg-upnl','#ov-bu-upnl','#ov-ph-upnl',
-  '#ov-de-vol','#ov-ex-vol','#ov-rs-vol','#ov-on-vol','#ov-pl-vol','#ov-sx-vol','#ov-bg-vol','#ov-bu-vol','#ov-ph-vol',
-  '#ov-de-rungs','#ov-ex-rungs','#ov-rs-rungs','#ov-on-rungs','#ov-pl-rungs','#ov-sx-rungs','#ov-bg-rungs','#ov-bu-rungs','#ov-ph-rungs',
-  '#de-st-price','#ex-st-price','#rs-st-price','#on-st-price','#pl-st-price','#sx-st-price','#bg-st-price','#bu-st-price','#ph-st-price',
-  '#de-st-bal','#ex-st-bal','#rs-st-bal','#on-st-bal','#pl-st-bal','#sx-st-bal','#bg-st-bal','#bu-st-bal','#ph-st-bal',
-  '#de-st-eq','#ex-st-eq','#rs-st-eq','#on-st-eq','#pl-st-eq','#sx-st-eq','#bg-st-eq','#bu-st-eq','#ph-st-eq',
+  '#ov-de-pnl', '#ov-ex-pnl', '#ov-rs-pnl', '#ov-on-pnl', '#ov-pl-pnl', '#ov-sx-pnl', '#ov-bg-pnl', '#ov-bu-pnl', '#ov-ph-pnl', '#ov-nd-pnl',
+  '#ov-de-bal', '#ov-ex-bal', '#ov-rs-bal', '#ov-on-bal', '#ov-pl-bal', '#ov-sx-bal', '#ov-bg-bal', '#ov-bu-bal', '#ov-ph-bal', '#ov-nd-bal',
+  '#ov-de-eq',  '#ov-ex-eq',  '#ov-rs-eq',  '#ov-on-eq',  '#ov-pl-eq',  '#ov-sx-eq',  '#ov-bg-eq',  '#ov-bu-eq',  '#ov-ph-eq',  '#ov-nd-eq',
+  '#ov-de-price','#ov-ex-price','#ov-rs-price','#ov-on-price','#ov-pl-price','#ov-sx-price','#ov-bg-price','#ov-bu-price','#ov-ph-price','#ov-nd-price',
+  '#ov-de-rpnl','#ov-ex-rpnl','#ov-rs-rpnl','#ov-on-rpnl','#ov-pl-rpnl','#ov-sx-rpnl','#ov-bg-rpnl','#ov-bu-rpnl','#ov-ph-rpnl','#ov-nd-rpnl',
+  '#ov-de-upnl','#ov-ex-upnl','#ov-rs-upnl','#ov-on-upnl','#ov-pl-upnl','#ov-sx-upnl','#ov-bg-upnl','#ov-bu-upnl','#ov-ph-upnl','#ov-nd-upnl',
+  '#ov-de-vol','#ov-ex-vol','#ov-rs-vol','#ov-on-vol','#ov-pl-vol','#ov-sx-vol','#ov-bg-vol','#ov-bu-vol','#ov-ph-vol','#ov-nd-vol',
+  '#ov-de-rungs','#ov-ex-rungs','#ov-rs-rungs','#ov-on-rungs','#ov-pl-rungs','#ov-sx-rungs','#ov-bg-rungs','#ov-bu-rungs','#ov-ph-rungs','#ov-nd-rungs',
+  '#de-st-price','#ex-st-price','#rs-st-price','#on-st-price','#pl-st-price','#sx-st-price','#bg-st-price','#bu-st-price','#ph-st-price','#nd-st-price',
+  '#de-st-bal','#ex-st-bal','#rs-st-bal','#on-st-bal','#pl-st-bal','#sx-st-bal','#bg-st-bal','#bu-st-bal','#ph-st-bal','#nd-st-bal',
+  '#de-st-eq','#ex-st-eq','#rs-st-eq','#on-st-eq','#pl-st-eq','#sx-st-eq','#bg-st-eq','#bu-st-eq','#ph-st-eq','#nd-st-eq',
 ];
 
 function initNumAnimation() {
@@ -5873,7 +6037,7 @@ async function bulkEnableAutopilot(btn) {
   st.textContent = '';
   try {
     const perExchange = {};
-    for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph']) perExchange[k] = { enabled: true };
+    for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph','nd']) perExchange[k] = { enabled: true };
     const r = await fetch('/api/autopilot/config', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ masterEnabled: true, perExchange }),
@@ -5905,7 +6069,7 @@ async function bulkReconnectAll(btn) {
   st.textContent = '';
 
   // 打开面板，先全部显示 loading
-  const keys = ['de','ex','rs','on','pl','sx','bg','bu','ph'];
+  const keys = ['de','ex','rs','on','pl','sx','bg','bu','ph','nd'];
   const statuses = {};
   for (const k of keys) statuses[k] = { state: 'loading', mode: lastOverview?.[k]?.mode };
   const paint = () => { body.innerHTML = keys.map((k) => renderReconnectRow(k, statuses[k])).join(''); };
@@ -5969,7 +6133,7 @@ async function bulkResetDemo(btn) {
   const st = $('bulk-status');
   btn.disabled = true; const orig = btn.textContent;
   btn.textContent = '⏳ 重置中…'; st.textContent = '';
-  const keys = ['de','ex','rs','on','pl','sx','bg','bu','ph'];
+  const keys = ['de','ex','rs','on','pl','sx','bg','bu','ph','nd'];
   const results = await Promise.all(keys.map(async (k) => {
     try {
       // 先停网格 + 平仓

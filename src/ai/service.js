@@ -9,7 +9,7 @@ import { aiChat, extractJson, notify, getAiConfig } from './provider.js';
 import { analyzeTrend } from '../trend.js';
 import { loadSnapshot, saveSnapshot } from '../persist.js';
 
-const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix' };
+const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix', nd: 'Nado' };
 const KEYS = Object.keys(EXNAMES);
 // Round 222：日报状态图标（严格 4 档 —— running/warn/critical/其他）
 const STATE_ICON = { running: '🟢', warn: '🟡', warning: '🟡', critical: '🔴', stopped: '⚪', paused: '⏸', 'not-configured': '⚪' };
@@ -138,7 +138,7 @@ class AiService {
 
   async _snapshotCompact() {
     const out = {};
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph']) {
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd']) {
       const s = this.bots[key].getState();
       const pos = s.position?.sizeBase
         ? `${s.position.sizeBase > 0 ? 'long' : 'short'} ${Math.abs(s.position.sizeBase)} @${s.position.entryPrice}`
@@ -162,7 +162,7 @@ class AiService {
   // ---------- 状态快照（喂给 AI 的紧凑上下文） ----------
   async _snapshot() {
     const out = {};
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph']) {
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd']) {
       const bot = this.bots[key];
       const ex = this.exchanges[key];
       const s = bot.getState();
@@ -490,12 +490,12 @@ class AiService {
           '你是网格交易机器人的日报分析师。基于给定事实块，回复严格 JSON，只填非数值字段：',
           '{',
           '  "healthSummary": "总账户健康总结 ≤30 字",',
-          '  "perExchange": [{"key":"de","note":"该所 ≤20 字点评"}, ... 严格 9 项，顺序 de/ex/rs/on/pl/sx/bg/bu/ph],',
+          '  "perExchange": [{"key":"de","note":"该所 ≤20 字点评"}, ... 严格 10 项，顺序 de/ex/rs/on/pl/sx/bg/bu/ph/nd],',
           '  "risks":  [{"key":"rs","sev":"warn|critical","timestamp":"HH:MM","issue":"≤30字问题","code":"如429/sr=43/空","hint":"≤30字处置"}],',
           '  "actions":[{"priority":"P0|P1|P2","key":"rs","action":"≤30字动作","reason":"≤40字理由","expectedImpact":"≤30字预期效果"}]',
           '}',
           '硬规则：',
-          '· perExchange 必须 9 项且 key 顺序为 de/ex/rs/on/pl/sx/bg/bu/ph（state 已给定，不要改）。',
+          '· perExchange 必须 10 项且 key 顺序为 de/ex/rs/on/pl/sx/bg/bu/ph/nd（state 已给定，不要改）。',
           '· risks 只挑真正需要关注的（挂单不同步、outOfRange、告警里有失败/异常/暂停/保证金/接管、gridEff 极端 0 或 >2、utilPct>80），无风险时给空数组 []。',
           '· risks.timestamp 用给定告警时间；若来自当前观察无告警时间，写"现在"。code 从告警文字或健康原因里抽（如 429、sr=43、超时），无则空串。',
           '· actions 按优先级排序：P0 立即处理（阻塞 / 亏损扩大）、P1 24h 内、P2 观察。每条必须给 reason 和 expectedImpact。actions ≤5 条。',
@@ -770,7 +770,7 @@ class AiService {
     // 白名单过滤：任何未知 action 一律置为 none
     const ALLOWED = ['adjust_range', 'stop_grid', 'cancel_orders', 'close_position', 'reconnect', 'start_recovery', 'start_grid', 'none'];
     if (!j.action || !ALLOWED.includes(j.action.type)) j.action = { type: 'none' };
-    if (j.action.type !== 'none' && !['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph'].includes(j.action.exchange)) j.action = { type: 'none' };
+    if (j.action.type !== 'none' && !['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd'].includes(j.action.exchange)) j.action = { type: 'none' };
     // Round 72：空 reply 兜底 —— 不返空，返 AI 原文或提示
     const finalReply = (j.reply && j.reply.trim()) || text?.trim() || '（AI 无有效回复，请换一句话或稍后重试）';
     return { reply: finalReply.slice(0, 1000), action: j.action };
@@ -779,7 +779,7 @@ class AiService {
   // ---------- 5) 出区间建议（跳变触发） ----------
   async _checkOutOfRange() {
     const cfg = getAiConfig();
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph']) {
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd']) {
       const bot = this.bots[key];
       const cur = !!(bot.running && bot.outOfRange);
       const prev = !!this._prevOor[key];

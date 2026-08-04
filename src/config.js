@@ -154,6 +154,18 @@ export function getConfig() {
     proxy: process.env.PH_PROXY || globalProxy,
   };
 
+  // ── Nado (nado.xyz, Ink Chain perpetual DEX) ─────────────────────────────
+  // Vertex Protocol fork。EIP-712 签名 via @nadohq/client + viem。
+  // LIVE 需要 EVM wallet：NADO_WALLET_PRIVATE_KEY (0x hex) + optional NADO_CHAIN_ENV
+  // ('inkMainnet' 默认 | 'inkTestnet')。
+  const nd = {
+    mode: (process.env.ND_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
+    walletPrivateKey: process.env.NADO_WALLET_PRIVATE_KEY || '',
+    chainEnv: (process.env.NADO_CHAIN_ENV || 'inkMainnet'),
+    startBalance: Number(process.env.PAPER_BALANCE || 10000),
+    proxy: process.env.ND_PROXY || globalProxy,
+  };
+
   // ── Ondo Perps ────────────────────────────────────────────────────────────
   const onNet = (process.env.ON_NETWORK || 'mainnet').toLowerCase();
   const onDefaults = onNet === 'testnet'
@@ -199,6 +211,7 @@ export function getConfig() {
     bg,
     bu,
     ph,
+    nd,
   };
 }
 
