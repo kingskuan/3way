@@ -539,7 +539,12 @@ class Autopilot {
         // Round 205: aggressive 完全禁 stop-idle rotate。之前 60min 无成交仍
         // rotate → BTC 冷却 30min → autopilot 重挑 fallback 到 AAPL/HYPE，破坏
         // 挂 BTC 不换策略。aggressive 就是"挂着不换"，让 re-center/narrow 处理。
-        const noFillFloor = this.cfg.riskStyle === 'aggressive' ? Infinity : 60;
+        // Round 265: aggressive Infinity → 720min (12h)。用户 QC /api/autopilot/status
+        // 看到 ex/on aggressive 状态下 5963/5997 min 无成交（~4 天）= 死鱼盘白锁保证金
+        // 白烧 fee/funding。给个天花板：12h 是"挂 BTC 不换"策略下 BTC 也真的死了的
+        // 阈值（震荡日 BTC 3-4h 至少 1 fill），触发后 rotate 挑更活跃市场，30min
+        // 冷却期让当前 stuck 市场进冷却池，autopilot 下 tick 选别的。
+        const noFillFloor = this.cfg.riskStyle === 'aggressive' ? 720 : 60;
         const lastActivity = Number(cur.fills?.[0]?.t) || st.startedAt || 0;
         const noFillMinutes = lastActivity > 0 ? Math.round((now - lastActivity) / 60_000) : 0;
         if (lastActivity > 0 && noFillMinutes >= noFillFloor) {
