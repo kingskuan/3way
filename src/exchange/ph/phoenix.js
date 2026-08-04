@@ -274,7 +274,19 @@ export class PhoenixExchange extends EventEmitter {
       //     }
       //   }
       // collateral 是 string, USDC micro units (6 decimals) → /1e6 得 USD
-      const state = await this._req('GET', `/v1/trader/state/${this._authorityPubkey}`, null, true);
+      // Round 269: 先试 no-Bearer 拉 trader state —— Round 262 diagnostic 已证明这个
+      //   endpoint no-Bearer 也返 200。auth 挂 backoff 时（Phoenix IP rate limit 常态）
+      //   还能保持 positions/balance 缓存新鲜。否则 fetchPositions 走 needAuth=true 拉不到，
+      //   本地 positions Map 保留最后一次的老数据 → Round 254 stray-check 用 stale 缓存
+      //   误判「有 stray 位置」→ autopilot 每 tick 静默 skip Phoenix → 死循环。
+      //   401/403 fallback Bearer；其他错误直接 throw 让 outer catch 记 lastError。
+      let state;
+      try {
+        state = await this._req('GET', `/v1/trader/state/${this._authorityPubkey}`, null, false);
+      } catch (e) {
+        if (!/401|403|unauthorized/i.test(e.message)) throw e;
+        state = await this._req('GET', `/v1/trader/state/${this._authorityPubkey}`, null, true);
+      }
       const subs = state?.snapshot?.subaccounts;
       if (Array.isArray(subs) && subs.length > 0) {
         // 汇总所有 subaccount 的 collateral（一般只有 index=0，但保险起见 sum）
@@ -608,18 +620,18 @@ export class PhoenixExchange extends EventEmitter {
     //             side ('bid'|'ask'), price, baseQty, remainingBaseQty, ... }
     // status 过滤客户端做（服务端 orderStatus 参数没生效）。
     if (!this._authorityPubkey) return null;
-    // Round 246: auth 挂了（real-readonly）直接返 null 让哨兵 fallback，不返 []。
-    // 用户看到 Telegram spam「Phoenix 挂单漂移 链 43/交易所 0」= 就是这个 case：
-    // auth 挂时 endpoint 返老数据 filter 后 0 → 哨兵误判 drift。
-    if (this.dataSource === 'real-readonly') return null;
+    // Round 246 → Round 269: 之前 auth 挂了（real-readonly）直接返 null。但 Round 262
+    // diagnostic 证明 order-history 端点 no-Bearer 也返 200 —— 应该照样能拉到 chain 真实
+    // orders 让 Round 254 stray-check + bot reconcile 用正确数据。撤销 Round 246 早退。
     const LIMIT = 100;
     try {
-      const resp = await this._req(
-        'GET',
-        `/v1/trader/${this._authorityPubkey}/order-history?limit=${LIMIT}`,
-        null,
-        true,
-      );
+      let resp;
+      try {
+        resp = await this._req('GET', `/v1/trader/${this._authorityPubkey}/order-history?limit=${LIMIT}`, null, false);
+      } catch (e) {
+        if (!/401|403|unauthorized/i.test(e.message)) throw e;
+        resp = await this._req('GET', `/v1/trader/${this._authorityPubkey}/order-history?limit=${LIMIT}`, null, true);
+      }
       const arr = Array.isArray(resp) ? resp : (Array.isArray(resp?.data) ? resp.data : null);
       if (!arr) return null;
       // Round 239: Phoenix 真实 API 用 'active' 不是 'open'（Round 232 猜错了）。
@@ -651,9 +663,16 @@ export class PhoenixExchange extends EventEmitter {
 
   async fetchPositions() {
     // Round 234: positions 在 snapshot.subaccounts[*].positions 不是 state.positions（同 _refreshBalance 同 bug）
+    // Round 269: 同 _refreshBalance —— no-Bearer 优先，401/403 fallback。
     if (!this._authorityPubkey) return [];
     try {
-      const state = await this._req('GET', `/v1/trader/state/${this._authorityPubkey}`, null, true);
+      let state;
+      try {
+        state = await this._req('GET', `/v1/trader/state/${this._authorityPubkey}`, null, false);
+      } catch (e) {
+        if (!/401|403|unauthorized/i.test(e.message)) throw e;
+        state = await this._req('GET', `/v1/trader/state/${this._authorityPubkey}`, null, true);
+      }
       const subs = state?.snapshot?.subaccounts;
       if (!Array.isArray(subs)) return [];
       const out = [];
