@@ -630,6 +630,15 @@ class Autopilot {
       const pri = crypto.filter((m) => priority.includes(m.displayName));
       const rest = crypto.filter((m) => !priority.includes(m.displayName));
       scanList = [...pri, ...rest].slice(0, 8);
+    } else if (key === 'nd') {
+          // Round 277: Nado's on-chain min_size is a flat 100 units for every perp
+          // (verified against gateway.prod.nado.xyz), so majors like BTC/ETH/AAVE
+          // need 100 x price margin which always exceeds this account's balance.
+          // Sort by affordability (minOrderSize x price ascending) instead of
+          // taking the first 8 markets, so cheap/affordable coins get scanned.
+          const affordable = markets.filter((m) => Number(m.lastPrice) > 0)
+            .sort((a, b) => (Number(a.minOrderSize || 1) * Number(a.lastPrice)) - (Number(b.minOrderSize || 1) * Number(b.lastPrice)));
+          scanList = affordable.slice(0, 8);
     } else {
       scanList = markets.slice(0, 8);
     }
