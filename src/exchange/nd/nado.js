@@ -86,8 +86,8 @@ export class NadoExchange extends EventEmitter {
                                   displayName: symbol,
                                   symbol: symbol.replace(/-PERP$/, ''),
                                   lastPrice: priceByProductId.get(productId) || 0,
-                                  minOrderSize: toNum(s.minSize) || 0.0001,
-                                  stepSize: toNum(s.sizeIncrement) || 0.0001,
+          minOrderSize: (toNum(s.minSize) / 1e18) || 0.0001,
+                                  stepSize: (toNum(s.sizeIncrement) / 1e18) || 0.0001,
                                   stepPrice: toNum(s.priceIncrement) || 0.01,
                                   maxLeverage: 20,
                                   productId, // 真实 Nado productId（来自 getSymbols，不是本地序号）
