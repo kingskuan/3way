@@ -207,13 +207,33 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
     const m = this.markets.get(marketId);
     if (!m) throw new Error(`Nado 未知 marketId=${marketId}`);
     const isBuy = o.side === 'buy';
+    // Round 275c：EIP712OrderParams 真实 shape（Round 272 猜错所有字段）:
+    //   { subaccountOwner, subaccountName, expiration, price, amount, appendix }
+    //   全是 BigNumberish (BigNumber x18 或对应 string)。字段名是 `price`（不是 priceX18）。
+    // Vertex 用 signed amount：buy 正、sell 负。
+    // 用 string 表示 raw x18 整数（避 float→BigNumber 精度问题）。
+    const sizeBase = Number(o.sizeBase) || 0;
+    const price = Number(o.price) || 0;
+    if (!(sizeBase > 0) || !(price > 0)) {
+      throw new Error(`Nado 参数异常 sizeBase=${o.sizeBase} price=${o.price}`);
+    }
+    const scale = (n) => BigInt(Math.round(n * 1e18)).toString();
+    const amountX18Str = scale(sizeBase);
+    const signedAmount = isBuy ? amountX18Str : ('-' + amountX18Str);
+    const priceX18Str = scale(price);
+    // expiration: unix seconds; Vertex bit-packs order-type flags in higher bits but
+    // 未设为纯 unix 秒即默认 limit-GTC。24h TTL 足够 grid 单。
+    const expiration = String(Math.floor(Date.now() / 1000) + 24 * 3600);
+    const nonce = `${Date.now()}${Math.floor(Math.random() * 1e6)}`;
     const res = await this._client.market.placeOrder({
       productId: m.productId,
       order: {
-        amount: (isBuy ? 1 : -1) * Number(o.sizeBase),   // Vertex 用 signed amount
-        priceX18: Number(o.price),                        // SDK 内部会 stringify + 18-decimals
-        expiration: Math.floor(Date.now() / 1000) + 24 * 3600,
-        nonce: `${Date.now()}${Math.floor(Math.random() * 1e6)}`,
+        subaccountOwner: this._account.address,
+        subaccountName: 'default',
+        expiration,
+        price: priceX18Str,
+        amount: signedAmount,
+        nonce,
       },
     });
     const orderId = res?.orderId ?? res?.data?.digest ?? res?.digest ?? `nd-${Date.now()}`;
