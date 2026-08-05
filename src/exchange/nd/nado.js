@@ -61,7 +61,7 @@ export class NadoExchange extends EventEmitter {
             // 1/2/3/4，跟 Nado 真实 productId 完全不对应）→ K 线/下单都用错 productId 静默失败。
             // 真正给 symbol<->productId 映射的是 getSymbols()（engine `symbols` query）。
             const [symbolsResp, rawMarkets] = await Promise.all([
-                      this._client.market.getSymbols().catch(() => null),
+                      this._client.context.engineClient.getSymbols({})).catch(() => null),
                       this._client.market.getAllMarkets().catch(() => []),
                     ]);
             const toNum = (v) => {
