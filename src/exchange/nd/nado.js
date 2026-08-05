@@ -55,38 +55,56 @@ export class NadoExchange extends EventEmitter {
       const publicClient = createPublicClient({ chain, transport: http() });
       const walletClient = createWalletClient({ account: this._account, chain, transport: http() });
       this._client = createNadoClient(this._chainEnv, { publicClient, walletClient });
-      // 拉市场列表
-      const rawMarkets = await this._client.market.getAllMarkets();
-      const arr = Array.isArray(rawMarkets) ? rawMarkets
-                : Array.isArray(rawMarkets?.markets) ? rawMarkets.markets
-                : Array.isArray(rawMarkets?.data) ? rawMarkets.data
-                : [];
-      let idx = 1;
-      for (const m of arr) {
-        const symbol = String(m.symbol || m.marketSymbol || m.name || '').toUpperCase();
-        if (!symbol) continue;
-        this.markets.set(idx, {
-          marketId: idx,
-          displayName: symbol.endsWith('-PERP') ? symbol : `${symbol}-PERP`,
-          symbol,
-          lastPrice: Number(m.lastPrice || m.price || 0) || 0,
-          minOrderSize: Number(m.minOrderSize || m.minSize || 0) || 0.0001,
-          stepSize: Number(m.stepSize || m.sizeIncrement || 0) || 0.0001,
-          stepPrice: Number(m.stepPrice || m.priceIncrement || m.tickSize || 0) || 0.01,
-          maxLeverage: Number(m.maxLeverage || m.maxLev || 0) || 20,
-          productId: m.productId ?? m.id ?? idx,   // Vertex-style productId (真正 Nado 用来 place)
-        });
-        this._marketSymbolToId.set(symbol, idx);
-        idx++;
-      }
-      if (this.markets.size === 0) {
-        // SDK 返空 → 填 fallback 让 UI 至少能看到 pair 名
-        for (const m of DEFAULT_MARKETS) {
-          const id = idx++;
-          this.markets.set(id, { ...m, marketId: id });
-          this._marketSymbolToId.set(m.symbol, id);
-        }
-      }
+// 拉市场列表：Round 275 修复 —— all_products/getAllMarkets 只有 productId/oraclePrice/
+            // 风险参数，没有 symbol 字段。之前用 m.symbol||m.marketSymbol||m.name 猜，全部猜空
+            // → markets.size===0 → 静默 fallback 到 DEFAULT_MARKETS（productId 变成本地序号
+            // 1/2/3/4，跟 Nado 真实 productId 完全不对应）→ K 线/下单都用错 productId 静默失败。
+            // 真正给 symbol<->productId 映射的是 getSymbols()（engine `symbols` query）。
+            const [symbolsResp, rawMarkets] = await Promise.all([
+                      this._client.market.getSymbols().catch(() => null),
+                      this._client.market.getAllMarkets().catch(() => []),
+                    ]);
+            const toNum = (v) => {
+                      if (v == null) return 0;
+                      if (typeof v === 'number') return v;
+                      if (typeof v?.toNumber === 'function') { try { return v.toNumber(); } catch { return Number(v) || 0; } }
+                      return Number(v) || 0;
+            };
+            const priceByProductId = new Map();
+            for (const m of (Array.isArray(rawMarkets) ? rawMarkets : [])) {
+                      const pid = m?.productId ?? m?.product?.productId;
+                      if (pid != null) priceByProductId.set(Number(pid), toNum(m?.product?.oraclePrice));
+            }
+            let idx = 1;
+            const symbolEntries = symbolsResp?.symbols ? Object.values(symbolsResp.symbols) : [];
+            for (const s of symbolEntries) {
+                      const symbol = String(s.symbol || '').toUpperCase();
+                      if (!symbol) continue;
+                      const productId = Number(s.productId);
+                      this.markets.set(idx, {
+                                  marketId: idx,
+                                  displayName: symbol,
+                                  symbol: symbol.replace(/-PERP$/, ''),
+                                  lastPrice: priceByProductId.get(productId) || 0,
+                                  minOrderSize: toNum(s.minSize) || 0.0001,
+                                  stepSize: toNum(s.sizeIncrement) || 0.0001,
+                                  stepPrice: toNum(s.priceIncrement) || 0.01,
+                                  maxLeverage: 20,
+                                  productId, // 真实 Nado productId（来自 getSymbols，不是本地序号）
+                      });
+                      this._marketSymbolToId.set(symbol.replace(/-PERP$/, ''), idx);
+                      idx++;
+            }
+            if (this.markets.size === 0) {
+                      // SDK 仍返空（比如 getSymbols 也失败）→ 填 fallback 让 UI 至少能看到 pair 名，
+                      // 但明确记录 lastError，不再假装是 real 数据。
+                      this.lastError = 'getSymbols/getAllMarkets 均未返回可用市场，使用离线 fallback 列表（productId 不可用，无法下单）';
+                      for (const m of DEFAULT_MARKETS) {
+                                  const id = idx++;
+                                  this.markets.set(id, { ...m, marketId: id });
+                                  this._marketSymbolToId.set(m.symbol, id);
+                      }
+            }
       // 拉初始余额（subaccount summary）
 await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalance: ${e.message}`; });
             if (!this.lastError) {
@@ -158,7 +176,7 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
       if (!m) return [];
       const bars = await this._client.market.getCandlesticks({
         productId: m.productId,
-        granularity: sec || 3600,
+        period: sec || 3600,
         limit: n || 100,
       });
       const arr = Array.isArray(bars) ? bars : (Array.isArray(bars?.candlesticks) ? bars.candlesticks : []);
