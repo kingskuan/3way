@@ -253,7 +253,19 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
       }
       return true;
     } catch (e) {
-      this.lastError = `cancelAll: ${e.message}`;
+      // Round 275b：Nado gateway 2024 "no previous deposits" = 该 product 从没交易过。
+      // 部署后 marketId 会 re-index（idx 从 getSymbols 顺序而定，跨部署可能不稳定）→
+      // 老 config.marketId 指向另一个从未交易的 product → 撤单失败 abort rotate → bot
+      // 永远起不了。视为"没老单要撤"静默放行。
+      const msg = String(e?.message || e);
+      if (/no previous deposits|Invalid subaccount|no orders/i.test(msg)) {
+        this.lastError = null;
+        for (const [id, o] of this.orders) {
+          if (Number(o.marketId) === Number(marketId)) this.orders.delete(id);
+        }
+        return true;
+      }
+      this.lastError = `cancelAll: ${msg}`;
       throw e;
     }
   }
