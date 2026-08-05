@@ -1231,6 +1231,7 @@ export class GridBot {
       priceStale,
       placeFails: this._placeFails,
       exchangeOpenOrders: this._exchangeOpenOrders,
+      lastError: ex.lastError ?? null,
     };
   }
 
