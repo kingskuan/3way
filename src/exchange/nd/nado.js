@@ -232,6 +232,10 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
         price: priceStr,
         amount: amountStr,
         nonce,
+        // Round 275e：EIP712OrderParams 有 required `appendix: BigNumberish`。
+        // 缺 → SDK 内部 toBigNumber(undefined) 返 NaN → BigInt("NaN") throws。
+        // 普通 limit-GTC 单 appendix=0（reduce_only/isolated 等 flag 都 off）。
+        appendix: '0',
       },
     });
     const orderId = res?.orderId ?? res?.data?.digest ?? res?.digest ?? `nd-${Date.now()}`;
