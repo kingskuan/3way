@@ -1257,6 +1257,10 @@ await Promise.all([
   initExchange(ndExchange, 'Nado', { mode: cfg.nd.mode, apiUrl: 'https://gateway.prod.nado.xyz' }),
 ]);
 
+// Round 276: Nado 适配器有内建 10s 轮询 (_refreshBalance 刷新余额 + lastOkAt)，但从未被启动，
+// 导致 balance 卡在 init 时的快照、lastOkAt 永远不刷新 → Autopilot 健康门槛判定数据陈旧而跳过 Nado。
+ndExchange.start?.();
+
 // ── 崩溃恢复 / 续跑 ────────────────────────────────────────────────────────────
 // If a bot was "running" when the process died, RESUME it: re-attach to the
 // orders still resting on the exchange and keep managing the grid. If resume
