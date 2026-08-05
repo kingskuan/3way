@@ -678,7 +678,7 @@ class Autopilot {
         const hour1Vol = avgBaseVol * (lastBar.close || 0);
         candidates.push({
           marketId: m.marketId, name: m.displayName, price: m.lastPrice,
-          minOrderSize: m.minOrderSize, stepSize: m.stepSize, maxLeverage: m.maxLeverage,
+          minOrderSize: m.minOrderSize, stepSize: m.stepSize, maxLeverage: m.maxLeverage, stepPrice: m.stepPrice,
           trend: trend.trend, recommended: trend.recommended,
           strength: trend.strength, atrPct: trend.atrPct,
           agreement: trend.agreement,   // Round 124：两个时间框架是否一致
@@ -697,7 +697,7 @@ class Autopilot {
         if (!(Number(m.lastPrice) > 0)) continue;
         candidates.push({
           marketId: m.marketId, name: m.displayName, price: Number(m.lastPrice),
-          minOrderSize: m.minOrderSize, stepSize: m.stepSize, maxLeverage: m.maxLeverage,
+          minOrderSize: m.minOrderSize, stepSize: m.stepSize, maxLeverage: m.maxLeverage, stepPrice: m.stepPrice,
           trend: 'range', recommended: 'neutral',
           strength: 0, atrPct: null,
         });
