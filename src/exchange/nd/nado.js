@@ -207,22 +207,20 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
     const m = this.markets.get(marketId);
     if (!m) throw new Error(`Nado 未知 marketId=${marketId}`);
     const isBuy = o.side === 'buy';
-    // Round 275c：EIP712OrderParams 真实 shape（Round 272 猜错所有字段）:
-    //   { subaccountOwner, subaccountName, expiration, price, amount, appendix }
-    //   全是 BigNumberish (BigNumber x18 或对应 string)。字段名是 `price`（不是 priceX18）。
-    // Vertex 用 signed amount：buy 正、sell 负。
-    // 用 string 表示 raw x18 整数（避 float→BigNumber 精度问题）。
+    // Round 275c/d：EIP712OrderParams 真实 shape:
+    //   { subaccountOwner, subaccountName, expiration, price, amount, nonce }
+    //   全是 BigNumberish。SDK 内部会用 bignumber.js 把人类小数乘 1e18 变 raw x18。
+    //   Round 275c 我 pre-scale x18 → SDK 又乘 1e18 = 128-bit 溢出。
+    //   Round 275d：传人类小数（string 保精度）让 SDK scale。
     const sizeBase = Number(o.sizeBase) || 0;
     const price = Number(o.price) || 0;
     if (!(sizeBase > 0) || !(price > 0)) {
       throw new Error(`Nado 参数异常 sizeBase=${o.sizeBase} price=${o.price}`);
     }
-    const scale = (n) => BigInt(Math.round(n * 1e18)).toString();
-    const amountX18Str = scale(sizeBase);
-    const signedAmount = isBuy ? amountX18Str : ('-' + amountX18Str);
-    const priceX18Str = scale(price);
-    // expiration: unix seconds; Vertex bit-packs order-type flags in higher bits but
-    // 未设为纯 unix 秒即默认 limit-GTC。24h TTL 足够 grid 单。
+    // amount signed: buy=正, sell=负。Vertex 约定。
+    const amountStr = (isBuy ? '' : '-') + sizeBase.toString();
+    const priceStr = price.toString();
+    // expiration: unix seconds; 24h TTL for grid orders
     const expiration = String(Math.floor(Date.now() / 1000) + 24 * 3600);
     const nonce = `${Date.now()}${Math.floor(Math.random() * 1e6)}`;
     const res = await this._client.market.placeOrder({
@@ -231,8 +229,8 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
         subaccountOwner: this._account.address,
         subaccountName: 'default',
         expiration,
-        price: priceX18Str,
-        amount: signedAmount,
+        price: priceStr,
+        amount: amountStr,
         nonce,
       },
     });
