@@ -78,22 +78,29 @@ export class NadoExchange extends EventEmitter {
             let idx = 1;
             const symbolEntries = symbolsResp?.symbols ? Object.values(symbolsResp.symbols) : [];
             for (const s of symbolEntries) {
-                      const symbol = String(s.symbol || '').toUpperCase();
-                      if (!symbol) continue;
-                      const productId = Number(s.productId);
-                      this.markets.set(idx, {
-                                  marketId: idx,
-                                  displayName: symbol,
-                                  symbol: symbol.replace(/-PERP$/, ''),
-                                  lastPrice: priceByProductId.get(productId) || 0,
-          minOrderSize: (toNum(s.minSize) / 1e18) || 0.0001,
-                                  stepSize: (toNum(s.sizeIncrement) / 1e18) || 0.0001,
-                                  stepPrice: toNum(s.priceIncrement) || 0.01,
-                                  maxLeverage: 20,
-                                  productId, // 真实 Nado productId（来自 getSymbols，不是本地序号）
-                      });
-                      this._marketSymbolToId.set(symbol.replace(/-PERP$/, ''), idx);
-                      idx++;
+              const symbol = String(s.symbol || '').toUpperCase();
+              if (!symbol) continue;
+              const productId = Number(s.productId);
+              const lastPrice = priceByProductId.get(productId) || 0;
+              // Round 275a：Nado 的 s.minSize 返 100 (=$100 USDC 名义值) 而非 base tokens。
+              // 实测所有 85 市场都返 100，明显是全局 min notional $100。除以 lastPrice 得 base size。
+              const minNotionalUsd = (toNum(s.minSize) / 1e18) || 100;
+              const minOrderSize = (lastPrice > 0 ? minNotionalUsd / lastPrice : 0.0001) || 0.0001;
+              // stepSize: sizeIncrement 是 base x18（Vertex 标准）→ /1e18
+              const stepSize = (toNum(s.sizeIncrement) / 1e18) || 0.0001;
+              this.markets.set(idx, {
+                marketId: idx,
+                displayName: symbol,
+                symbol: symbol.replace(/-PERP$/, ''),
+                lastPrice,
+                minOrderSize,
+                stepSize,
+                stepPrice: toNum(s.priceIncrement) || 0.01,
+                maxLeverage: 20,
+                productId, // 真实 Nado productId（来自 getSymbols，不是本地序号）
+              });
+              this._marketSymbolToId.set(symbol.replace(/-PERP$/, ''), idx);
+              idx++;
             }
             if (this.markets.size === 0) {
                       // SDK 仍返空（比如 getSymbols 也失败）→ 填 fallback 让 UI 至少能看到 pair 名，
