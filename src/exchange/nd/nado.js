@@ -88,10 +88,14 @@ export class NadoExchange extends EventEmitter {
         }
       }
       // 拉初始余额（subaccount summary）
-      await this._refreshBalance().catch(() => {});
-      this.dataSource = 'real';
-      this.lastOkAt = Date.now();
-      return true;
+await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalance: ${e.message}`; });
+            if (!this.lastError) {
+                      this.dataSource = 'real';
+                      this.lastOkAt = Date.now();
+            } else {
+                      this.dataSource = 'synthetic';
+            }
+            return true;
     } catch (e) {
       this.lastError = `init: ${e.message}`;
       this.dataSource = 'synthetic';
