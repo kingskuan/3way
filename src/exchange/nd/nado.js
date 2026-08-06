@@ -10,6 +10,7 @@
 // 依赖：@nadohq/client, viem, bignumber.js（加到 optionalDependencies 避免
 // 部署失败，跟 Round 211 的 Phoenix Solana 依赖同款策略）。
 import { EventEmitter } from 'events';
+import BigNumber from 'bignumber.js';
 
 const DEFAULT_MARKETS = [
   { symbol: 'BTC', displayName: 'BTC-PERP',  basePrice: 63000,  stepSize: 0.0001, stepPrice: 0.1,   minSize: 0.0001, maxLev: 25 },
@@ -207,18 +208,23 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
     const m = this.markets.get(marketId);
     if (!m) throw new Error(`Nado 未知 marketId=${marketId}`);
     const isBuy = o.side === 'buy';
-    // Round 275c/d：EIP712OrderParams 真实 shape:
-    //   { subaccountOwner, subaccountName, expiration, price, amount, nonce }
-    //   全是 BigNumberish。SDK 内部会用 bignumber.js 把人类小数乘 1e18 变 raw x18。
-    //   Round 275c 我 pre-scale x18 → SDK 又乘 1e18 = 128-bit 溢出。
-    //   Round 275d：传人类小数（string 保精度）让 SDK scale。
+    // Round 275c/d/g：EIP712OrderParams 真实 shape:
+    //   { subaccountOwner, subaccountName, expiration, price, amount, nonce, appendix }
+    //   全是 BigNumberish。但 SDK 里 getOrderValues 用两种处理：
+    //     price → addDecimals(1e18) → toIntegerString  ← SDK 自动 scale
+    //     amount → toIntegerString                     ← 调用方必须 pre-scale
+    //   Round 275d 我为了避 128-bit 溢出把两个都传人类小数，结果 amount 传
+    //   "-0.002" → toFixed(0) → "-1" 被引擎拒 "must be divisible by size_increment"。
+    //   Round 275g：只 pre-scale amount ×1e18；price 让 SDK scale（保持 Round 275d 逻辑）。
     const sizeBase = Number(o.sizeBase) || 0;
     const price = Number(o.price) || 0;
     if (!(sizeBase > 0) || !(price > 0)) {
       throw new Error(`Nado 参数异常 sizeBase=${o.sizeBase} price=${o.price}`);
     }
-    // amount signed: buy=正, sell=负。Vertex 约定。
-    const amountStr = (isBuy ? '' : '-') + sizeBase.toString();
+    // amount pre-scaled ×1e18；用字符串拼接避免 Number 精度丢失。
+    // Vertex 约定：buy=正, sell=负。
+    const scaled = new BigNumber(sizeBase).multipliedBy(new BigNumber(10).pow(18)).integerValue(BigNumber.ROUND_DOWN);
+    const amountStr = (isBuy ? '' : '-') + scaled.toFixed(0);
     const priceStr = price.toString();
     // expiration: unix seconds; 24h TTL for grid orders
     const expiration = String(Math.floor(Date.now() / 1000) + 24 * 3600);
