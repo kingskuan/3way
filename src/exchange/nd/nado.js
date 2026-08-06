@@ -221,11 +221,29 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
     if (!(sizeBase > 0) || !(price > 0)) {
       throw new Error(`Nado 参数异常 sizeBase=${o.sizeBase} price=${o.price}`);
     }
-    // amount pre-scaled ×1e18；用字符串拼接避免 Number 精度丢失。
-    // Vertex 约定：buy=正, sell=负。
-    const scaled = new BigNumber(sizeBase).multipliedBy(new BigNumber(10).pow(18)).integerValue(BigNumber.ROUND_DOWN);
+    // Round 275h：引擎强制 amount 必须能被 size_increment 整除
+    //   （market.stepSize 已从 s.sizeIncrement/1e18 算好）。bot 的 grid math 不管
+    //   adapter 的 step，所以在这里 snap：sizeBase → floor(sizeBase/step)*step。
+    const stepSize = Number(m.stepSize) || 0;
+    let snappedSize = sizeBase;
+    if (stepSize > 0) {
+      const nSteps = new BigNumber(sizeBase).dividedBy(stepSize).integerValue(BigNumber.ROUND_DOWN);
+      snappedSize = nSteps.multipliedBy(stepSize).toNumber();
+      if (!(snappedSize > 0)) {
+        throw new Error(`Nado sizeBase=${sizeBase} < stepSize=${stepSize} snap 后为 0`);
+      }
+    }
+    // amount 再 pre-scale ×1e18（Vertex 约定：buy=正, sell=负）
+    const scaled = new BigNumber(snappedSize).multipliedBy(new BigNumber(10).pow(18)).integerValue(BigNumber.ROUND_DOWN);
     const amountStr = (isBuy ? '' : '-') + scaled.toFixed(0);
-    const priceStr = price.toString();
+    // price 同样 snap 到 stepPrice（Nado 也会拒 price 不对 tick）
+    const stepPrice = Number(m.stepPrice) || 0;
+    let snappedPrice = price;
+    if (stepPrice > 0) {
+      const nTicks = new BigNumber(price).dividedBy(stepPrice).integerValue(BigNumber.ROUND_HALF_UP);
+      snappedPrice = nTicks.multipliedBy(stepPrice).toNumber();
+    }
+    const priceStr = snappedPrice.toString();
     // expiration: unix seconds; 24h TTL for grid orders
     const expiration = String(Math.floor(Date.now() / 1000) + 24 * 3600);
     const nonce = `${Date.now()}${Math.floor(Math.random() * 1e6)}`;
