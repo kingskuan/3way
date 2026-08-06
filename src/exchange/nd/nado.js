@@ -232,10 +232,13 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
         price: priceStr,
         amount: amountStr,
         nonce,
-        // Round 275e：EIP712OrderParams 有 required `appendix: BigNumberish`。
-        // 缺 → SDK 内部 toBigNumber(undefined) 返 NaN → BigInt("NaN") throws。
-        // 普通 limit-GTC 单 appendix=0（reduce_only/isolated 等 flag 都 off）。
-        appendix: '0',
+        // Round 275e/f：EIP712OrderParams 的 appendix 是 128-bit packed struct。
+        // 从 @nadohq/shared/utils/orders/appendix/packOrderAppendix.cjs 挖到：
+        //   value(64) | builderId(16) | builderFeeRate(10) | reserved(24) |
+        //   trigger(2) | reduceOnly(1) | orderType(2) | isolated(1) | version(8)
+        // 简单 limit-GTC 单（所有 flag=0，version=1）packed 值 = 1（version 占最低 8 bits）。
+        // 271e 用 '0' 被拒："order version 0 does not match expected 1"。
+        appendix: '1',
       },
     });
     const orderId = res?.orderId ?? res?.data?.digest ?? res?.digest ?? `nd-${Date.now()}`;
