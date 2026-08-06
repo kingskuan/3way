@@ -355,6 +355,20 @@ class Autopilot {
         consecutiveLossLimit: 5,    // 4 → 5（同理）
       };
     }
+    // Round 275k：Nado 有硬 min notional ($100) + margin-health check。
+    //   Round 275j adapter 已经 bump 每格到 $105 min notional，但当 gridCount
+    //   高时 total order margin (gridCount × $105 / lev) 会撞 Nado 的 initial
+    //   margin health threshold → 引擎全拒 2006: Insufficient account health。
+    //   实测 $250 equity + 40 格 × $105 × 20x → 全 40 单 rejected 0/40 挂上。
+    //   降 Nado gridCount 到 20，同时 leverage 从 30x/aggressive 也降到 10x
+    //   给 Nado 更保守配置（Nado initial-margin-weight 严于其他所）。
+    if (key === 'nd') {
+      s = {
+        ...s,
+        gridCount: Math.min(s.gridCount, 20),
+        maxLeverage: Math.min(s.maxLeverage, 10),
+      };
+    }
     const now = Date.now();
     // Round 50: 每次 tick 都刷新 lastDecisionAt，让 UI"决策时间"反映最近一次评估
     // 而不是最近一次 start（之前只在 start 分支更新，skip / stop / err 都不更→
