@@ -227,28 +227,36 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
     if (!(sizeBase > 0) || !(price > 0)) {
       throw new Error(`Nado 参数异常 sizeBase=${o.sizeBase} price=${o.price}`);
     }
-    // Round 275h：引擎强制 amount 必须能被 size_increment 整除
-    //   （market.stepSize 已从 s.sizeIncrement/1e18 算好）。bot 的 grid math 不管
-    //   adapter 的 step，所以在这里 snap：sizeBase → floor(sizeBase/step)*step。
     const stepSize = Number(m.stepSize) || 0;
-    let snappedSize = sizeBase;
-    if (stepSize > 0) {
-      const nSteps = new BigNumber(sizeBase).dividedBy(stepSize).integerValue(BigNumber.ROUND_DOWN);
-      snappedSize = nSteps.multipliedBy(stepSize).toNumber();
-      if (!(snappedSize > 0)) {
-        throw new Error(`Nado sizeBase=${sizeBase} < stepSize=${stepSize} snap 后为 0`);
-      }
-    }
-    // amount 再 pre-scale ×1e18（Vertex 约定：buy=正, sell=负）
-    const scaled = new BigNumber(snappedSize).multipliedBy(new BigNumber(10).pow(18)).integerValue(BigNumber.ROUND_DOWN);
-    const amountStr = (isBuy ? '' : '-') + scaled.toFixed(0);
-    // price 同样 snap 到 stepPrice（Nado 也会拒 price 不对 tick）
     const stepPrice = Number(m.stepPrice) || 0;
+    // Round 275h：先 snap price（Nado 拒不对 tick）
     let snappedPrice = price;
     if (stepPrice > 0) {
       const nTicks = new BigNumber(price).dividedBy(stepPrice).integerValue(BigNumber.ROUND_HALF_UP);
       snappedPrice = nTicks.multipliedBy(stepPrice).toNumber();
     }
+    // Round 275j：Nado 有硬 min notional ($100)——bot 的 grid math 只算固定
+    // sizeBase，网格下半段 (price 低) 的 notional 会 < $100 被拒 2094。
+    // 这里为每格算所需最小 size 满足 notional >= minNotionalUsd（$105 buffer）。
+    // 用 max(sizeBase, minSizeForNotional) 再 snap 到 stepSize（ROUND_UP 保证不下溢）。
+    const MIN_NOTIONAL_USD = 105; // Nado 硬门槛 $100 + $5 buffer
+    let effectiveSize = sizeBase;
+    if (snappedPrice > 0) {
+      const minSizeForNotional = MIN_NOTIONAL_USD / snappedPrice;
+      if (minSizeForNotional > effectiveSize) effectiveSize = minSizeForNotional;
+    }
+    // 再 snap size 到 stepSize（ROUND_UP：保证不因为 snap 后跌回 <min notional）
+    let snappedSize = effectiveSize;
+    if (stepSize > 0) {
+      const nSteps = new BigNumber(effectiveSize).dividedBy(stepSize).integerValue(BigNumber.ROUND_UP);
+      snappedSize = nSteps.multipliedBy(stepSize).toNumber();
+      if (!(snappedSize > 0)) {
+        throw new Error(`Nado sizeBase=${sizeBase} price=${snappedPrice} snap 后 size 为 0`);
+      }
+    }
+    // amount 再 pre-scale ×1e18（Vertex 约定：buy=正, sell=负）
+    const scaled = new BigNumber(snappedSize).multipliedBy(new BigNumber(10).pow(18)).integerValue(BigNumber.ROUND_DOWN);
+    const amountStr = (isBuy ? '' : '-') + scaled.toFixed(0);
     const priceStr = snappedPrice.toString();
     // expiration: unix seconds; 24h TTL for grid orders
     const expiration = String(Math.floor(Date.now() / 1000) + 24 * 3600);
