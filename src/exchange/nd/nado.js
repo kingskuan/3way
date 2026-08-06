@@ -81,6 +81,12 @@ export class NadoExchange extends EventEmitter {
             for (const s of symbolEntries) {
               const symbol = String(s.symbol || '').toUpperCase();
               if (!symbol) continue;
+              // Round 275i：某些 market（比如 USDJPY-PERP, stock perps）是 isolated-only
+              // (isolated_only=true / camelCase isolatedOnly)。我们的 grid 走 cross-margin
+              // （equity 背整个组合），所以 isolated-only 单会被引擎拒:
+              //   2122: Market is in isolated-only mode. Only isolated orders are accepted.
+              // 直接从可选市场列表 filter 掉，让 Autopilot 不会 pick 到。
+              if (s.isolatedOnly === true || s.isolated_only === true) continue;
               const productId = Number(s.productId);
               const lastPrice = priceByProductId.get(productId) || 0;
               // Round 275a：Nado 的 s.minSize 返 100 (=$100 USDC 名义值) 而非 base tokens。
