@@ -183,6 +183,32 @@ await this._refreshBalance().catch((e) => { this.lastError = `init refreshBalanc
   async getMarkets() { return [...this.markets.values()]; }
   async getPrice(marketId) { return this.prices.get(Number(marketId)) ?? this.markets.get(Number(marketId))?.lastPrice ?? null; }
 
+  /**
+   * Round 275l：Nado volume 显示 0 因为 adapter 没接 fill 追踪。
+   *   Nado 有 indexer.getMatchEvents(subaccounts, limit) 返自己所有成交 match，
+   *   每条含 quoteFilled (USDC notional, x18)。累计所有 match 的 quoteFilled/1e18
+   *   = 累计 USDC 交易量。跟 bg/bu getStats 同套路，bot._syncExchangeStats 会
+   *   Math.max 上去更新 stats.volume。
+   */
+  async getStats() {
+    if (!this._client || !this._account) return null;
+    try {
+      const events = await this._client.context.indexerClient.getMatchEvents({
+        subaccounts: [{ subaccountOwner: this._account.address, subaccountName: 'default' }],
+        limit: 500,
+      });
+      const arr = Array.isArray(events) ? events : [];
+      let vol = 0;
+      for (const m of arr) {
+        const qf = m?.quoteFilled;
+        if (qf == null) continue;
+        const n = typeof qf?.abs === 'function' ? qf.abs().toNumber() : Math.abs(Number(qf) || 0);
+        if (Number.isFinite(n)) vol += n / 1e18;
+      }
+      return { volume: vol };
+    } catch { return null; }
+  }
+
   async getCandles(marketId, sec, n) {
     if (!this._client) return [];
     try {
