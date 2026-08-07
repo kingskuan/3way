@@ -365,7 +365,12 @@ class Autopilot {
     if (key === 'nd') {
       s = {
         ...s,
-        gridCount: Math.min(s.gridCount, 20),
+        // Round 275n：20→12。实测 ZHIPU-PERP 20 格 × $105 min notional = $2100
+        // notional × 1/10 lev = $210 margin，但 Nado initial-margin-weight ~0.6-0.7
+        // 打折让 $303 balance 只撑得起 ~$180 effective margin → 只挂上 2/20 单，
+        // 剩 18 单全拒 2006 → 哨兵刷屏「补单频繁失败」。
+        // 12 格 × $105 × 10x = $126 margin < $180 effective，全 12 格能挂上。
+        gridCount: Math.min(s.gridCount, 12),
         maxLeverage: Math.min(s.maxLeverage, 10),
       };
     }
