@@ -4272,6 +4272,17 @@ function makeExchangeCtrl(prefix, chartId) {
   };
 
   P('reset-btn').onclick = async () => {
+    const amtStr = prompt('刚从这个 DEX 存/取了多少钱？\n\n转入填正数（如 100），转出/提现填负数（如 -100）。\n\n留空并确定 = 改用旧方式整体重置基线（网格利润清零、起始余额=当前权益）。', '');
+    if (amtStr === null) return;
+    if (amtStr.trim() !== '') {
+      const amt = Number(amtStr);
+      if (!Number.isFinite(amt) || amt === 0) { alert('金额无效，请输入非零数字。'); return; }
+      const r2 = await fetch(`/api/${prefix}/transfer`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ amount: amt }) });
+      const j2 = await r2.json();
+      if (j2.error) alert('记录失败: ' + j2.error);
+      else alert(`✅ 已记录${amt > 0 ? '转入' : '转出'} ${Math.abs(amt)} USDC\n\n网格利润/成交量不受影响，仅调整基线，之后的账户变化只算真交易 P&L。`);
+      return;
+    }
     if (!confirm('💰 转账后重置基线\n\n用途：你刚从这个 DEX 存/取了钱，账户变化不是真交易 P&L\n\n执行：\n• 网格利润 清零（gridProfit=0）\n• 起始余额 = 当前权益（equityDelta 归零）\n• Autopilot 日基线清空（防止 equity 突变触发假熔断）\n• **成交量 / 完成格数 保留**（不再一并清）\n• 持仓 + 挂单 不受影响\n\n确认继续？')) return;
     const r = await fetch(`/api/${prefix}/reset`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
     const j = await r.json();
