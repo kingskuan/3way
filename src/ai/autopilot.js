@@ -451,6 +451,27 @@ class Autopilot {
       }
     }
 
+    // Round 275m: Nado 有链上仓位/挂单时 skip，防"start-failed"死循环。
+    // Round 275i-k merge 后，若 Autopilot 起一波 Nado 网格 fills 出仓位，rotate
+    // 到新市场时老仓没清 → 新起 20 格 × $105 × 10x = $210 margin > 剩余 health
+    // buffer → 每 tick 全 20 单被拒 2006 → placeFails 累积 1700+。
+    // 判据：|equity - balance| > $5 视为有 unrealized position（Nado adapter 没
+    // 主动 populate positions Map，用 equity-balance delta 是唯一信号）。
+    // 同 Round 254 phoenix：静默 skip 让用户手动去 nado 网页清仓，30min log 一次。
+    if (key === 'nd') {
+      const curState = bot.getState();
+      const bal = Number(curState.balance || 0);
+      const eq = Number(curState.equity || 0);
+      const posDelta = Math.abs(eq - bal);
+      if (!curState.running && bal > 5 && posDelta > 5) {
+        const lastLogAt = st._lastNdPosLogAt || 0;
+        if (now - lastLogAt > 30 * 60_000) {
+          st._lastNdPosLogAt = now;
+          this._log(key, 'skip', `Nado 链上有仓位残留（equity $${eq.toFixed(2)} vs balance $${bal.toFixed(2)}，delta $${posDelta.toFixed(2)}），autopilot 暂不接管——请到 nado.xyz 平仓后自动恢复`);
+        }
+        return;
+      }
+    }
     // Round 248: 零余额 skip —— Bitget/Bitunix 被 user offboarded 后 balance≈0
     // equity≈0，autopilot 拿 fallback $1000 试起 80 单结果全部 place-order 失败
     // 触发熔断。若 bot 未 running 且 balance<$5 && equity<$5，视为 offboarded，
