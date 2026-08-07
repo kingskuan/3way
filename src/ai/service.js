@@ -203,11 +203,20 @@ class AiService {
         // Round 250: real-readonly (auth 挂) 时过滤掉补单/挂单相关 alerts —— 这些
         // 是 auth 挂的副作用不是真的问题。让哨兵 AI 看不到就不会每 5 min 升级
         // 告警刷屏。用户 Telegram 收到 6 条 Phoenix 补单失败告警就是这个 bug。
+        // Round 275o: Perpl sr=14 (未文档化 position/leverage limit) 偶尔单条拒单
+        // 时哨兵不需要刷屏——bot 健康度看 openOrders 比例。
+        //   openOrders >= 50% × gridCount → 只是偶发拒单，过滤掉 sr=14 alerts
         recentAlerts: (s.alerts || [])
           .filter((a) => {
-            if (ex?.dataSource !== 'real-readonly') return true;
             const msg = String(a.message || '');
-            return !/补单|补挂|挂单漂移|订单缺失|连续.*失败/.test(msg);
+            if (ex?.dataSource === 'real-readonly'
+                && /补单|补挂|挂单漂移|订单缺失|连续.*失败/.test(msg)) return false;
+            if (key === 'pl' && /sr=14/.test(msg)) {
+              const gc = Number(s?.config?.gridCount) || 0;
+              const oo = Number(s?.openOrders) || 0;
+              if (gc > 0 && oo >= gc * 0.5) return false;
+            }
+            return true;
           })
           .slice(0, 5)
           .map((a) => `${new Date(a.t).toLocaleTimeString('zh-CN')} ${a.message}`),

@@ -456,6 +456,17 @@ class Autopilot {
       }
     }
 
+    // Round 275o: Nado 上次 tick 起单失败 30min 内直接 skip（冷却）。
+    // Round 275m 判据 (|equity-balance|>$5) 在 tick 瞬间 delta 归零窗口会漏
+    // → Autopilot 冲进去 start，起 12 单又全失败 → 又循环。加冷却兜底。
+    if (key === 'nd' && st.lastAction === 'start-failed' && (now - (st.lastDecisionAt || 0)) < 30 * 60_000) {
+      const lastLogAt = st._lastNdCooldownLogAt || 0;
+      if (now - lastLogAt > 30 * 60_000) {
+        st._lastNdCooldownLogAt = now;
+        this._log(key, 'skip', `Nado 上次起单失败，冷却 30 分钟避免循环撞 2006`);
+      }
+      return;
+    }
     // Round 275m: Nado 有链上仓位/挂单时 skip，防"start-failed"死循环。
     // Round 275i-k merge 后，若 Autopilot 起一波 Nado 网格 fills 出仓位，rotate
     // 到新市场时老仓没清 → 新起 20 格 × $105 × 10x = $210 margin > 剩余 health

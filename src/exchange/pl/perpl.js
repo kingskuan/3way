@@ -661,6 +661,7 @@ export class PerplExchange extends EventEmitter {
       6: '重复订单/价格冲突？',
       7: 'post-only 会立即成交？',
       8: 'lb 已过期 (last-block ttl)？',
+      14: 'position size / leverage limit / funding window（未文档化）',
       32: 'rq 未大于服务端 lfr（Round 22）',
       43: 'warmup/first-request（Round 190）',
     };
