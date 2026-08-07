@@ -525,6 +525,15 @@ export class GridBot {
     return this.getState();
   }
 
+  recordTransfer(amount) {
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt === 0) throw new Error('转账金额无效，请输入非零数字（转入为正，转出为负）。');
+    this.startBalance = (typeof this.startBalance === 'number' ? this.startBalance : 0) + amt;
+    this._alert(`已记录一笔${amt > 0 ? '转入' : '转出'} ${Math.abs(round2(amt))} USDC：已从 PnL 基线中扣除，不再算作交易盈亏。`);
+    this._changed();
+    return this.getState();
+  }
+
   _recomputeRisk() {
     if (!this.grid || !this.config) return;
     const mid = (this.config.lower + this.config.upper) / 2;
