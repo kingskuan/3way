@@ -298,6 +298,13 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
       catch (e) { return send(res, 400, { error: e.message }); }
     }
 
+    if (subPath === '/transfer' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        return send(res, 200, await bot.recordTransfer(body?.amount));
+      } catch (e) { return send(res, 400, { error: e.message }); }
+    }
+
     if (subPath === '/cancel-orders' && req.method === 'POST') {
       try { return send(res, 200, await bot.cancelAllOrders()); }
       catch (e) { return send(res, 400, { error: e.message }); }
