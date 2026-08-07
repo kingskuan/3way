@@ -549,7 +549,19 @@ export class GridBot {
 
   async _place(o) {
     const opening = o.opening !== false;
-    const reduceOnly = o.reduceOnly ?? isReduceOnly(o.side, this.config.mode);
+    let reduceOnly = o.reduceOnly ?? isReduceOnly(o.side, this.config.mode);
+    // Round 300: neutral 模式下 isReduceOnly 恒为 false（两边都能开仓），但 Perpl
+    // 等永续 DEX 要求"平掉已有反向仓位"的单必须显式标 reduce-only，否则被判
+    // "reduce-only 违规"拒单（close 单被当 open 单发送，见 Perpl _srHint sr=1）。
+    // 用真实持仓方向动态修正：仓位方向与本单方向相反时，强制标 reduce-only。
+    if (!reduceOnly && this.config.mode === 'neutral' && typeof this.ex.getPosition === 'function') {
+      const pos = this.ex.getPosition(this.config.marketId);
+      if (pos && pos.sizeBase) {
+        const posLong = pos.sizeBase > 0;
+        if ((posLong && o.side === 'sell') || (!posLong && o.side === 'buy')) reduceOnly = true;
+      }
+    }
+
     // Back-off: while paused (after a burst of cancellations / collateral
     // rejections) do not place new OPENING orders. CLOSING / reduce-only /
     // recovery legs need no extra margin and are never blocked — dropping a
