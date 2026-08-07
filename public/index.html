@@ -5691,7 +5691,7 @@ function apRender(s) {
   const effBox = $('ap-efficiency');
   if (effBox) {
     const rows = [];
-    const overview = window.lastOverview || {};
+    const overview = lastOverview || {};
     for (const k of ['de','ex','rs','on','pl','sx','bg','bu','ph','nd']) {
       const d = overview[k] || {};
       const gp = Number(d.stats?.gridProfit) || 0;
