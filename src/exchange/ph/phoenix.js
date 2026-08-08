@@ -37,6 +37,9 @@ export class PhoenixExchange extends EventEmitter {
     this.prices = new Map();
     this.markets = new Map();
     this._marketSymbolToId = new Map();
+    // Round 275v：bot 网格价格集 —— cancelAll 只撤价在这个集合里的链上单，
+    // 用户手动挂在别的价的单不动。key=marketId, value=Set<price rounded to stepPrice>。
+    this._botGridLevels = new Map();
     this._authToken = null;
     this._authTokenExpiresAt = 0;
     this._pollTimer = null;
@@ -579,44 +582,66 @@ export class PhoenixExchange extends EventEmitter {
     }
   }
 
+  // Round 275v：让 bot 告诉 adapter 当前 grid 的价格集，cancelAll 用它 filter。
+  // 保护用户在 phoenix.trade 手动挂的、价格不在 bot grid 里的单（QC 场景：
+  // 用户 short BTC + 挂 9 保护单 → bot 起停 → 老 cancelAll blanket → 9 单一起没了）。
+  // levels: number[] （bot.grid.levels）。marketId: 当前 bot 跑的市场。
+  setActiveGridLevels(marketId, levels) {
+    const mid = Number(marketId);
+    if (!Array.isArray(levels)) { this._botGridLevels.delete(mid); return; }
+    const m = this.markets.get(mid);
+    const tick = m?.stepPrice || 0.01;
+    const set = new Set();
+    for (const p of levels) {
+      const n = Number(p);
+      if (!Number.isFinite(n)) continue;
+      // round-to-tick 让链上 order price（也是 tick 对齐）能命中
+      const snapped = Math.round(n / tick) * tick;
+      set.add(snapped.toFixed(8));
+    }
+    this._botGridLevels.set(mid, set);
+  }
+
   async cancelAll(marketId) {
     const m = this.markets.get(Number(marketId));
     if (!m) return true;
-    // Round 219: cancel-all-orders 需要 traderPdaIndex
-    const body = { authority: this._authorityPubkey, traderPdaIndex: 0, symbol: m.displayName };
-    // Round 249: 之前 try/catch 吞了 auth 错误还返 true —— emergency-cleanup 认为
-    // 撤成功但实际 auth 挂 backoff 一单都没动。用户按紧急清但 Phoenix web 显示 73 单
-    // 还挂着就是这个 bug。现在保留 primary error 到最后，只有 fallback fetchOpenOrders
-    // 拿到真单并全部逐单撤才吞掉 primary error。
-    let primaryErr = null;
-    try {
-      // Round 255: 试跳过 Bearer auth —— 真正授权靠 Solana 签名，Bearer 只是身份提示。
-      // Phoenix auth API 挂 backoff 时唯一救命路径。
-      let instructionsData;
-      try {
-        instructionsData = await this._req('POST', '/v1/ix/cancel-all-orders', body, false);
-      } catch (e) {
-        if (!/401|403|unauthorized/i.test(e.message)) throw e;
-        instructionsData = await this._req('POST', '/v1/ix/cancel-all-orders', body, true);
-      }
-      await this._signAndSubmitInstructions(instructionsData);
-      return true;   // full-market cancel 成功就 done
-    } catch (e) { primaryErr = e; }
-    // 兜底：从 exchange 拉真单逐单撤
-    // Round 222b: fetchOpenOrders 现在返 null 表示"unknown state"，for-of null 崩。
-    // 只有拉到真实数组才逐单撤；null 时相信 /v1/ix/cancel-all-orders 已经清了。
-    const real = await this.fetchOpenOrders(marketId);
-    if (Array.isArray(real) && real.length > 0) {
-      let cancelledAny = false;
-      for (const o of real) {
-        try { await this.cancelOrder(marketId, o.orderId); cancelledAny = true; }
-        catch { /* 逐单可能部分成功 */ }
-      }
-      if (cancelledAny) return true;   // 至少撤了一部分，视为 partial success
+    const mid = Number(marketId);
+    // Round 275v：撤销 Round 219+249 的 blanket /v1/ix/cancel-all-orders 路径。
+    // 老路径无差别撤链上该 market 所有单 —— 用户手动挂的保护单会被一并清掉
+    // （QC 场景实测：Railway 部署完 4 分钟内 bot 起停 3 次，每次 cancelAll blanket
+    // → 用户 phoenix.trade 上手动挂的 9 单全清了 → 用户短仓裸持）。
+    //
+    // 新逻辑：
+    //   1. 若 setActiveGridLevels 从没设过（老版 bot 或 grid 未 build），什么都不做，
+    //      返 true。不敢误撤 → 用户手动去 phoenix.trade 清。
+    //   2. 若有 grid 集合，fetchOpenOrders 拿链上真单 (含真 orderSequenceNumber + price)，
+    //      只撤价格在 grid 集合里的。用户在其他价的单一律不动。
+    const gridSet = this._botGridLevels.get(mid);
+    if (!gridSet || gridSet.size === 0) {
+      try { console.log(`[Phoenix] cancelAll(mid=${mid}) skip — 没有 bot grid 价格集（防误撤用户手动单）`); } catch {}
+      return true;
     }
-    // Round 249: fallback 也没救 → 明确 throw 让 emergency-cleanup 记 cleanupErr
-    if (primaryErr) throw primaryErr;
-    return true;   // 无 primary error 且 real 是 null/空，认为链上本来就空
+    const tick = m.stepPrice || 0.01;
+    const priceKey = (p) => (Math.round(Number(p) / tick) * tick).toFixed(8);
+    let real;
+    try { real = await this.fetchOpenOrders(mid); }
+    catch (e) { throw new Error(`cancelAll: 拉 open orders 失败 ${e.message}`); }
+    if (!Array.isArray(real) || real.length === 0) return true;
+    let botCount = 0, userCount = 0, cancelledAny = false, lastErr = null;
+    for (const o of real) {
+      if (gridSet.has(priceKey(o.price))) {
+        botCount++;
+        try {
+          await this.cancelOrder(mid, o.orderId);
+          cancelledAny = true;
+        } catch (e) { lastErr = e; }
+      } else {
+        userCount++;
+      }
+    }
+    try { console.log(`[Phoenix] cancelAll(mid=${mid}) 撤 ${botCount} 单 bot 网格价，跳过 ${userCount} 单用户价（保护手动挂单）`); } catch {}
+    if (botCount > 0 && !cancelledAny && lastErr) throw lastErr;
+    return true;
   }
 
   async fetchOpenOrders(_marketId) {

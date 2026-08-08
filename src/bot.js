@@ -99,7 +99,18 @@ export class GridBot {
     try {
       this.grid = buildGrid({ lower: this.config.lower, upper: this.config.upper, gridCount: this.config.gridCount });
       this._recomputeRisk();
+      this._pushGridLevelsToAdapter();
     } catch { /* config may be incomplete */ }
+  }
+
+  // Round 275v：把 bot grid 价格集推给 adapter，让 adapter 的 cancelAll
+  // 只撤属于这个 grid 的链上单，避免误撤用户手动挂的（Phoenix 尤为重要）。
+  // adapter 没实现 setActiveGridLevels 的（Extended/Ondo/RS/Perpl 等）自动 no-op。
+  _pushGridLevelsToAdapter() {
+    if (typeof this.ex.setActiveGridLevels === 'function' && this.config && this.grid?.levels) {
+      try { this.ex.setActiveGridLevels(this.config.marketId, this.grid.levels); }
+      catch { /* adapter 内部异常不影响 bot */ }
+    }
   }
 
   /**
@@ -133,6 +144,7 @@ export class GridBot {
     this.lastPrice = snap.lastPrice ?? null;
     this.grid = buildGrid({ lower: this.config.lower, upper: this.config.upper, gridCount: this.config.gridCount });
     this._recomputeRisk();
+    this._pushGridLevelsToAdapter();
 
     // Rebuild our active map AND the adapter's order tracking so fills on these
     // pre-existing orders are detected.
@@ -289,6 +301,7 @@ export class GridBot {
       this.grid.levels = this.grid.levels.map((lv) => Number((Math.round(lv / tick) * tick).toFixed(dp)));
     }
     this._recomputeRisk();
+    this._pushGridLevelsToAdapter();
     this._refillPausedUntil = 0; this._cancelTimes = []; // fresh start clears any back-off
     this._retryQueue = []; this._noPosStreak = 0;
     this._reseedCount = 0; this._lastReseedAt = 0; this._vanishStreak = 0;
@@ -460,12 +473,18 @@ export class GridBot {
       throw new Error(`保证金不足以支持新区间：约需 ${round2(requiredMargin)} USDC，当前可用 ${round2(available)} USDC。请缩小区间/减少格数后再试。`);
     }
 
+    // Round 275v：先推新 grid 价格集到 adapter，然后 cancelAll 只撤新 grid 里的。
+    // 严格顺序：老 grid → cancelAll 老单 → 推新 grid → seed 新单。这里 recenter
+    // 场景老 grid 已被替换风险，改用「新 grid 推入前先撤老 grid 单」：
+    // 由于 recenter 里旧 grid 还未 clear（this.grid 仍是老的），先直接 cancelAll，
+    // 然后再赋值 newGrid + push（保证下次 cancelAll 用新 grid 价格集）。
     await this.ex.cancelAll(this.config.marketId).catch(() => {});
     this.active.clear();
     this._refillPausedUntil = 0; this._cancelTimes = []; // user re-set the range: clear back-off
     this.config = { ...this.config, lower: lo, upper: hi };
     this.grid = newGrid;
     this._recomputeRisk();
+    this._pushGridLevelsToAdapter();
     this.outOfRange = Number.isFinite(price) ? (price < lo || price > hi) : false;
     if (!this.outOfRange && Number.isFinite(price) && price > 0) {
       const seeds = seedOrders({ levels: newGrid.levels, price, mode: this.config.mode, spacing: newGrid.spacing });
