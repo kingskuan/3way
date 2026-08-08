@@ -456,6 +456,22 @@ class Autopilot {
     // 起单但 chain 老残留一直不清。改：只要 Phoenix chain 有任何 position/order
     // 而 bot 又不是在跑那些的，autopilot 静默 skip，等用户手动去 phoenix.trade
     // 撤干净或平仓再接管。
+    // Round 275x：Phoenix API IP 级 rate limit 导致 _refreshBalance 拉不到 trader
+    // state → positions Map 空 → Round 275v anyPos=0 放行起单 → start-failed 刷屏。
+    // 解决：ex.lastError 含 rate_limited 或 trader-state 拉取失败关键字 → skip 本轮。
+    // 拿不到 chain 真实位置就不敢盲开，等 5min 后 balance refresh 再试。
+    if (key === 'ph' && ex?.lastError) {
+      const errStr = String(ex.lastError);
+      if (/rate_limited|429|trader state|trader-state/i.test(errStr)) {
+        const lastLogAt = st._lastPhRateLimitLogAt || 0;
+        if (now - lastLogAt > 30 * 60_000) {
+          st._lastPhRateLimitLogAt = now;
+          this._log(key, 'skip', `Phoenix trader-state 拉不到（rate limited / IP 挂），拿不到链上位置状态，autopilot 暂不接管 · ${errStr.slice(0, 100)}`);
+        }
+        return;
+      }
+    }
+
     if (key === 'ph' && ex && typeof ex.positions?.forEach === 'function') {
       // Round 275v：Phoenix 检测到 ANY 位置（不管什么 marketId、不管是谁开的）→ skip。
       // 用户明确表达："Phoenix 检测到任何位置（不管什么 marketId）就 skip"。

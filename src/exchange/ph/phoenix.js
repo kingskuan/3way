@@ -921,13 +921,18 @@ export class PhoenixExchange extends EventEmitter {
       try {
         await this._pollPrices();
         this.lastOkAt = Date.now();
-        // 每 3 次 poll 刷 balance/positions（省 auth 调用），每 9 次 poll 拉 fills（90s）
+        // 每 30 次 poll (300s = 5min) 刷 balance/positions，每 9 次 poll 拉 fills（90s）
         if (!this._pollCount) this._pollCount = 0;
         this._pollCount++;
         // Round 275s: 撤除 && this._authToken 门禁 —— Round 269 后 _refreshBalance
         // 优先走 no-Bearer 路径（/v1/trader/state 端点 unauth 就通），不需要 token。
         // 老门禁让 auth backoff 中 balance/positions 永远不刷 → 用户手动开仓 QnV 看不到。
-        if (this._pollCount % 3 === 0) {
+        //
+        // Round 275x: 30s→300s (5min)。Round 275s 撤门禁后 30s 一次 no-Bearer
+        // 拉 /v1/trader/state 打 IP 级 rate limit 429，positions Map 永远拉不
+        // 到 → autopilot 275v 看不到位置 → 起单刷屏。5min 一次给 rate window 恢复时间。
+        // trade off：手动开仓/平仓后 QnV 位置卡最多滞后 5min 才更新，可接受。
+        if (this._pollCount % 30 === 0) {
           await this._refreshBalance();
         }
         // Round 233: fills poll 30s → 90s 缓解 Phoenix API rate_limited 429
