@@ -454,6 +454,63 @@ export class PhoenixExchange extends EventEmitter {
     return true;
   }
 
+  /**
+   * Round 275y：Phoenix lifetime volume 从 trades-history endpoint 分页汇总。
+   *
+   * QC 场景：用户 phoenix.trade Portfolio "Total Traded $106.23K"，QnV 只显示 $3.7K。
+   * 原因 _pollFills fill event 走 Bearer + auth 挂 → 采样极稀 → stats.volume 严重低估。
+   *
+   * 修法：bot._syncExchangeStats 每 60s 调 getStats() 拉真实累计。这里分页遍历
+   * trades-history (每页 200，最多 20 页 = 4000 fills)，dedup fillId，
+   * sum |virtualQuoteLotsDelta| / 1e6 = USDC 名义值。
+   *
+   * 5min 缓存防 IP rate limit：page walk 每 5min 最多跑一次。缓存有效期间返老值。
+   * bot._syncExchangeStats 里 Math.max 保护本地 fill event 累计，防漂移。
+   */
+  async getStats() {
+    if (!this._authorityPubkey) return null;
+    const now = Date.now();
+    const cached = this._lifetimeVolCache;
+    if (cached && (now - cached.at) < 5 * 60_000) {
+      return { volume: cached.volume };
+    }
+    try {
+      const seen = new Set();
+      let vol = 0;
+      let cursor = null;
+      const MAX_PAGES = 20; // 4000 fills 顶
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const params = new URLSearchParams({ limit: '200' });
+        if (cursor) params.set('cursor', cursor);
+        let resp;
+        try {
+          resp = await this._req('GET', `/v1/trader/${this._authorityPubkey}/trades-history?${params}`, null, false);
+        } catch (e) {
+          if (!/401|403|unauthorized/i.test(e.message)) throw e;
+          resp = await this._req('GET', `/v1/trader/${this._authorityPubkey}/trades-history?${params}`, null, true);
+        }
+        const arr = resp?.data;
+        if (!Array.isArray(arr) || arr.length === 0) break;
+        for (const f of arr) {
+          const fid = String(f.fillId || `${f.slot}:${f.slotIndex}:${f.eventIndex}`);
+          if (seen.has(fid)) continue;
+          seen.add(fid);
+          const q = Number(f.virtualQuoteLotsDelta);
+          // Phoenix quote lots for USDC 是 6 位小数（micro USDC）→ /1e6 得 $
+          if (Number.isFinite(q)) vol += Math.abs(q) / 1e6;
+        }
+        if (!resp?.hasMore || !resp?.nextCursor) break;
+        cursor = resp.nextCursor;
+      }
+      this._lifetimeVolCache = { volume: vol, at: now };
+      return { volume: vol };
+    } catch (e) {
+      this.lastError = `getStats: ${e.message}`;
+      // 缓存有 → 返老值；否则 null 让上游保持本地累计
+      return cached ? { volume: cached.volume } : null;
+    }
+  }
+
   async placeLimitOrder(o) {
     const marketId = Number(o.marketId);
     const m = this.markets.get(marketId);
@@ -868,12 +925,28 @@ export class PhoenixExchange extends EventEmitter {
     if (!this._authorityPubkey) return;
     let resp;
     try {
-      resp = await this._req(
-        'GET',
-        `/v1/trader/${this._authorityPubkey}/trades-history?limit=50`,
-        null,
-        true,
-      );
+      // Round 275y: 从 Bearer 改成 no-Bearer 优先。QC 场景实证：Phoenix 官网
+      // Lifetime Traded $106K，QnV 只累计 $3.7K = 3.5%。原因 _pollFills 走 Bearer
+      // 但 auth API 大多时候 IP 级 429 rate_limited → fills 采样极稀。Round 262
+      // diagnostic 已证 no-Bearer /v1/trader/{wallet}/trades-history 返 200，跟
+      // trader/state (Round 269) 同 pattern。limit 50→200 尽量多回填。
+      // 401/403 fallback Bearer 保留兼容。
+      try {
+        resp = await this._req(
+          'GET',
+          `/v1/trader/${this._authorityPubkey}/trades-history?limit=200`,
+          null,
+          false,
+        );
+      } catch (e) {
+        if (!/401|403|unauthorized/i.test(e.message)) throw e;
+        resp = await this._req(
+          'GET',
+          `/v1/trader/${this._authorityPubkey}/trades-history?limit=200`,
+          null,
+          true,
+        );
+      }
     } catch (e) { this.lastError = `pollFills: ${e.message}`; return; }
     const arr = Array.isArray(resp) ? resp : (Array.isArray(resp?.data) ? resp.data : null);
     if (!arr) return;
