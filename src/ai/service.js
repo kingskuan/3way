@@ -219,7 +219,15 @@ class AiService {
             const msg = String(a.message || '');
             if (ex?.dataSource === 'real-readonly'
                 && /补单|补挂|挂单漂移|订单缺失|连续.*失败/.test(msg)) return false;
-            if (key === 'pl' && /sr=14/.test(msg)) {
+            // Round 275o/q: pl bot healthy 时过滤各种偶发拒单/补挂失败 alerts。
+            // 覆盖：
+            //   sr=14 (position size/leverage limit) — Round 275o
+            //   sr=1 (reduce-only violation) — Round 275q，网格边缘 reduce-only
+            //     单在仓位已平后再挂→变 open→拒。bot 内部有重试机制，无需哨兵刷屏。
+            //   补挂开仓单连续失败 — Round 275q，同上，bot 有 3 次重试
+            // 触发条件：pl running + openOrders >= 50% × gridCount（bot 基本健康）
+            if (key === 'pl'
+                && (/sr=(1|14)\b/.test(msg) || /补挂.*连续.*失败|补挂开仓单.*失败/.test(msg))) {
               const gc = Number(s?.config?.gridCount) || 0;
               const oo = Number(s?.openOrders) || 0;
               if (gc > 0 && oo >= gc * 0.5) return false;
