@@ -518,12 +518,30 @@ export class PhoenixExchange extends EventEmitter {
       cursor = resp.nextCursor;
     }
     if (anyPageOk) {
-      // 至少 page 1 拿到数据 → 用累计值更新 cache（跟 max 老 cache 防走低）
       const oldVol = cached?.volume || 0;
-      const finalVol = Math.max(vol, oldVol);
-      this._lifetimeVolCache = { volume: finalVol, at: now };
-      if (lastErr) this.lastError = `getStats partial: ${lastErr.message}`;
-      return { volume: finalVol };
+      // Round 275ab：partial walk (中途 fail 只跑到 page 1-2) 只会返几十条 recent
+      // fills，vol 远小于 lifetime → 触发 bot._syncExchangeStats Round 136 pollution
+      // 检测（before > s.volume × 100）把老 $4542 覆盖成 $0.07 → 用户看到 volume 归零。
+      // 保护规则：
+      //   1. 完整 walk 无 lastErr → 更新 cache + 返 vol
+      //   2. partial + 无老 cache → 返 null 让 bot._syncExchangeStats skip 更新
+      //   3. partial + vol < oldCache → 返老 cache，adapter 内部不动
+      //   4. partial + vol >= oldCache → 用大值更新
+      if (!lastErr) {
+        this._lifetimeVolCache = { volume: vol, at: now };
+        return { volume: vol };
+      }
+      if (oldVol === 0) {
+        this.lastError = `getStats partial + 无 cache 参考，不覆盖 bot.stats: ${lastErr.message}`;
+        return null;
+      }
+      if (vol < oldVol) {
+        this.lastError = `getStats partial(${vol.toFixed(2)}<${oldVol.toFixed(2)})，用老 cache: ${lastErr.message}`;
+        return { volume: oldVol };
+      }
+      this._lifetimeVolCache = { volume: vol, at: now };
+      this.lastError = `getStats partial 成功: ${lastErr.message}`;
+      return { volume: vol };
     }
     if (lastErr) this.lastError = `getStats: ${lastErr.message}`;
     return cached ? { volume: cached.volume } : null;
