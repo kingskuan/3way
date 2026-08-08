@@ -11,6 +11,7 @@
 import { EventEmitter } from 'events';
 import { Connection, Keypair, Transaction, TransactionInstruction, PublicKey, ComputeBudgetProgram } from '@solana/web3.js';
 import bs58 from 'bs58';
+import { RateLimitBackoff } from '../rateLimitBackoff.js';
 
 const BASE_URL = 'https://perp-api.phoenix.trade';
 
@@ -42,6 +43,8 @@ export class PhoenixExchange extends EventEmitter {
     this._botGridLevels = new Map();
     this._authToken = null;
     this._authTokenExpiresAt = 0;
+    // Round 276: 退避状态迁移到通用 RateLimitBackoff 模块（原 _authBackoffMs/_authBackoffUntil 字段）
+    this._authBackoff = new RateLimitBackoff({ baseMs: 60_000, capMs: 1_800_000, label: 'Phoenix auth' });
     this._pollTimer = null;
 
     // Solana 钱包解码
@@ -97,8 +100,8 @@ export class PhoenixExchange extends EventEmitter {
     // backoff 内不重试 nonce，避免 self-inflict rate limit。
     // Round 241: 固定 60s 挡不住持续 IP rate limit（QC 部署 20+ min 每 60-90s 就再 429，
     // 26 条噪音）。改成指数退避：60→120→240→480→960→1800s（cap 30min），成功后 reset。
-    if (this._authBackoffUntil && Date.now() < this._authBackoffUntil) {
-      throw new Error(`Phoenix auth backoff 中（还有 ${Math.round((this._authBackoffUntil - Date.now())/1000)}s）`);
+    if (this._authBackoff.isActive()) {
+            throw new Error(this._authBackoff.describe());
     }
     // Round 241: mutex 防并发 —— _pollFills / fetchOpenOrders / _refreshBalance 同时
     // 到期时会 race 打双份 auth 请求，log 里同秒 duplicate 429 就是这个。用 Promise
@@ -112,10 +115,8 @@ export class PhoenixExchange extends EventEmitter {
 
   _bumpAuthBackoff(kind) {
     // Round 241: 指数退避。首次 60s，成功一次前每次翻倍到 cap 30min。
-    const cur = this._authBackoffMs || 0;
-    const next = cur > 0 ? Math.min(cur * 2, 1800_000) : 60_000;
-    this._authBackoffMs = next;
-    this._authBackoffUntil = Date.now() + next;
+    // Round 276: 退避计数迁移到通用 RateLimitBackoff 模块
+        const next = this._authBackoff.bump();
     // Round 242: auth 挂了 → 降级 real-readonly，让 autopilot skip 起单，
     // 避免 80 次 place-order 全被 backoff 拒 → 挂上 0/80 → 熔断循环。
     this.dataSource = 'real-readonly';
@@ -181,8 +182,7 @@ export class PhoenixExchange extends EventEmitter {
     this._authTokenExpiresAt = Date.now() + expiresInSec * 1000;
     if (!this._authToken) throw new Error(`Phoenix login 响应无 access_token：${JSON.stringify(loginData).slice(0, 200)}`);
     // Round 241: 成功一次 → reset 指数退避计数
-    this._authBackoffMs = 0;
-    this._authBackoffUntil = 0;
+    this._authBackoff.reset();
     // Round 242: auth 恢复 → dataSource 从 real-readonly 升回 real，autopilot 恢复起单
     if (this.dataSource === 'real-readonly') {
       this.dataSource = 'real';
@@ -796,9 +796,7 @@ export class PhoenixExchange extends EventEmitter {
         hasToken: !!this._authToken,
         tokenExpiresInSec: this._authTokenExpiresAt
           ? Math.round((this._authTokenExpiresAt - now) / 1000) : null,
-        backoffMs: this._authBackoffMs || 0,
-        backoffRemainingSec: this._authBackoffUntil
-          ? Math.max(0, Math.round((this._authBackoffUntil - now) / 1000)) : 0,
+        ...this._authBackoff.status(), // Round 276: 来自通用 RateLimitBackoff 模块
         inflight: !!this._authInflight,
         wallet: this._authorityPubkey
           ? this._authorityPubkey.slice(0, 8) + '...' + this._authorityPubkey.slice(-6) : null,
