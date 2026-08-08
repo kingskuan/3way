@@ -395,12 +395,20 @@ class Autopilot {
     // 之类的 early return 挡住 → tick 计数从来不动 → auto-disable 永远不触发。
     // QC 实证：Nado 已 3+ tick 余额=0 但 _lowBalTickCount=null。
     // 提到函数开头，任何 tick 都能累计；tick 满且 enabled → 直接 disable + return。
+    //
+    // Round 275aa：adapter API 挂了（rate_limited/429/timeout/backoff）时 balance
+    // 拉不到会显示 0，但账户实际有钱。不能 count 这种 tick 计数否则误关有钱账户
+    // （QC 实证：Phoenix rate_limited 20 min，balance $336→$0，_lowBalTickCount 已 1，
+    // 再 2 tick 就会被误 auto-disable）。区分「确认 $0」vs「拉不到」：
+    // ex.lastError 含 transient 关键字 → 跳过本 tick 的 low-bal 计数（不 count 不 clear）。
     {
       const curForBal = bot.getState();
+      const errStr = ex?.lastError ? String(ex.lastError) : '';
+      const transientErr = /rate_limited|429|timeout|backoff|ETIMEDOUT|ECONNRESET/i.test(errStr);
       const lowBal = !curForBal.running
         && Number(curForBal.balance || 0) < 5
         && Number(curForBal.equity || 0) < 5;
-      if (lowBal) {
+      if (lowBal && !transientErr) {
         st._lowBalTickCount = (st._lowBalTickCount || 0) + 1;
         if (st._lowBalTickCount >= 3 && this.cfg.perExchange[key]?.enabled) {
           this.cfg.perExchange[key].enabled = false;
@@ -408,7 +416,8 @@ class Autopilot {
           try { this._notify?.(`⚠️ ${key.toUpperCase()} 余额=$${(curForBal.balance || 0).toFixed(2)}，autopilot 已自动取消托管`); } catch {}
           return;
         }
-      } else if (st._lowBalTickCount) {
+      } else if (!lowBal && st._lowBalTickCount) {
+        // 余额恢复 → 清计数（transient 时保持现有计数不动）
         st._lowBalTickCount = 0;
       }
     }

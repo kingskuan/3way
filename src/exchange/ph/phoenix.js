@@ -482,43 +482,51 @@ export class PhoenixExchange extends EventEmitter {
       return cached ? { volume: cached.volume } : null;
     }
     this._lastGetStatsAttemptAt = now;
-    try {
-      const seen = new Set();
-      let vol = 0;
-      let cursor = null;
-      // Round 275z：MAX_PAGES 20→5（=1000 fills 已够）+ 页间 300ms 延迟避 burst
-      const MAX_PAGES = 5;
-      for (let page = 0; page < MAX_PAGES; page++) {
-        if (page > 0) await new Promise((r) => setTimeout(r, 300));
-        const params = new URLSearchParams({ limit: '200' });
-        if (cursor) params.set('cursor', cursor);
-        let resp;
+    const seen = new Set();
+    let vol = 0;
+    let cursor = null;
+    let anyPageOk = false;
+    // Round 275z：MAX_PAGES 20→5（=1000 fills 已够）+ 页间 300ms 延迟避 burst
+    // Round 275aa：分页遍历改成 per-page try/catch，page N 失败不丢 pages 0..N-1 数据
+    const MAX_PAGES = 5;
+    let lastErr = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      if (page > 0) await new Promise((r) => setTimeout(r, 300));
+      const params = new URLSearchParams({ limit: '200' });
+      if (cursor) params.set('cursor', cursor);
+      let resp;
+      try {
         try {
           resp = await this._req('GET', `/v1/trader/${this._authorityPubkey}/trades-history?${params}`, null, false);
         } catch (e) {
           if (!/401|403|unauthorized/i.test(e.message)) throw e;
           resp = await this._req('GET', `/v1/trader/${this._authorityPubkey}/trades-history?${params}`, null, true);
         }
-        const arr = resp?.data;
-        if (!Array.isArray(arr) || arr.length === 0) break;
-        for (const f of arr) {
-          const fid = String(f.fillId || `${f.slot}:${f.slotIndex}:${f.eventIndex}`);
-          if (seen.has(fid)) continue;
-          seen.add(fid);
-          const q = Number(f.virtualQuoteLotsDelta);
-          // Phoenix quote lots for USDC 是 6 位小数（micro USDC）→ /1e6 得 $
-          if (Number.isFinite(q)) vol += Math.abs(q) / 1e6;
-        }
-        if (!resp?.hasMore || !resp?.nextCursor) break;
-        cursor = resp.nextCursor;
+      } catch (e) { lastErr = e; break; }   // 保留已累计的 vol，不 throw
+      const arr = resp?.data;
+      if (!Array.isArray(arr) || arr.length === 0) break;
+      anyPageOk = true;
+      for (const f of arr) {
+        const fid = String(f.fillId || `${f.slot}:${f.slotIndex}:${f.eventIndex}`);
+        if (seen.has(fid)) continue;
+        seen.add(fid);
+        const q = Number(f.virtualQuoteLotsDelta);
+        // Phoenix quote lots for USDC 是 6 位小数（micro USDC）→ /1e6 得 $
+        if (Number.isFinite(q)) vol += Math.abs(q) / 1e6;
       }
-      this._lifetimeVolCache = { volume: vol, at: now };
-      return { volume: vol };
-    } catch (e) {
-      this.lastError = `getStats: ${e.message}`;
-      // 缓存有 → 返老值；否则 null 让上游保持本地累计
-      return cached ? { volume: cached.volume } : null;
+      if (!resp?.hasMore || !resp?.nextCursor) break;
+      cursor = resp.nextCursor;
     }
+    if (anyPageOk) {
+      // 至少 page 1 拿到数据 → 用累计值更新 cache（跟 max 老 cache 防走低）
+      const oldVol = cached?.volume || 0;
+      const finalVol = Math.max(vol, oldVol);
+      this._lifetimeVolCache = { volume: finalVol, at: now };
+      if (lastErr) this.lastError = `getStats partial: ${lastErr.message}`;
+      return { volume: finalVol };
+    }
+    if (lastErr) this.lastError = `getStats: ${lastErr.message}`;
+    return cached ? { volume: cached.volume } : null;
   }
 
   async placeLimitOrder(o) {
