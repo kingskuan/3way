@@ -390,6 +390,29 @@ class Autopilot {
       this._log(key, 'reset', `bot 实际停了但 startedByAutopilot 卡 true，重置 flag 让本 tick 重新评估起单`);
     }
 
+    // Round 275w：低余额 auto-disable 优先判定（提前到所有 skip 分支之前）。
+    // Round 275u 原本放在 Round 248 后面，但被 Round 275o (Nado 30min cooldown)
+    // 之类的 early return 挡住 → tick 计数从来不动 → auto-disable 永远不触发。
+    // QC 实证：Nado 已 3+ tick 余额=0 但 _lowBalTickCount=null。
+    // 提到函数开头，任何 tick 都能累计；tick 满且 enabled → 直接 disable + return。
+    {
+      const curForBal = bot.getState();
+      const lowBal = !curForBal.running
+        && Number(curForBal.balance || 0) < 5
+        && Number(curForBal.equity || 0) < 5;
+      if (lowBal) {
+        st._lowBalTickCount = (st._lowBalTickCount || 0) + 1;
+        if (st._lowBalTickCount >= 3 && this.cfg.perExchange[key]?.enabled) {
+          this.cfg.perExchange[key].enabled = false;
+          this._log(key, 'auto-disable', `连续 ${st._lowBalTickCount} tick 余额≈0，自动取消托管（跟 BG/BU/SX 手动 disable 一致策略）。充值后回 Autopilot 页勾选恢复。`);
+          try { this._notify?.(`⚠️ ${key.toUpperCase()} 余额=$${(curForBal.balance || 0).toFixed(2)}，autopilot 已自动取消托管`); } catch {}
+          return;
+        }
+      } else if (st._lowBalTickCount) {
+        st._lowBalTickCount = 0;
+      }
+    }
+
     // 1. 熔断中？
     if (st.pausedUntil && now < st.pausedUntil) {
       this._log(key, 'skip', `熔断中（${st.pausedReason}），剩 ${Math.round((st.pausedUntil - now) / 60_000)} 分钟`);
@@ -434,33 +457,28 @@ class Autopilot {
     // 而 bot 又不是在跑那些的，autopilot 静默 skip，等用户手动去 phoenix.trade
     // 撤干净或平仓再接管。
     if (key === 'ph' && ex && typeof ex.positions?.forEach === 'function') {
-      const curCfg = bot.getState()?.config;
-      const curMktId = curCfg ? Number(curCfg.marketId) : null;
-      // Round 275s: 用 symbol 匹配当前 bot 市场，避免 marketId 漂移把 bot 自己的仓位算成 stray。
-      // 场景：Phoenix 重启后 BTC idx 从 21→8，config.marketId 仍是 21，bot 位置存
-      // 在 mid=8 → 老 == 比对 Number(8)===21 false → 全 skip autopilot 死循环。
-      const curSym = curCfg?.displayName || null;
-      let stray = 0;
-      let strayMarkets = [];
+      // Round 275v：Phoenix 检测到 ANY 位置（不管什么 marketId、不管是谁开的）→ skip。
+      // 用户明确表达："Phoenix 检测到任何位置（不管什么 marketId）就 skip"。
+      // 理由：
+      //   1. cross-margin 池 → autopilot 新 grid 分保证金跟用户手动仓争 → 一方吃紧另
+      //      一方要爆
+      //   2. QC 场景实证：用户 short BTC + 挂 9 保护单，Round 254 的 curMktId==mid 兜底
+      //      + Round 275s symbol 兜底 都放行 → autopilot 起了 grid → cancelAll blanket
+      //      清了 9 保护单 → 单裸持。彻底切断这条路。
+      //   3. 平仓后 positions Map 空 → 自动恢复决策。
+      let anyPos = 0;
+      const posMarkets = [];
       ex.positions.forEach((p, mid) => {
         if (!p || !Number.isFinite(p.sizeBase) || p.sizeBase === 0) return;
-        // Round 254: 只算跟当前 bot config marketId 不一样的仓位
-        if (curMktId != null && Number(mid) === curMktId) return;
-        // Round 275s: symbol 兜底 —— 位置的市场跟 bot config displayName 同 symbol
-        // = bot 自己的仓，不算 stray（哪怕 mid 漂移了）。
-        if (curSym) {
-          const m2 = ex.markets?.get?.(Number(mid));
-          if (m2 && (m2.symbol === curSym || m2.displayName === curSym)) return;
-        }
-        stray++;
+        anyPos++;
         const m = ex.markets?.get?.(Number(mid));
-        strayMarkets.push(m?.displayName || `mid=${mid}`);
+        posMarkets.push(`${m?.displayName || `mid=${mid}`}:${p.sizeBase.toFixed(3)}`);
       });
-      if (stray > 0) {
-        const lastLogAt = st._lastStrayLogAt || 0;
+      if (anyPos > 0) {
+        const lastLogAt = st._lastPhAnyPosLogAt || 0;
         if (now - lastLogAt > 30 * 60_000) {
-          st._lastStrayLogAt = now;
-          this._log(key, 'skip', `Phoenix chain 有 ${stray} 个非当前 market 的仓位残留 (${strayMarkets.slice(0, 3).join(',')})，等用户手动 phoenix.trade 清理，autopilot 暂不接管`);
+          st._lastPhAnyPosLogAt = now;
+          this._log(key, 'skip', `Phoenix 链上有 ${anyPos} 个仓位 (${posMarkets.slice(0, 3).join(', ')})，autopilot 暂不接管（Round 275v：链上任何仓 → skip，防跟用户手动仓争 cross-margin + 防 cancelAll 误撤）—— 平仓后自动恢复`);
         }
         return;
       }
@@ -498,32 +516,17 @@ class Autopilot {
         return;
       }
     }
-    // Round 248: 零余额 skip —— Bitget/Bitunix 被 user offboarded 后 balance≈0
-    // equity≈0，autopilot 拿 fallback $1000 试起 80 单结果全部 place-order 失败
-    // 触发熔断。若 bot 未 running 且 balance<$5 && equity<$5，视为 offboarded，
-    // 每 30 min 只 log 一次静默 skip（不刷屏）。用户重新充值后自动恢复决策。
+    // Round 248: 零余额 skip —— Round 275w 已把 auto-disable 提前到函数开头，
+    // 走到这里说明 balance<$5 但 enabled=false（已被 275w 或用户 disable）。
+    // 保留 skip log 兜底，每 30min 一次不刷屏。
     const curForBal = bot.getState();
     if (!curForBal.running && Number(curForBal.balance || 0) < 5 && Number(curForBal.equity || 0) < 5) {
-      // Round 275u: 连续 3 tick balance<$10 → 自动 disable 托管（跟用户手动关 BG/BU/SX 一致）。
-      // 之前只 log skip 每 30min 一次不够狠 —— Autopilot 一直"评估"该所占决策日志/AI 哨兵
-      // 上下文位。用户明确表达偏好："跟 BG/BU/SX 一致" = 直接关掉。3 tick 确认防转账瞬间
-      // 余额闪 0（充值/提现窗口）误关。
-      st._lowBalTickCount = (st._lowBalTickCount || 0) + 1;
-      if (st._lowBalTickCount >= 3 && this.cfg.perExchange[key]?.enabled) {
-        this.cfg.perExchange[key].enabled = false;
-        this._log(key, 'auto-disable', `连续 ${st._lowBalTickCount} tick 余额≈0，自动取消托管（跟 BG/BU/SX 手动 disable 一致策略）。充值后回 Autopilot 页勾选恢复。`);
-        try { this._notify?.(`⚠️ ${key.toUpperCase()} 余额=$${(curForBal.balance || 0).toFixed(2)}，autopilot 已自动取消托管`); } catch {}
-        return;
-      }
       const lastOffboardLog = st._lastOffboardLogAt || 0;
       if (now - lastOffboardLog > 30 * 60_000) {
         st._lastOffboardLogAt = now;
-        this._log(key, 'skip', `${key} 余额=$${(curForBal.balance || 0).toFixed(2)} equity=$${(curForBal.equity || 0).toFixed(2)}（已 offboarded 无资金），autopilot 不接管（${st._lowBalTickCount}/3 tick 后自动关闭托管）`);
+        this._log(key, 'skip', `${key} 余额=$${(curForBal.balance || 0).toFixed(2)} equity=$${(curForBal.equity || 0).toFixed(2)}（已 offboarded 无资金），autopilot 不接管`);
       }
       return;
-    } else if (st._lowBalTickCount) {
-      // 余额恢复 → 清计数
-      st._lowBalTickCount = 0;
     }
     // 3. 护栏：日亏损
     //    额外要求 cur.balance > 0：LIVE 适配器 init 窗口偶尔 balance=0，
