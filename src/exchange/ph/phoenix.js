@@ -471,15 +471,25 @@ export class PhoenixExchange extends EventEmitter {
     if (!this._authorityPubkey) return null;
     const now = Date.now();
     const cached = this._lifetimeVolCache;
+    // 成功缓存有效期 5min，直接返
     if (cached && (now - cached.at) < 5 * 60_000) {
       return { volume: cached.volume };
     }
+    // Round 275z：attempt 级 throttle —— bot._syncExchangeStats 每 60s 跑，若上次
+    // getStats 失败了，60s 内不能再跑 20 页 pagination（20 请求 burst → Phoenix IP
+    // rate limit 永远续命，无论成功失败）。lastAttemptAt 5min throttle 无论结果。
+    if (this._lastGetStatsAttemptAt && (now - this._lastGetStatsAttemptAt) < 5 * 60_000) {
+      return cached ? { volume: cached.volume } : null;
+    }
+    this._lastGetStatsAttemptAt = now;
     try {
       const seen = new Set();
       let vol = 0;
       let cursor = null;
-      const MAX_PAGES = 20; // 4000 fills 顶
+      // Round 275z：MAX_PAGES 20→5（=1000 fills 已够）+ 页间 300ms 延迟避 burst
+      const MAX_PAGES = 5;
       for (let page = 0; page < MAX_PAGES; page++) {
+        if (page > 0) await new Promise((r) => setTimeout(r, 300));
         const params = new URLSearchParams({ limit: '200' });
         if (cursor) params.set('cursor', cursor);
         let resp;
