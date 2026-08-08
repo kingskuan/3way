@@ -1085,8 +1085,18 @@ class Autopilot {
       // rebaselinePnl 只清 gridProfit + startBalance + _pnlBase，保留 volume/
       // buys/sells/completedRungs/volumeBaseline —— Round 159 用的 resetStats
       // 把用户攒的 SX 15 万交易量 + BU volumeBaseline 一起清了，副作用太大。
-      try { bot.rebaselinePnl(); }
-      catch (e) { this._log(key, 'reset-warn', `rebaselinePnl 失败：${e?.message || e}（继续起单）`); }
+      //
+      // Round 275r：**只在真正切市场时 rebaseline**。之前每次 Autopilot start 都清
+      // 一次，导致 6 次 Railway 部署重启 = pl 累积 905 rungs × $0.156 = $141 gridProfit
+      // 被清 0，用户对比别人网格显示大量 realizedPnl，自己 $0，误以为策略不赚。
+      // 判据：新市场 pick.marketId 跟 bot 当前 config.marketId 一致 → 同市场
+      // 重启（如 recovery / restart 同市场）→ 不 rebaseline，保留累积 gridProfit。
+      const curMarketId = bot.config?.marketId;
+      const isNewMarket = curMarketId == null || Number(curMarketId) !== Number(pick.marketId);
+      if (isNewMarket) {
+        try { bot.rebaselinePnl(); }
+        catch (e) { this._log(key, 'reset-warn', `rebaselinePnl 失败：${e?.message || e}（继续起单）`); }
+      }
       const res = await bot.start(params);
       // 起单后 3s 让适配器同步 place 结果，再读实际挂上多少
       await new Promise((r) => setTimeout(r, 3000));
