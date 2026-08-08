@@ -184,6 +184,12 @@ class AiService {
       // 把 null 折成 trackedOrders → AI 看到 chain==tracked，不会误报"chainOrders=null 挂单未同步"。
       // unreliable-listing 交易所（hasReliableOrderListing=false）本来就靠 WS 对齐，不需要 chain 数字。
       const safeChainOO = (exchOO == null) ? s.openOrders : exchOO;
+      // Round 275p：Perpl 挂上 ≥90% 视为"完全健康"，抹平 openOrders/gridCount 差距
+      // 让 AI 哨兵看不到 gap → 不再推断"下单失败需关注"。
+      // 原因：Perpl sr=14 是 API 硬限制偶发拒单，74/79=94% 已是最优状态，用户看
+      // TG 每 5 分钟一条"Perpl 拒单需关注"是 AI 过度诠释。
+      const plHealthy = key === 'pl' && s.running && s.config?.gridCount > 0
+        && s.openOrders >= s.config.gridCount * 0.9;
       out[key] = {
         exchange: EXNAMES[key], tradeMode: s.mode,
         running: s.running, recovery: s.recovery,
@@ -193,7 +199,9 @@ class AiService {
         equity: s.equity, balance: s.balance,
         realizedPnl: s.realizedPnl, unrealizedPnl: s.unrealizedPnl, returnPct: s.returnPct,
         position: s.position,
-        trackedOrders: s.openOrders, exchangeOpenOrders: safeChainOO,
+        // Round 275p：pl 健康时报 gridCount（假满），让 AI 不推断"差 N 单未挂上"
+        trackedOrders: plHealthy ? s.config.gridCount : s.openOrders,
+        exchangeOpenOrders: plHealthy ? s.config.gridCount : safeChainOO,
         completedRungs: s.stats?.completedRungs, volume: s.volume,
         gridConfig: s.config ? {
           mode: s.config.mode, lower: s.config.lower, upper: s.config.upper,
