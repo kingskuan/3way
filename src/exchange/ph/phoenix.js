@@ -199,9 +199,16 @@ export class PhoenixExchange extends EventEmitter {
       // 网格铺出去 tick 对不上全被拒。彻底不注册 = 任何路径都选不到。
       const PH_STOCK_SYMBOLS = /^(NVDA|MU|TSM|AMZN|AAPL|GOOGL|META|CRCL|COIN|ASML|CRWV|MSTR|GOLD|WTIOIL|COST|BABA|WMT|LLY|HOOD|NFLX|UBER|MELI|PLTR|IBIT|SPX|SPY|QQQ)$/i;
       if (Array.isArray(markets)) {
+        // Round 275s: 按 symbol 字母序排序再分配 idx，让 marketId 跨 restart 稳定。
+        // 之前按 API 返回顺序分配 → API 顺序变（新加/删除市场）→ 同一 symbol 的 idx 变
+        // → bot.config.marketId 存的老 idx 找不到位置 → getPosition 返 null → UI 空仓（QC 场景：
+        // 用户在 phoenix.trade 手动开 BTC short，QnV 位置卡永远 None 就是这个 root cause）。
+        // 排序后 BTC 永远在同一位置（相对 crypto 集合），加/删只影响后来者，减少 marketId 漂移。
+        const sortedMkts = [...markets].sort((a, b) =>
+          String(a.symbol || '').localeCompare(String(b.symbol || '')));
         let idx = 1;
         let stockFiltered = 0;
-        for (const m of markets) {
+        for (const m of sortedMkts) {
           if (!m.symbol) continue;
           if (m.marketStatus !== 'active') continue;
           if (PH_STOCK_SYMBOLS.test(String(m.symbol))) { stockFiltered++; continue; }
@@ -693,11 +700,38 @@ export class PhoenixExchange extends EventEmitter {
 
   getOpenOrders(marketId) {
     const marketIdN = Number(marketId);
-    return [...this.orders.values()].filter((o) => o.marketId === marketIdN);
+    const direct = [...this.orders.values()].filter((o) => o.marketId === marketIdN);
+    if (direct.length > 0) return direct;
+    // Round 275s: bot.config.marketId 可能是老 idx（Phoenix 重启后 idx 漂移）→ 直接
+    // 匹配返 0 单。若请求的 mid 在当前 markets 里不存在 (=stale id)，把所有 orders 都
+    // 视作是 bot 挂的（Phoenix grid 只跑单市场）。让 emergency-cleanup / UI 挂单数正确。
+    if (!this.markets.has(marketIdN)) {
+      return [...this.orders.values()];
+    }
+    return [];
   }
 
   getPosition(marketId) {
-    return this.positions.get(Number(marketId)) || null;
+    const mid = Number(marketId);
+    const direct = this.positions.get(mid);
+    if (direct) return direct;
+    // Round 275s: 老 config marketId 找不到 → 若 positions 只有 1 条且请求 mid 在
+    // 当前 markets 不存在 (=stale id 漂移)，就是它。Phoenix grid 单市场，1 条位置即 bot 的。
+    // 修 QC 场景：用户 phoenix.trade 开 BTC short，adapter 正确存 mid=8，
+    // 但 bot.config.marketId=21 (老 idx) → 直接 get(21) 返 null → UI 显示空仓，实际链上有。
+    if (this.positions.size === 1 && !this.markets.has(mid)) {
+      return [...this.positions.values()][0];
+    }
+    return null;
+  }
+
+  // Round 275s: symbol-first 查询接口，让 bot.getState()/autopilot stray-check 能绕开
+  // marketId 漂移问题。symbol 是全局稳定的（BTC 永远是 BTC）。
+  getPositionBySymbol(symbol) {
+    if (!symbol) return null;
+    const mid = this._marketSymbolToId.get(String(symbol));
+    if (mid != null) return this.positions.get(mid) || null;
+    return null;
   }
 
   async closePosition(marketId) {
@@ -865,7 +899,10 @@ export class PhoenixExchange extends EventEmitter {
         // 每 3 次 poll 刷 balance/positions（省 auth 调用），每 9 次 poll 拉 fills（90s）
         if (!this._pollCount) this._pollCount = 0;
         this._pollCount++;
-        if (this._pollCount % 3 === 0 && this._authToken) {
+        // Round 275s: 撤除 && this._authToken 门禁 —— Round 269 后 _refreshBalance
+        // 优先走 no-Bearer 路径（/v1/trader/state 端点 unauth 就通），不需要 token。
+        // 老门禁让 auth backoff 中 balance/positions 永远不刷 → 用户手动开仓 QnV 看不到。
+        if (this._pollCount % 3 === 0) {
           await this._refreshBalance();
         }
         // Round 233: fills poll 30s → 90s 缓解 Phoenix API rate_limited 429
