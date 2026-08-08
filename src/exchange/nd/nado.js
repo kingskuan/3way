@@ -77,10 +77,18 @@ export class NadoExchange extends EventEmitter {
                       if (pid != null) priceByProductId.set(Number(pid), toNum(m?.product?.oraclePrice));
             }
             let idx = 1;
+            // Round 275t：Nado 股票 / RWA 合成资产过滤（W*X wrap 后缀 + 具名 AI/大宗）。
+            // 美股 perp 在美股闭盘 20 小时（16:00 EST - 09:30 EST 次日 + 周末）几乎无深度，
+            // 网格铺下去 tick 对不上 + 挂单被强平 = 送死。Autopilot 排序不感知这些 =
+            // 常常 top1 pick 到 ZHIPU-PERP / WAMZNX → 2006 循环 (QC 场景：Nado balance=0
+            // 后 Autopilot 一直选 ZHIPU-PERP 起单失败刷屏)。同 Round 220 Phoenix stock filter。
+            const ND_STOCK_SYMBOL = /^(W[A-Z]{2,6}X|WTI-PERP|ZHIPU-PERP|SPX-PERP|SPY-PERP|QQQ-PERP|GOLD-PERP|OIL-PERP)$/i;
+            let stockFiltered = 0;
             const symbolEntries = symbolsResp?.symbols ? Object.values(symbolsResp.symbols) : [];
             for (const s of symbolEntries) {
               const symbol = String(s.symbol || '').toUpperCase();
               if (!symbol) continue;
+              if (ND_STOCK_SYMBOL.test(symbol)) { stockFiltered++; continue; }
               // Round 275i：某些 market（比如 USDJPY-PERP, stock perps）是 isolated-only
               // (isolated_only=true / camelCase isolatedOnly)。我们的 grid 走 cross-margin
               // （equity 背整个组合），所以 isolated-only 单会被引擎拒:
@@ -108,6 +116,9 @@ export class NadoExchange extends EventEmitter {
               });
               this._marketSymbolToId.set(symbol.replace(/-PERP$/, ''), idx);
               idx++;
+            }
+            if (stockFiltered > 0) {
+              try { console.log(`[Nado] init 过滤 ${stockFiltered} 个股票/RWA market（Round 275t：闭盘无深度，不注册防误选）`); } catch {}
             }
             if (this.markets.size === 0) {
                       // SDK 仍返空（比如 getSymbols 也失败）→ 填 fallback 让 UI 至少能看到 pair 名，

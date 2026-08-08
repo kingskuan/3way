@@ -1236,7 +1236,13 @@ export class GridBot {
   }
 
   getState() {
-    const pos = this.running || this.config ? this.ex.getPosition?.(this.config?.marketId) : null;
+    // Round 275s: bot.config.marketId 可能是老 idx（Phoenix 之类 adapter 重启后
+    // 按 API 顺序重分配 idx，config 存的老值找不到位置）→ 加 symbol fallback：
+    // 若 marketId 查询返 null 而 adapter 有 getPositionBySymbol，用 displayName 再查。
+    let pos = this.running || this.config ? this.ex.getPosition?.(this.config?.marketId) : null;
+    if (!pos && this.config?.displayName && typeof this.ex.getPositionBySymbol === 'function') {
+      pos = this.ex.getPositionBySymbol(this.config.displayName);
+    }
     const openByLevel = {};
     for (const o of this.active.values()) openByLevel[o.levelIndex] = o.side;
 
