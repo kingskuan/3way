@@ -471,14 +471,34 @@ class Autopilot {
     // 拿不到 chain 真实位置就不敢盲开，等 5min 后 balance refresh 再试。
     if (key === 'ph' && ex?.lastError) {
       const errStr = String(ex.lastError);
-      if (/rate_limited|429|trader state|trader-state/i.test(errStr)) {
+      const isRateLimit = /rate_limited|429|trader state|trader-state/i.test(errStr);
+      if (isRateLimit) {
+        // Round 275ad：追踪 rate-limit 首次出现时间；持续 > 1h 自动 disable Phoenix
+        // 防死循环（跟 275w 低余额 auto-disable 同思路，但用持续时长做判据）。
+        // QC 场景：Phoenix API IP 级 rate_limit 打了 12+h 不释放 → volume/position/
+        // running 全卡 → 用户体验极差。1h 后自动关掉让用户 aware 需重启 Railway 换 IP
+        // 或手动去 phoenix.trade 交易。
+        if (!st._phRateLimitStartedAt) st._phRateLimitStartedAt = now;
+        const stuckMs = now - st._phRateLimitStartedAt;
+        if (stuckMs >= 60 * 60_000 && this.cfg.perExchange[key]?.enabled) {
+          this.cfg.perExchange[key].enabled = false;
+          this._log(key, 'auto-disable', `Phoenix rate_limit 持续 ${Math.round(stuckMs/60_000)} 分钟未释放，自动取消托管（用户建议 Railway restart 换 IP 或手动交易，恢复正常后再勾选）。`);
+          try { this._notify?.(`⚠️ Phoenix API rate_limit 挂了 ${Math.round(stuckMs/60_000)} 分钟，autopilot 已自动取消托管`); } catch {}
+          st._phRateLimitStartedAt = 0;
+          return;
+        }
         const lastLogAt = st._lastPhRateLimitLogAt || 0;
         if (now - lastLogAt > 30 * 60_000) {
           st._lastPhRateLimitLogAt = now;
-          this._log(key, 'skip', `Phoenix trader-state 拉不到（rate limited / IP 挂），拿不到链上位置状态，autopilot 暂不接管 · ${errStr.slice(0, 100)}`);
+          this._log(key, 'skip', `Phoenix trader-state 拉不到（rate limited / IP 挂，已持续 ${Math.round(stuckMs/60_000)} 分钟，1h 后自动 disable），autopilot 暂不接管 · ${errStr.slice(0, 100)}`);
         }
         return;
       }
+      // 非 rate-limit 错误 → 清 rate-limit 计时器（Phoenix API 已恢复）
+      if (st._phRateLimitStartedAt) st._phRateLimitStartedAt = 0;
+    } else if (key === 'ph' && st._phRateLimitStartedAt) {
+      // ex 无 lastError → Phoenix 也恢复了 → 清计时器
+      st._phRateLimitStartedAt = 0;
     }
 
     if (key === 'ph' && ex && typeof ex.positions?.forEach === 'function') {
