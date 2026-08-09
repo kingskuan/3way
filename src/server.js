@@ -1083,6 +1083,26 @@ const server = http.createServer(async (request, res) => {
       return await buHandler(request, res, p.slice('/api/bu'.length), url);
     }
     if (p.startsWith('/api/ph/')) {
+      // Round 275ae：Phoenix 专属 quote-farm 端点（挂宽单撸 rewards）
+      if (p === '/api/ph/quote-farm/start' && request.method === 'POST') {
+        try {
+          const body = await readBody(request);
+          const r = await phExchange.placeQuoteFarm(body || {});
+          return send(res, 200, r);
+        } catch (e) { return send(res, 500, { error: e.message }); }
+      }
+      if (p === '/api/ph/quote-farm/stop' && request.method === 'POST') {
+        try { return send(res, 200, await phExchange.cancelQuoteFarm()); }
+        catch (e) { return send(res, 500, { error: e.message }); }
+      }
+      if (p === '/api/ph/quote-farm/status') {
+        return send(res, 200, {
+          farmMarketsCount: phExchange._farmMarkets?.size || 0,
+          farmSymbols: [...(phExchange._farmMarketSymbolToId?.keys() || [])],
+          farmOrderSigs: [...(phExchange._farmOrderSigs || [])].slice(0, 20),
+          trackedFarmOrders: (phExchange._farmOrderSigs?.size) || 0,
+        });
+      }
       return await phHandler(request, res, p.slice('/api/ph'.length), url);
     }
     if (p.startsWith('/api/nd/')) {
