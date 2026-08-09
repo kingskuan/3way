@@ -116,6 +116,7 @@
    DE_MODE=paper                # 先跑模拟，稳了再改 live
    EX_MODE=paper
    RS_MODE=paper
+       # 其余交易所（ON/PL/SX/BG/BU/PH/ND_MODE）不填默认也是 paper，同样先跑模拟
    ```
    实盘时把对应交易所的密钥填上（见第七节字段列表）。`PORT` / `HOST` / `STATE_DIR` **不要手填**，容器会自动处理。
 6. **触发部署**：点 **Deploy**，等构建完成（3–5 分钟）。
@@ -167,11 +168,11 @@
 
 ## 五、仪表盘使用教程
 
-启动后浏览器打开 `http://localhost:8080`，顶部有页签：**📊 总览**、五个交易所控制台、**🚀 Autopilot**、**⚙ IP配置**、**🤖 AI**。
+启动后浏览器打开 `http://localhost:8080`，顶部有页签：**📊 总览**、十个交易所控制台、**🚀 Autopilot**、**⚙ IP配置**、**🤖 AI**。
 
 ### 5.1 总览页
 
-三张卡片分别对应三个交易所，实时显示（每秒刷新）：
+每张卡片对应一家交易所，实时显示（每秒刷新）：
 
 - **运行状态**：是否在跑、paper/live 模式
 - **余额 / 权益**：账户余额和含未实现盈亏的总权益
@@ -182,7 +183,7 @@
 
 点"进入 XX 控制台 →"跳到对应交易所页面。
 
-### 5.2 交易所控制台（三个所界面相同）
+### 5.2 交易所控制台（各所界面基本相同）
 
 **第一步：选交易对**。下拉框列出该所全部可交易市场（如 BTC/USD、ETH/USD）。
 
@@ -217,9 +218,9 @@
 
 ### 5.3 ⚙ IP 配置页
 
-给三个交易所配置网络代理（部分地区直连不了交易所 API 时需要）：
+给各交易所配置网络代理（部分地区直连不了交易所 API 时需要）：
 
-- **全局代理**：一个地址同时用于三个所（优先级最高）
+- **全局代理**：一个地址同时用于全部交易所（优先级最高）
 - **各所独立代理**：给不同交易所配不同出口 IP
 - **检测当前出口 IP**：验证代理是否生效
 - 点"写入 .env"保存，重启程序后生效
@@ -268,7 +269,7 @@
 ### 7.0 总体步骤
 
 1. 用记事本（或任何文本编辑器）打开项目文件夹里的 `.env` 文件（没有就先复制 `.env.example` 改名为 `.env`；注意文件名就是 `.env`，前面有个点，没有别的后缀）。
-2. 把你要实盘的交易所的模式改为 live：`DE_MODE=live`（Decibel）/ `EX_MODE=live`（Extended）/ `RS_MODE=live`（RISEx）。**三个所互相独立**，可以只实盘一个、其余保持 paper。
+2. 把你要实盘的交易所的模式改为 live：`DE_MODE=live`（Decibel）/ `EX_MODE=live`（Extended）/ `RS_MODE=live`（RISEx）/ `ON_MODE=live`（Ondo）/ `PL_MODE=live`（Perpl）/ `SX_MODE=live`（StandX）/ `BG_MODE=live`（Bitget）/ `BU_MODE=live`（Bitunix）/ `PH_MODE=live`（Phoenix）/ `ND_MODE=live`（Nado）。**各所互相独立**，可以只实盘一个、其余保持 paper。
 3. 按下面各小节获取并填入对应凭据。
 4. 保存 `.env`，双击 `实盘启动.bat`，输入 `YES` 确认启动。
 5. 启动日志里看到 `[XX] ✓ 连接成功 [LIVE 模式]` 即成功。
@@ -333,7 +334,95 @@ SIGNER_PRIVATE_KEY=    # ② 签名私钥
 
 ### 7.4 测试网练手（可选）
 
-三个所都支持先连测试网（用测试币实盘流程）：把对应的 `DE_NETWORK` / `EX_NETWORK` / `RS_NETWORK` 改为 `testnet`，再用测试网的账户凭据即可。
+Decibel / Extended / RISEx 支持先连测试网（用测试币实盘流程）：把对应的 `DE_NETWORK` / `EX_NETWORK` / `RS_NETWORK` 改为 `testnet`，再用测试网的账户凭据即可（其余几所暂无测试网支持，见下面 7.5~7.11）。
+
+---
+
+### 7.5 Ondo Perps（股票 / 黄金 / 原油 perps）
+
+需要填 2~3 项：
+
+```ini
+ON_MODE=live
+ONDO_API_KEY_ID= # ① Key ID
+ONDO_API_SECRET= # ② Secret
+ONDO_BUILDER_CODE= # 可选，Ondo 生态返佣分成
+```
+
+获取步骤：打开 **app.ondoperps.xyz** → Profile → API Keys → **Add New**，选好权限后会一次性给你 KeyId + Secret。⚠️ Secret 只显示一次，务必当场保存。确保账户里有 USDC 保证金。
+
+### 7.6 Perpl.xyz（Monad L1）
+
+需要填 2 项：
+
+```ini
+PL_MODE=live
+PERPL_API_KEY= # ① API Key
+PERPL_API_KEY_SECRET= # ② Ed25519 私钥（官方字段名；旧版 PERPL_PRIVATE_KEY 仍兼容）
+```
+
+获取步骤：打开 **app.perpl.xyz/apikeys** → 创建 API Key，会给 API Key + Ed25519 私钥（hex 64 字符，可选 `0x` 前缀，或 base64url 43-44 字符）。确保账户里有 USDC 保证金。
+
+### 7.7 StandX（BSC 永续）
+
+需要填 2 项：
+
+```ini
+SX_MODE=live
+SX_CHAIN=bsc
+SX_PRIVATE_KEY= # BSC 钱包私钥（0x... hex）
+```
+
+⚠️ 这里要填的是**你 BSC 钱包本身的私钥**，不是交易所发的 API Key——StandX 没有独立的"API 钱包"机制。强烈建议专门开一个只放少量保证金的新钱包来跑这个策略，不要用你的主钱包。
+
+### 7.8 Bitget（USDT-M 永续）
+
+需要填 3 项：
+
+```ini
+BG_MODE=live
+BG_API_KEY= # ① API Key
+BG_SECRET_KEY= # ② Secret Key
+BG_PASSPHRASE= # ③ Passphrase
+```
+
+获取步骤：**bitget.com** → API Management → **Create API**。Bitget 要求三段凭证（Key / Secret / Passphrase），创建时记得勾选合约交易权限。
+
+### 7.9 Bitunix（USDT-M 永续）
+
+需要填 2 项：
+
+```ini
+BU_MODE=live
+BU_API_KEY= # ① API Key
+BU_API_SECRET= # ② API Secret
+```
+
+获取步骤：**bitunix.com** → API Management，创建 Key + Secret。
+
+### 7.10 Phoenix（Solana 链上永续 DEX）
+
+需要填 1~2 项：
+
+```ini
+PH_MODE=live
+PH_WALLET_PRIVATE_KEY= # Solana 钱包私钥（base58 编码）
+PH_SOLANA_RPC_URL= # 可选，留空用官方 mainnet-beta
+```
+
+⚠️ 这里要填的是**你 Solana 钱包本身的私钥**（base58 编码），不是交易所 API Key——同样建议用专门的小钱包，钱包里要有 USDC 保证金。
+
+### 7.11 Nado（Ink Chain 永续，Vertex Protocol fork）
+
+需要填 1~2 项：
+
+```ini
+ND_MODE=live
+NADO_WALLET_PRIVATE_KEY= # EVM 钱包私钥（0x hex）
+NADO_CHAIN_ENV= # 可选，inkMainnet（默认）或 inkTestnet
+```
+
+⚠️ 同样是**你 EVM 钱包本身的私钥**（0x hex），不是 API Key，建议用专门的小钱包，钱包里要有保证金。
 
 ---
 
@@ -342,13 +431,20 @@ SIGNER_PRIVATE_KEY=    # ② 签名私钥
 部分地区网络直连不了交易所 API，需要代理。两种配置方式：**仪表盘 ⚙ IP配置页**（推荐，可在线检测）或直接编辑 `.env`。
 
 ```ini
-# 全局代理：三个所共用（优先级最高）
+# 全局代理：全部交易所共用（优先级最高）
 GLOBAL_PROXY=
 
 # 各所独立代理（仅当 GLOBAL_PROXY 为空时生效）
 DECIBEL_PROXY=
 EXTENDED_PROXY=
 RISEX_PROXY=
+ONDO_PROXY=
+PERPL_PROXY=
+SX_PROXY=
+BG_PROXY=
+BU_PROXY=
+PH_PROXY=
+ND_PROXY=
 ```
 
 支持的格式：
@@ -408,7 +504,7 @@ AI_REPORT_HOUR=20             # 每天几点生成日报（0-23 整点）
 
 在 AI页的对话框输入自然语言，例如：
 
-- "三个所现在整体情况怎么样？"
+- "各所现在整体情况怎么样？"
 - "把 Extended 上边界调到 66000"
 - "Decibel 该不该止损？"
 
@@ -454,6 +550,25 @@ AI_REPORT_HOUR=20             # 每天几点生成日报（0-23 整点）
 | `ACCOUNT_ADDRESS` | 空 | RISEx：账户地址 |
 | `SIGNER_PRIVATE_KEY` | 空 | RISEx：签名私钥 |
 | `RISEX_API_URL` / `RISEX_WS_URL` | 官方默认 | 自定义 API / WebSocket 地址 |
+| `ON_MODE` / `ON_NETWORK` | `paper` / `mainnet` | Ondo：运行模式 / 主网或 sandbox |
+| `ONDO_API_KEY_ID` / `ONDO_API_SECRET` | 空 | Ondo：API 凭证（app.ondoperps.xyz → Profile → API Keys） |
+| `ONDO_BUILDER_CODE` | 空 | Ondo：返佣 builder code，可选 |
+| `PL_MODE` / `PL_NETWORK` | `paper` / `mainnet` | Perpl：运行模式 / 主网或测试网 |
+| `PERPL_API_KEY` / `PERPL_API_KEY_SECRET` | 空 | Perpl：API 凭证（app.perpl.xyz/apikeys，旧字段名 `PERPL_PRIVATE_KEY` 仍兼容） |
+| `PERPL_CHAIN_ID` | 按网络自动 | Monad mainnet=143 / testnet=10143 |
+| `SX_MODE` / `SX_CHAIN` | `paper` / `bsc` | StandX：运行模式 / 链 |
+| `SX_PRIVATE_KEY` | 空 | StandX：BSC 钱包私钥（0x hex，⚠️ 是钱包私钥不是 API Key，建议用小钱包） |
+| `BG_MODE` | `paper` | Bitget：运行模式 |
+| `BG_API_KEY` / `BG_SECRET_KEY` / `BG_PASSPHRASE` | 空 | Bitget：三段 API 凭证（bitget.com → API Management） |
+| `BU_MODE` | `paper` | Bitunix：运行模式 |
+| `BU_API_KEY` / `BU_API_SECRET` | 空 | Bitunix：API 凭证（bitunix.com → API Management） |
+| `PH_MODE` | `paper` | Phoenix：运行模式 |
+| `PH_WALLET_PRIVATE_KEY` | 空 | Phoenix：Solana 钱包私钥（base58，⚠️ 是钱包私钥不是 API Key，建议用小钱包） |
+| `PH_SOLANA_RPC_URL` | 官方默认 | 自定义 Solana RPC 节点 |
+| `ND_MODE` | `paper` | Nado：运行模式 |
+| `NADO_WALLET_PRIVATE_KEY` | 空 | Nado：EVM 钱包私钥（0x hex，⚠️ 是钱包私钥不是 API Key，建议用小钱包） |
+| `NADO_CHAIN_ENV` | `inkMainnet` | `inkMainnet`（默认）或 `inkTestnet` |
+| `ONDO_PROXY` / `PERPL_PROXY` / `SX_PROXY` / `BG_PROXY` / `BU_PROXY` / `PH_PROXY` / `ND_PROXY` | 空 | 对应交易所独立代理，见第八节 |
 | `AI_PROVIDER` | `openai` | AI 协议：`openai` / `anthropic` / `gemini` |
 | `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` / `AI_MODEL_SMALL` | 空 | 见第九节 |
 | `AI_SENTINEL_MINUTES` | `5` | 哨兵巡检间隔（分钟，0=关） |
@@ -479,11 +594,11 @@ AI_REPORT_HOUR=20             # 每天几点生成日报（0-23 整点）
 
 ## 十三、REST API 一览（进阶）
 
-服务是纯 HTTP + SSE，可以自行编程调用。`{ex}` 为 `de` / `ex` / `rs`：
+服务是纯 HTTP + SSE，可以自行编程调用。`{ex}` 为 `de`（Decibel）/ `ex`（Extended）/ `rs`（RISEx）/ `on`（Ondo）/ `pl`（Perpl）/ `sx`（StandX）/ `bg`（Bitget）/ `bu`（Bitunix）/ `ph`（Phoenix）/ `nd`（Nado）：
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| GET | `/api/overview` | 五所总览 |
+| GET | `/api/overview` | 全部交易所总览 |
 | GET | `/api/overview/stream` | 总览 SSE 实时流 |
 | GET | `/api/{ex}/markets` | 市场列表 |
 | GET | `/api/{ex}/trend?marketId=&intervalSec=` | K 线 + 趋势分析 |
@@ -527,7 +642,7 @@ AI_REPORT_HOUR=20             # 每天几点生成日报（0-23 整点）
 降低每格数量、减少格数，或提高杠杆（谨慎）。
 
 **Q：想同时实盘 A 所、模拟 B 所可以吗？**
-可以，三个所的 `*_MODE` 各自独立。
+可以，每所的 `*_MODE` 各自独立（比如 Decibel 实盘、Extended 模拟同时跑）。
 
 **Q：程序会把我的私钥传到哪里吗？**
 不会。私钥只在本机 `.env`，仅用于给交易请求签名。代码全部开源可审计。
@@ -550,16 +665,24 @@ AI_REPORT_HOUR=20             # 每天几点生成日报（0-23 整点）
 │   ├── server.js         # HTTP/SSE 服务器与路由
 │   ├── bot.js            # 网格机器人核心（下单/补单/风控/恢复）
 │   ├── grid.js           # 网格纯函数（铺单/补单规则）
-│   ├── config.js         # .env 加载与五所配置
+  │   ├── config.js       # .env 加载与十所配置
 │   ├── trend.js          # K 线趋势分析（智能填充用）
 │   ├── indicators.js     # 技术指标
 │   ├── proxy.js          # 代理设置与检测
 │   ├── persist.js        # 状态快照持久化
 │   ├── ai/               # AI（provider 适配 + 服务）
 │   └── exchange/
-│       ├── de/           # Decibel 接入（live + paper）
-│       ├── ex/           # Extended 接入（live + paper + Stark 签名）
-│       └── rs/           # RISEx 接入（live + paper）
+│       ├── de/            # Decibel 接入 (live + paper)
+│       ├── ex/            # Extended 接入 (live + paper + Stark 签名)
+│       ├── rs/            # RISEx 接入 (live + paper)
+│       ├── on/            # Ondo Perps 接入
+│       ├── pl/            # Perpl.xyz 接入
+│       ├── sx/            # StandX 接入
+│       ├── bg/            # Bitget 接入
+│       ├── bu/            # Bitunix 接入
+│       ├── ph/            # Phoenix 接入
+│       ├── nd/            # Nado 接入
+│       └── rateLimitBackoff.js  # 通用限流退避模块
 └── test/
     └── grid.test.js      # 网格逻辑单元测试
 ```
