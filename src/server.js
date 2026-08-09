@@ -310,6 +310,11 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
       try { return send(res, 200, bot.resetVolumeStats()); }
       catch (e) { return send(res, 400, { error: e.message }); }
     }
+    // Round 275aj: rebase volumeBaseline 让显示 vol 从今起 $0 公平比较
+    if (subPath === '/rebase-volume' && req.method === 'POST') {
+      try { return send(res, 200, bot.rebaseVolume()); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+    }
 
     if (subPath === '/cancel-orders' && req.method === 'POST') {
       try { return send(res, 200, await bot.cancelAllOrders()); }

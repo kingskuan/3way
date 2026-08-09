@@ -509,6 +509,22 @@ export class GridBot {
     return this.getState();
   }
 
+  /**
+   * Round 275aj：rebase volume baseline —— 把当前 stats.volume 定为新起点。
+   * 显示 vol = max(0, stats.volume - volumeBaseline)，rebase 后归 0。
+   * 用途：统一多所 volume 起点公平比较（Ondo 走 exchange lifetime 有历史包袱，
+   * 其他所走本地 fill 累积干净 —— rebase 后全从 $0 起算）。
+   * 不动 stats.volume 本值 → 未来 fills/getStats 继续累积到 stats.volume，
+   * 显示自动是 delta（新增部分）。
+   */
+  rebaseVolume() {
+    const before = this.stats.volume || 0;
+    this.stats.volumeBaseline = before;
+    this._alert(`已 rebase 成交量基线：起点=$${before.toFixed(2)}，之后显示的都是新增交易量。`);
+    this._changed();
+    return this.getState();
+  }
+
   /** Re-baseline PnL to current equity, preserve historical volume/rungs. */
   resetStats() {
     // Round 168：改行为，只清 PnL 相关字段，保留 volume / buys / sells /
