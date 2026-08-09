@@ -1103,6 +1103,11 @@ const server = http.createServer(async (request, res) => {
           trackedFarmOrders: (phExchange._farmOrderSigs?.size) || 0,
         });
       }
+      // Round 275ag: 探测 farm market 原始 field，帮我们找出正确 tickSize 换算
+      if (p === '/api/ph/farm-market-info') {
+        try { return send(res, 200, await phExchange.getFarmMarketInfo()); }
+        catch (e) { return send(res, 500, { error: e.message }); }
+      }
       return await phHandler(request, res, p.slice('/api/ph'.length), url);
     }
     if (p.startsWith('/api/nd/')) {

@@ -723,6 +723,16 @@ export class PhoenixExchange extends EventEmitter {
     const leverage = opts.leverage || 2;
     const placed = [];
     const errors = [];
+    // Round 275ag: 安全网 —— 275ae 版本股票价格 scale 错 1000x：挂 $290 AAPL
+    // 变成 $0.29 → sell 单立刻 fill 开 7 个 short 仓（用户 $560 exposure）。
+    // 暂时禁用直到 Round 275ah 用探针数据修好 tickSize 换算。
+    // opts.forceUnsafe:true 才放行（诊断用途）。
+    if (!opts.forceUnsafe) {
+      errors.push('Round 275ag: quote-farm 因价格 scale bug 暂时禁用。先跑 GET '
+        + '/api/ph/farm-market-info 看 raw tickSize，弄清 stock market 换算后再修 '
+        + 'Round 275ah 打开。本次调用需 body 加 "forceUnsafe":true 才放行（危险，会开仓）。');
+      return { placed, errors };
+    }
     for (const sym of symbols) {
       const mid = this._farmMarketSymbolToId.get(String(sym));
       if (mid == null) { errors.push(`${sym}: 不在 _farmMarkets`); continue; }
@@ -743,12 +753,18 @@ export class PhoenixExchange extends EventEmitter {
       const snapPrice = (p) => Math.round(p / m.stepPrice) * m.stepPrice;
       const snapSize = Math.max(m.stepSize, Math.round(sizeBase / m.stepSize) * m.stepSize);
       for (const [side, price] of [['buy', snapPrice(bidPrice)], ['sell', snapPrice(askPrice)]]) {
+        const priceInTicks = Math.round(price / m.stepPrice);
+        // Round 275ag safety net：极小 tick 数 = scale 错，abort（防 sell 立刻 fill）
+        if (priceInTicks < 100) {
+          errors.push(`${sym} ${side}: priceInTicks=${priceInTicks} 太小（价格 scale 可能错），跳过`);
+          continue;
+        }
         const body = {
           authority: this._authorityPubkey,
           traderPdaIndex: 0,
           side: side === 'buy' ? 'Bid' : 'Ask',
           symbol: m.symbol,
-          priceInTicks: Math.round(price / m.stepPrice),
+          priceInTicks,
           numBaseLots: Math.round(snapSize / m.stepSize),
         };
         try {
@@ -765,6 +781,49 @@ export class PhoenixExchange extends EventEmitter {
       }
     }
     return { placed, errors };
+  }
+
+  /**
+   * Round 275ag：探测每个 farm market 的 raw fields，帮我们搞清 Phoenix
+   * stock perp 跟 crypto 的价格 scale 差异。返回原始 API 响应字段 + 我们
+   * init 抽出来的 stepPrice/stepSize。也拉 BTC 做对比。
+   */
+  async getFarmMarketInfo() {
+    if (!this._authorityPubkey) return { error: 'no authorityPubkey' };
+    let raw;
+    try { raw = await this._req('GET', '/v1/view/exchange/markets', null, false); }
+    catch (e) { return { error: `拉 markets 失败: ${e.message}` }; }
+    const out = { markets: [] };
+    const farmSyms = new Set(this._farmMarketSymbolToId.keys());
+    const rawArr = Array.isArray(raw) ? raw : [];
+    for (const m of rawArr) {
+      if (!m?.symbol || !farmSyms.has(m.symbol)) continue;
+      const stored = this._farmMarkets.get(this._farmMarketSymbolToId.get(m.symbol));
+      out.markets.push({
+        symbol: m.symbol,
+        raw: {
+          tickSize: m.tickSize,
+          baseLotsDecimals: m.baseLotsDecimals,
+          quoteLotsDecimals: m.quoteLotsDecimals,
+          minOrderSize: m.minOrderSize,
+          maxLeverage: (Array.isArray(m.leverageTiers) && m.leverageTiers[0]?.maxLeverage) || null,
+          allKeys: Object.keys(m).slice(0, 30),
+        },
+        stored: { stepPrice: stored?.stepPrice, stepSize: stored?.stepSize },
+      });
+    }
+    for (const m of rawArr) {
+      if (m?.symbol === 'BTC') {
+        out.cryptoRef_BTC = {
+          tickSize: m.tickSize,
+          baseLotsDecimals: m.baseLotsDecimals,
+          quoteLotsDecimals: m.quoteLotsDecimals,
+          allKeys: Object.keys(m).slice(0, 30),
+        };
+        break;
+      }
+    }
+    return out;
   }
 
   /**
