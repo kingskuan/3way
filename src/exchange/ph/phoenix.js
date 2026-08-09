@@ -731,7 +731,7 @@ export class PhoenixExchange extends EventEmitter {
       // 拉 latest mark price（走 candles 简单）
       let mark = 0;
       try {
-        const bars = await this._req('GET', `/v1/candles/${m.symbol}?limit=1&resolution=60`, null, false);
+        const bars = await this._req('GET', `/v1/candles/${m.symbol}?timeframe=1m&limit=1`, null, false);
         const arr = Array.isArray(bars) ? bars : (bars?.data || []);
         mark = Number(arr[0]?.close) || 0;
       } catch (e) { errors.push(`${sym}: 拉 mark 失败 ${e.message}`); continue; }
