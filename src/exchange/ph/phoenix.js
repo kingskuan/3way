@@ -227,15 +227,26 @@ export class PhoenixExchange extends EventEmitter {
           // 这些股票 quote-farm 用得到，grid 依然过滤（tick scale bug 不能网格）。
           if (PH_FARM_SYMBOLS.test(String(m.symbol))) {
             const baseLotStep = Math.pow(10, -Number(m.baseLotsDecimals || 3));
+            // Round 275ah：Phoenix stock market tickSize scale 修正。
+            // 实测 AAPL tickSize=10 但显示 1 tick = $0.01（差 1000x）；BTC (crypto)
+            // tickSize=100 = 真 $100/tick 无需换算。差别在 commodityMetadata field
+            // 是否存在（stock 有，crypto 没）。存 stepPrice = tickSize/1000 for stocks
+            // 让 priceInTicks = price/stepPrice 出正确 tick 数：
+            //   AAPL price=$290, stepPrice=0.01, priceInTicks=29000
+            //   → Phoenix 内部 29000 * 10 / 1000 = $290 ✓
+            const isStock = !!m.commodityMetadata;
+            const rawTick = Number(m.tickSize) || 0.01;
+            const stepPrice = isStock ? (rawTick / 1000) : rawTick;
             const farmMkt = {
               marketId: 100000 + this._farmMarkets.size + 1,  // 大 id 避跟 grid id 撞
               displayName: m.symbol,
               symbol: String(m.symbol),
               lastPrice: 0,
               stepSize: baseLotStep,
-              stepPrice: Number(m.tickSize) || 0.01,
+              stepPrice,
               maxLeverage: 5, // farm 用低 lev 防意外
               marketPubkey: m.marketPubkey,
+              isStock,
             };
             this._farmMarkets.set(farmMkt.marketId, farmMkt);
             this._farmMarketSymbolToId.set(String(m.symbol), farmMkt.marketId);
@@ -723,16 +734,9 @@ export class PhoenixExchange extends EventEmitter {
     const leverage = opts.leverage || 2;
     const placed = [];
     const errors = [];
-    // Round 275ag: 安全网 —— 275ae 版本股票价格 scale 错 1000x：挂 $290 AAPL
-    // 变成 $0.29 → sell 单立刻 fill 开 7 个 short 仓（用户 $560 exposure）。
-    // 暂时禁用直到 Round 275ah 用探针数据修好 tickSize 换算。
-    // opts.forceUnsafe:true 才放行（诊断用途）。
-    if (!opts.forceUnsafe) {
-      errors.push('Round 275ag: quote-farm 因价格 scale bug 暂时禁用。先跑 GET '
-        + '/api/ph/farm-market-info 看 raw tickSize，弄清 stock market 换算后再修 '
-        + 'Round 275ah 打开。本次调用需 body 加 "forceUnsafe":true 才放行（危险，会开仓）。');
-      return { placed, errors };
-    }
+    // Round 275ah：撤除 275ag forceUnsafe 门禁 —— stock tickSize 已用探针数据修好
+    // (init 时 stepPrice = tickSize/1000 for stocks with commodityMetadata field)。
+    // 安全 check (priceInTicks<100) 保留作二道防线。
     for (const sym of symbols) {
       const mid = this._farmMarketSymbolToId.get(String(sym));
       if (mid == null) { errors.push(`${sym}: 不在 _farmMarkets`); continue; }
