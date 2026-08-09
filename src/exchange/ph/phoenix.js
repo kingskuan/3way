@@ -1043,7 +1043,11 @@ export class PhoenixExchange extends EventEmitter {
           await this._refreshBalance();
         }
         // Round 233: fills poll 30s → 90s 缓解 Phoenix API rate_limited 429
-        if (this._pollCount % 9 === 0) {
+        // Round 275ac: 90s → 5min (30 * 10s)。QC 实证 Phoenix API IP rate limit
+        // 极敏感，_pollFills + getStats + _refreshBalance 加起来 90s 一次 poll fills 就
+        // 续命 rate limit。跟 _refreshBalance 同频次 (5min)，最大程度减压。
+        // 副作用：fill 事件识别滞后 5min（可接受，Round 275y getStats 兜底整体量）。
+        if (this._pollCount % 30 === 0) {
           await this._pollFills().catch((e) => { this.lastError = `pollFills: ${e.message}`; });
         }
       } catch (e) {

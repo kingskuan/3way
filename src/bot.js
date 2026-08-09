@@ -495,6 +495,20 @@ export class GridBot {
     return this.getState();
   }
 
+  /**
+   * Round 275ac：清 volume 相关字段。用于修 partial-getStats 污染（$0.07 卡住场景）。
+   * 清 stats.volume + volumeBaseline，让下次 _syncExchangeStats 拉 adapter getStats
+   * 全新累积。不动 gridProfit / rungs / PnL 基线（resetStats 才动这些）。
+   */
+  resetVolumeStats() {
+    const before = this.stats.volume || 0;
+    this.stats.volume = 0;
+    this.stats.volumeBaseline = 0;
+    this._alert(`已清成交量统计（从 $${before.toFixed(2)} → $0）：下次 getStats 拉真值覆盖。`);
+    this._changed();
+    return this.getState();
+  }
+
   /** Re-baseline PnL to current equity, preserve historical volume/rungs. */
   resetStats() {
     // Round 168：改行为，只清 PnL 相关字段，保留 volume / buys / sells /
