@@ -305,6 +305,12 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
       } catch (e) { return send(res, 400, { error: e.message }); }
     }
 
+    // Round 275ac: 手动 heal 卡住的 stats.volume 污染（如 275aa 的 $0.07 case）
+    if (subPath === '/reset-volume' && req.method === 'POST') {
+      try { return send(res, 200, bot.resetVolumeStats()); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+    }
+
     if (subPath === '/cancel-orders' && req.method === 'POST') {
       try { return send(res, 200, await bot.cancelAllOrders()); }
       catch (e) { return send(res, 400, { error: e.message }); }
