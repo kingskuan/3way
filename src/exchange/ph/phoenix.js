@@ -226,17 +226,18 @@ export class PhoenixExchange extends EventEmitter {
           // Round 275ae：farm 白名单先注册到 _farmMarkets（不入 grid 池）。
           // 这些股票 quote-farm 用得到，grid 依然过滤（tick scale bug 不能网格）。
           if (PH_FARM_SYMBOLS.test(String(m.symbol))) {
-            const baseLotStep = Math.pow(10, -Number(m.baseLotsDecimals || 3));
-            // Round 275ah：Phoenix stock market tickSize scale 修正。
-            // 实测 AAPL tickSize=10 但显示 1 tick = $0.01（差 1000x）；BTC (crypto)
-            // tickSize=100 = 真 $100/tick 无需换算。差别在 commodityMetadata field
-            // 是否存在（stock 有，crypto 没）。存 stepPrice = tickSize/1000 for stocks
-            // 让 priceInTicks = price/stepPrice 出正确 tick 数：
-            //   AAPL price=$290, stepPrice=0.01, priceInTicks=29000
-            //   → Phoenix 内部 29000 * 10 / 1000 = $290 ✓
+            const baseLotsDecimals = Number(m.baseLotsDecimals || 3);
+            const baseLotStep = Math.pow(10, -baseLotsDecimals);
+            // Round 275ai：stepPrice 公式随 baseLotsDecimals 变化。
+            // 实测 Phoenix internal formula: display_price = priceInTicks × tickSize × 10^(baseLotsDecimals - 6)
+            //   AAPL: baseLotsDecimals=3 → stepPrice = tickSize × 10^-3 = 10/1000 = 0.01 ✓
+            //   MSTR: baseLotsDecimals=2 → stepPrice = tickSize × 10^-4 = 10/10000 = 0.001（Round 275ah 硬编 1000 差 10x）
+            // BTC (crypto, no commodityMetadata): tickSize=100 直接用（内部 quote 换算不同）
             const isStock = !!m.commodityMetadata;
             const rawTick = Number(m.tickSize) || 0.01;
-            const stepPrice = isStock ? (rawTick / 1000) : rawTick;
+            const stepPrice = isStock
+              ? rawTick * Math.pow(10, baseLotsDecimals - 6)
+              : rawTick;
             const farmMkt = {
               marketId: 100000 + this._farmMarkets.size + 1,  // 大 id 避跟 grid id 撞
               displayName: m.symbol,
