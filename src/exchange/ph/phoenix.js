@@ -41,6 +41,12 @@ export class PhoenixExchange extends EventEmitter {
     // Round 275v：bot 网格价格集 —— cancelAll 只撤价在这个集合里的链上单，
     // 用户手动挂在别的价的单不动。key=marketId, value=Set<price rounded to stepPrice>。
     this._botGridLevels = new Map();
+    // Round 275ae：股票 farm 市场池（跟主 markets 分开，grid 拿不到）。
+    // 用于 quote-farm 模式挂宽单撸 Phoenix 每日 $15K 奖励。
+    this._farmMarkets = new Map();
+    this._farmMarketSymbolToId = new Map();
+    // 追踪 quote-farm 挂的单，方便一键 cancel
+    this._farmOrderSigs = new Set();
     this._authToken = null;
     this._authTokenExpiresAt = 0;
     // Round 276: 退避状态迁移到通用 RateLimitBackoff 模块（原 _authBackoffMs/_authBackoffUntil 字段）
@@ -201,6 +207,9 @@ export class PhoenixExchange extends EventEmitter {
       // 股票 market 的 tickSize 缩放跟 API 返 K 线不一致（Round 220：API 返 $835 UI 显 $201），
       // 网格铺出去 tick 对不上全被拒。彻底不注册 = 任何路径都选不到。
       const PH_STOCK_SYMBOLS = /^(NVDA|MU|TSM|AMZN|AAPL|GOOGL|META|CRCL|COIN|ASML|CRWV|MSTR|GOLD|WTIOIL|COST|BABA|WMT|LLY|HOOD|NFLX|UBER|MELI|PLTR|IBIT|SPX|SPY|QQQ)$/i;
+      // Round 275ae：farm 模式白名单 —— 这些股票用于 quote-farm（挂宽单撸奖励），
+      // 依然从 grid 池过滤，但入 _farmMarkets 供 quote-farm 用。
+      const PH_FARM_SYMBOLS = /^(SPCX|SPX|SPY|QQQ|TSLA|MSTR|NVDA|AAPL|GOOGL|META|AMZN|NFLX|COIN|HOOD)$/i;
       if (Array.isArray(markets)) {
         // Round 275s: 按 symbol 字母序排序再分配 idx，让 marketId 跨 restart 稳定。
         // 之前按 API 返回顺序分配 → API 顺序变（新加/删除市场）→ 同一 symbol 的 idx 变
@@ -214,6 +223,25 @@ export class PhoenixExchange extends EventEmitter {
         for (const m of sortedMkts) {
           if (!m.symbol) continue;
           if (m.marketStatus !== 'active') continue;
+          // Round 275ae：farm 白名单先注册到 _farmMarkets（不入 grid 池）。
+          // 这些股票 quote-farm 用得到，grid 依然过滤（tick scale bug 不能网格）。
+          if (PH_FARM_SYMBOLS.test(String(m.symbol))) {
+            const baseLotStep = Math.pow(10, -Number(m.baseLotsDecimals || 3));
+            const farmMkt = {
+              marketId: 100000 + this._farmMarkets.size + 1,  // 大 id 避跟 grid id 撞
+              displayName: m.symbol,
+              symbol: String(m.symbol),
+              lastPrice: 0,
+              stepSize: baseLotStep,
+              stepPrice: Number(m.tickSize) || 0.01,
+              maxLeverage: 5, // farm 用低 lev 防意外
+              marketPubkey: m.marketPubkey,
+            };
+            this._farmMarkets.set(farmMkt.marketId, farmMkt);
+            this._farmMarketSymbolToId.set(String(m.symbol), farmMkt.marketId);
+            // continue 不进 grid pool（跟 stock filter 一致，farm 用独立 API）
+            continue;
+          }
           if (PH_STOCK_SYMBOLS.test(String(m.symbol))) { stockFiltered++; continue; }
           // Phoenix 字段（Round 213 直接打 API 探得）：
           //   tickSize: 价格 tick（整数或小数，具体单位看 asset）
@@ -673,6 +701,97 @@ export class PhoenixExchange extends EventEmitter {
       }
       throw e;
     }
+  }
+
+  /**
+   * Round 275ae：Phoenix quote-farm 模式。周末美股闭市时挂宽单撸每日 $15K
+   * rewards（rewards 基于挂单流动性 + uptime，不需 fill）。
+   *
+   * @param {object} opts
+   *   symbols?: string[]  白名单符号（默认全部 _farmMarkets）
+   *   spreadPct?: number  单边 spread%（默认 8 → mark×0.92 买、×1.08 卖）
+   *   sizeUsd?: number    每边 notional（默认 $30）
+   *   leverage?: number   （默认 2x，低风险）
+   *
+   * 返回：{ placed: [{symbol,priceBid,priceAsk,sizeBase}], errors: [...] }
+   */
+  async placeQuoteFarm(opts = {}) {
+    if (!this._authorityPubkey) return { placed: [], errors: ['无 authorityPubkey'] };
+    const symbols = opts.symbols || [...this._farmMarketSymbolToId.keys()];
+    const spreadPct = opts.spreadPct || 8;
+    const sizeUsd = opts.sizeUsd || 30;
+    const leverage = opts.leverage || 2;
+    const placed = [];
+    const errors = [];
+    for (const sym of symbols) {
+      const mid = this._farmMarketSymbolToId.get(String(sym));
+      if (mid == null) { errors.push(`${sym}: 不在 _farmMarkets`); continue; }
+      const m = this._farmMarkets.get(mid);
+      if (!m) continue;
+      // 拉 latest mark price（走 candles 简单）
+      let mark = 0;
+      try {
+        const bars = await this._req('GET', `/v1/candles/${m.symbol}?limit=1&resolution=60`, null, false);
+        const arr = Array.isArray(bars) ? bars : (bars?.data || []);
+        mark = Number(arr[0]?.close) || 0;
+      } catch (e) { errors.push(`${sym}: 拉 mark 失败 ${e.message}`); continue; }
+      if (!(mark > 0)) { errors.push(`${sym}: mark=0`); continue; }
+      const bidPrice = mark * (1 - spreadPct / 100);
+      const askPrice = mark * (1 + spreadPct / 100);
+      const sizeBase = sizeUsd / mark;
+      // snap 到 tick
+      const snapPrice = (p) => Math.round(p / m.stepPrice) * m.stepPrice;
+      const snapSize = Math.max(m.stepSize, Math.round(sizeBase / m.stepSize) * m.stepSize);
+      for (const [side, price] of [['buy', snapPrice(bidPrice)], ['sell', snapPrice(askPrice)]]) {
+        const body = {
+          authority: this._authorityPubkey,
+          traderPdaIndex: 0,
+          side: side === 'buy' ? 'Bid' : 'Ask',
+          symbol: m.symbol,
+          priceInTicks: Math.round(price / m.stepPrice),
+          numBaseLots: Math.round(snapSize / m.stepSize),
+        };
+        try {
+          let ix;
+          try { ix = await this._req('POST', '/v1/ix/place-limit-order', body, false); }
+          catch (e) {
+            if (!/401|403|unauthorized/i.test(e.message)) throw e;
+            ix = await this._req('POST', '/v1/ix/place-limit-order', body, true);
+          }
+          const sigs = await this._signAndSubmitInstructions(ix);
+          for (const sig of (sigs || [])) this._farmOrderSigs.add(sig);
+          placed.push({ symbol: sym, side, price, sizeBase: snapSize });
+        } catch (e) { errors.push(`${sym} ${side}: ${e.message.slice(0, 100)}`); }
+      }
+    }
+    return { placed, errors };
+  }
+
+  /**
+   * Round 275ae：撤销所有 quote-farm 挂单。
+   * 优先按追踪的 _farmOrderSigs 逐单撤（更精确，不动 grid 单）；
+   * fallback 到每个 farm 市场的 cancel-all（会误撤该 farm 市场的所有单，
+   * 但因为 grid 不用 farm 市场，安全）。
+   */
+  async cancelQuoteFarm(opts = {}) {
+    const results = { attempted: 0, cancelled: 0, errors: [] };
+    // 逐 farm 市场 cancel-all-orders 最快最稳
+    for (const [, m] of this._farmMarkets) {
+      results.attempted++;
+      const body = { authority: this._authorityPubkey, traderPdaIndex: 0, symbol: m.displayName };
+      try {
+        let ix;
+        try { ix = await this._req('POST', '/v1/ix/cancel-all-orders', body, false); }
+        catch (e) {
+          if (!/401|403|unauthorized/i.test(e.message)) throw e;
+          ix = await this._req('POST', '/v1/ix/cancel-all-orders', body, true);
+        }
+        await this._signAndSubmitInstructions(ix);
+        results.cancelled++;
+      } catch (e) { results.errors.push(`${m.symbol}: ${e.message.slice(0, 100)}`); }
+    }
+    this._farmOrderSigs.clear();
+    return results;
   }
 
   // Round 275v：让 bot 告诉 adapter 当前 grid 的价格集，cancelAll 用它 filter。
