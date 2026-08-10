@@ -1076,7 +1076,10 @@ class Autopilot {
       // Round 203: 交易所硬性 open-orders/market 上限。
       // RISEx 每个市场最多 50 单，Round 201 想开 80 格触发 "429: max open orders"
       // + 30 单 3 次重试全失败，UI 全是 alert。硬 cap 到 50。
-      const exchangeGridCap = { rs: 50 };
+      // Round 275an：Phoenix 用 Solana，每单是 chain tx（1-2s 一笔 + rate_limit
+      // 半分钟 window）。80 单一次起 = 80 tx 打过去 IP 秒挂。降到 20 让每次起单
+      // 稳稳落 chain。
+      const exchangeGridCap = { rs: 50, ph: 20 };
       if (exchangeGridCap[key] && gridCount > exchangeGridCap[key]) {
         gridCount = exchangeGridCap[key];
       }
@@ -1173,8 +1176,10 @@ class Autopilot {
         catch (e) { this._log(key, 'reset-warn', `rebaselinePnl 失败：${e?.message || e}（继续起单）`); }
       }
       const res = await bot.start(params);
-      // 起单后 3s 让适配器同步 place 结果，再读实际挂上多少
-      await new Promise((r) => setTimeout(r, 3000));
+      // 起单后让适配器同步 place 结果，再读实际挂上多少。
+      // Round 275an：Phoenix 等 30s 让 Solana chain adopt（Round 259 deferred 流程需
+      // reconcile 从 chain fetchOpenOrders 拿 orderSequenceNumber）；其他所 3s 够。
+      await new Promise((r) => setTimeout(r, key === 'ph' ? 30_000 : 3_000));
       const finalState = bot.getState();
       const actual = Number(finalState.openOrders) || 0;
       st.lastAction = 'started';
@@ -1223,7 +1228,13 @@ class Autopilot {
       // → phantom running 空等 12h。修：actual=0 立即 stop bot（不平仓 —— 没仓可平）+ 不设
       // startedByAutopilot，让下 tick 重新决策。若原因是 rate_limit 持续，会 5min 后再试；若缓过
       // 来，正常挂单。避免 12h 空烧 fee/funding。
-      if (actual === 0) {
+      // Round 275an：Phoenix 特殊——deferred>0 表示 tx 已提交 chain，30s 内没被 reconcile
+      // adopt 但下几次 reconcile（bot 内部 60s 一次）会 adopt。actual=0 但 deferred>0
+      // 时别 stop bot，让 reconcile 慢慢 pick up。否则 stop 会撤掉 chain 上的 40 单
+      // → 用户重新遇到 phantom orders 问题（chain 上有单 QnV 看不见）。
+      const deferredCount = Number(finalState.startDeferred) || 0;
+      const hasDeferredOnChain = key === 'ph' && deferredCount > 0;
+      if (actual === 0 && !hasDeferredOnChain) {
         try { await bot.stop({ closePosition: false }); } catch { /* best-effort */ }
         st.lastAction = 'start-failed';
         st.startedByAutopilot = false;
