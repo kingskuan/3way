@@ -315,6 +315,49 @@ function makeExchangeHandler(prefix, bot, exchange, exCfg, clients, name) {
       try { return send(res, 200, bot.rebaseVolume()); }
       catch (e) { return send(res, 400, { error: e.message }); }
     }
+    // Round 275am: adopt chain state — chain 上有 N 单+仓位但 QnV bot.running=false
+    // 的场景（autopilot start 失败停 bot 但 chain 上单已 land）。fetchOpenOrders 拉
+    // chain 所有 open 单 → 按 config.grid 反算 levelIndex → 塞 snap.active[] →
+    // 走 bot.resume 认领。resume 内部同时触发 reconcile pull position + adopt orders。
+    if (subPath === '/adopt-chain' && req.method === 'POST') {
+      try {
+        if (bot.running) return send(res, 400, { error: 'bot already running—stop first' });
+        if (!bot.config || !bot.config.marketId) {
+          return send(res, 400, { error: 'no cached bot.config to align grid levels—need autopilot start first' });
+        }
+        const marketId = bot.config.marketId;
+        const chainOrders = await exchange.fetchOpenOrders?.(marketId);
+        if (!Array.isArray(chainOrders) || chainOrders.length === 0) {
+          return send(res, 400, { error: `chain has ${chainOrders?.length ?? 'null'} open orders—nothing to adopt` });
+        }
+        const { lower, upper, gridCount, sizeBase } = bot.config;
+        const stepPrice = (upper - lower) / gridCount;
+        const active = chainOrders.map((o) => {
+          const price = Number(o.price);
+          const levelIndex = Math.max(0, Math.min(gridCount, Math.round((price - lower) / stepPrice)));
+          return [String(o.orderId), {
+            levelIndex,
+            side: o.side,
+            price,
+            sizeBase: Number(o.sizeBase) || sizeBase,
+            placedAt: Date.now(),
+          }];
+        });
+        const snap = {
+          config: bot.config,
+          active,
+          stats: bot.stats || {},
+          startBalance: bot.startBalance ?? null,
+          pnlBase: bot._pnlBase ?? null,
+          outOfRange: false,
+          lastPrice: bot.lastPrice ?? null,
+        };
+        const state = await bot.resume(snap);
+        return send(res, 200, { ok: true, adopted: chainOrders.length, state });
+      } catch (e) {
+        return send(res, 400, { error: e?.message || String(e) });
+      }
+    }
 
     if (subPath === '/cancel-orders' && req.method === 'POST') {
       try { return send(res, 200, await bot.cancelAllOrders()); }
