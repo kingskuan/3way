@@ -129,12 +129,42 @@ export class GridBot {
     // Round 258: snapshot active 数组为空 = 上次退出时 bot state 说 running 但没
     // 任何单 tracked。resume 成 running=true 会让 autopilot 只 "保持" 不重启 →
     // Phoenix 挂 0 单卡死。只 restore stats 不设 running，让 autopilot fresh start。
+    // Round 275ap：Phoenix Round 259 deferred 流程—— placeLimitOrder 返 orderId=null，
+    // bot.active 一直是 0（等 reconcile 从 chain adopt）。若在此期间 snapshot 落盘
+    // → resume 时 snap.active=[] → Round 258 让 running=false → 但 chain 上其实有 N 单！
+    // 修：Phoenix 特殊，snap.active=[] 时先 fetch chain 看有没有单，有的话按 config
+    // 的 grid 反算 levelIndex 就地 adopt（跟 /api/ph/adopt-chain 一样逻辑）。
     if (snap.active.length === 0) {
-      this.restore(snap);
-      this.running = false;
-      this._alert(`⚠️ 恢复检测：${snap.config.displayName || '未知市场'} snapshot 无挂单 tracking（0 单），标未运行让 autopilot 重新起单。`);
-      this._changed();
-      return this.getState();
+      let adoptedFromChain = 0;
+      if (snap.config?.marketId != null && typeof this.ex.fetchOpenOrders === 'function') {
+        try {
+          const chainOrders = await this.ex.fetchOpenOrders(snap.config.marketId);
+          if (Array.isArray(chainOrders) && chainOrders.length > 0) {
+            const { lower, upper, gridCount, sizeBase } = snap.config;
+            const stepPrice = (upper - lower) / gridCount;
+            for (const o of chainOrders) {
+              const price = Number(o.price);
+              const levelIndex = Math.max(0, Math.min(gridCount, Math.round((price - lower) / stepPrice)));
+              const info = {
+                levelIndex, side: o.side, price,
+                sizeBase: Number(o.sizeBase) || sizeBase,
+                placedAt: Date.now(),
+              };
+              snap.active.push([String(o.orderId), info]);
+              adoptedFromChain++;
+            }
+            this._alert(`⚙ 恢复：snap 无挂单 tracking 但 chain 上有 ${adoptedFromChain} 单（Phoenix Round 259 deferred 后落盘）— 从 chain adopt`);
+          }
+        } catch { /* fetch 失败保守走原路径 */ }
+      }
+      if (adoptedFromChain === 0) {
+        this.restore(snap);
+        this.running = false;
+        this._alert(`⚠️ 恢复检测：${snap.config.displayName || '未知市场'} snapshot 无挂单 tracking（0 单）+ chain 也无单，标未运行让 autopilot 重新起单。`);
+        this._changed();
+        return this.getState();
+      }
+      // 落到这里说明从 chain adopt 了 N 单，继续走下面正常 resume 路径
     }
     this.config = snap.config;
     this.stats = { buys: 0, sells: 0, completedRungs: 0, gridProfit: 0, volume: 0, ...(snap.stats || {}) };
