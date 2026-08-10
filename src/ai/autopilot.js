@@ -471,7 +471,11 @@ class Autopilot {
     // 拿不到 chain 真实位置就不敢盲开，等 5min 后 balance refresh 再试。
     if (key === 'ph' && ex?.lastError) {
       const errStr = String(ex.lastError);
-      const isRateLimit = /rate_limited|429|trader state|trader-state/i.test(errStr);
+      // Round 275al：只把「交易关键」rate_limit（trader-state / balance / auth）算成 skip 理由。
+      // getStats 是 volume 统计接口，rate_limit 不影响下单/仓位；之前把 getStats 也算 skip
+      // → autopilot 死循环 skip 3h+ 不敢起 grid，实测：balance/reconnect 都 OK 但 timer 停不下。
+      const isGetStatsOnly = errStr.startsWith('getStats');
+      const isRateLimit = !isGetStatsOnly && /rate_limited|429|trader state|trader-state/i.test(errStr);
       if (isRateLimit) {
         // Round 275ak：Round 275ad 1h 阈值太激进——farm 期烧 IP 后 Phoenix 每所 30min
         // window 里 rate_limit 反复 tick，autopilot 累计 1h 就误关。用户明确要 Phoenix
