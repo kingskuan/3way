@@ -473,16 +473,15 @@ class Autopilot {
       const errStr = String(ex.lastError);
       const isRateLimit = /rate_limited|429|trader state|trader-state/i.test(errStr);
       if (isRateLimit) {
-        // Round 275ad：追踪 rate-limit 首次出现时间；持续 > 1h 自动 disable Phoenix
-        // 防死循环（跟 275w 低余额 auto-disable 同思路，但用持续时长做判据）。
-        // QC 场景：Phoenix API IP 级 rate_limit 打了 12+h 不释放 → volume/position/
-        // running 全卡 → 用户体验极差。1h 后自动关掉让用户 aware 需重启 Railway 换 IP
-        // 或手动去 phoenix.trade 交易。
+        // Round 275ak：Round 275ad 1h 阈值太激进——farm 期烧 IP 后 Phoenix 每所 30min
+        // window 里 rate_limit 反复 tick，autopilot 累计 1h 就误关。用户明确要 Phoenix
+        // 「像其他所一样跑」，不要动不动 auto-disable。改：阈值 1h → 6h（真正 IP 死才关），
+        // 且遇到成功 tick（无 lastError 或非 rate_limit 错误）就归零，不再持续累积。
         if (!st._phRateLimitStartedAt) st._phRateLimitStartedAt = now;
         const stuckMs = now - st._phRateLimitStartedAt;
-        if (stuckMs >= 60 * 60_000 && this.cfg.perExchange[key]?.enabled) {
+        if (stuckMs >= 6 * 60 * 60_000 && this.cfg.perExchange[key]?.enabled) {
           this.cfg.perExchange[key].enabled = false;
-          this._log(key, 'auto-disable', `Phoenix rate_limit 持续 ${Math.round(stuckMs/60_000)} 分钟未释放，自动取消托管（用户建议 Railway restart 换 IP 或手动交易，恢复正常后再勾选）。`);
+          this._log(key, 'auto-disable', `Phoenix rate_limit 持续 ${Math.round(stuckMs/60_000)} 分钟未释放，自动取消托管（建议 Railway restart 换 IP，恢复后再勾选）。`);
           try { this._notify?.(`⚠️ Phoenix API rate_limit 挂了 ${Math.round(stuckMs/60_000)} 分钟，autopilot 已自动取消托管`); } catch {}
           st._phRateLimitStartedAt = 0;
           return;
@@ -490,7 +489,7 @@ class Autopilot {
         const lastLogAt = st._lastPhRateLimitLogAt || 0;
         if (now - lastLogAt > 30 * 60_000) {
           st._lastPhRateLimitLogAt = now;
-          this._log(key, 'skip', `Phoenix trader-state 拉不到（rate limited / IP 挂，已持续 ${Math.round(stuckMs/60_000)} 分钟，1h 后自动 disable），autopilot 暂不接管 · ${errStr.slice(0, 100)}`);
+          this._log(key, 'skip', `Phoenix trader-state 拉不到（rate limited / IP 挂，已持续 ${Math.round(stuckMs/60_000)} 分钟，6h 后自动 disable），autopilot 暂不接管 · ${errStr.slice(0, 100)}`);
         }
         return;
       }
