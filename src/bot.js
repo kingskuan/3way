@@ -1134,11 +1134,31 @@ export class GridBot {
     }
     let pruned = 0;
     if (!massVanish) {
+      // Round 275aq：Phoenix trades-history API 长期 rate_limited → _pollFills 拉不到 fill
+      // → stats.volume 一直 $0。改从 reconcile 兜底：tracked order 从 chain 消失 = 认为
+      // 成交（网格 mode 只有 rotate/emergency 才 cancel，正常场景消失≈成交），发合成 fill
+      // 事件让 stats.volume/buys/sells/gridProfit 正常累积。仅在 adapter 声明
+      // `emitReconcileAsFill=true` 时启用（Phoenix 独有），其他所用真 fill 事件不重复计。
+      const reconcileAsFill = this.ex?.emitReconcileAsFill === true;
       for (const [oid, info] of [...this.active]) {
         if (realIds.has(oid)) { info.goneRecon = 0; continue; }
         if (now - (info.placedAt || 0) <= PRUNE_GRACE_MS) continue;
         info.goneRecon = (info.goneRecon || 0) + 1;
-        if (info.goneRecon >= 2) { this.active.delete(oid); pruned++; }
+        if (info.goneRecon >= 2) {
+          if (reconcileAsFill && info.side && info.price > 0) {
+            try {
+              this._handleFill({
+                marketId: this.config.marketId,
+                side: info.side, price: info.price,
+                sizeBase: info.sizeBase ?? this.config.sizeBase,
+                orderId: oid, levelIndex: info.levelIndex,
+              });
+            } catch { /* best-effort */ }
+          } else {
+            this.active.delete(oid);
+          }
+          pruned++;
+        }
       }
     }
 
