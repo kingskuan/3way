@@ -31,6 +31,10 @@ export class PhoenixExchange extends EventEmitter {
     // 在，QnV 本地 41 tracked = 完全同步，但告警刷屏）。跟 Perpl 一样声明 unreliable
     // 让 Round 228 的 safeChainOO=trackedOrders 兜底接管，chain==tracked 不报 drift。
     this.hasReliableOrderListing = false;
+    // Round 275aq：trades-history API 长期 IP 级 rate_limited → _pollFills 拉不到 fill
+    // → stats.volume 一直 $0（QC 实证：跑 4h 后 volume=$0.11 vs 其他所 $10K+）。让 bot
+    // reconcile 兜底：tracked order 从 chain 消失 = 认为成交，发合成 fill 事件累积 volume。
+    this.emitReconcileAsFill = true;
     this.balance = 0;
     this.realizedPnl = 0;
     this.orders = new Map();
