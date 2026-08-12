@@ -1179,12 +1179,33 @@ export class GridBot {
     // snapshot once wiped tracking while the orders stayed live on the exchange).
     // Adoption restores accounting AND fill handling for those orphans.
     const occupied = new Set();
-    let trimmed = 0, adopted = 0;
+    let trimmed = 0, adopted = 0, swapped = 0;
     for (const o of real) {
       const px = Number(o.price);
       if (!Number.isFinite(px) || !(sp > 0)) continue;
       const idx = Math.round((px - lvl0) / sp);
       if (!(idx >= idxLo && idx < idxHi)) continue;
+      // Round 275as：Round 275ar 的 synthetic entry (id="pending:...") 会占 level →
+      // 下面 adopt 条件 `some(a => a.levelIndex === idx)` 撞车 → 真 orderId 永远
+      // 进不了 active → 下轮 reconcile 拉 chain 时 realIds 里有真 id、active 里
+      // 只有 synthetic id → 上面 prune 循环 (line 1153) 把 synthetic 判为「消失」→
+      // Round 275aq emitReconcileAsFill 触发**假 fill**。修：真单进来先按
+      // (level, side) 匹配 synthetic 并 swap id，避免假 fill 循环，让真价格
+      // cross grid 时才 emit 真 fill。
+      if (!this.active.has(String(o.orderId))) {
+        const side = o.side === 'buy' ? 'buy' : 'sell';
+        for (const [id, a] of this.active) {
+          if (typeof id === 'string' && id.startsWith('pending:')
+              && a.levelIndex === idx && a.side === side) {
+            this.active.delete(id);
+            this.active.set(String(o.orderId), { ...a, pending: false, adoptedAt: now });
+            try { this.ex.adoptOrder?.({ orderId: o.orderId, marketId: this.config.marketId, levelIndex: idx, side, price: px, sizeBase: this.config.sizeBase }); } catch { /* ignore */ }
+            occupied.add(idx);
+            swapped++;
+            break;
+          }
+        }
+      }
       if (!occupied.has(idx)) {
         occupied.add(idx);
         if (!this.active.has(String(o.orderId))
