@@ -683,10 +683,20 @@ export class GridBot {
         // Round 263: Phoenix Round 259 return {orderId:null, deferred:true} —— tx 已经
         // submit（Solana sig 在 exchange 侧 _signAndSubmitInstructions 里已经拿到），
         // 但 chain 上的 orderSequenceNumber 得等 reconcile 从 fetchOpenOrders 拉。
-        // 不 push 到 active 避免用假 id（Round 259 comment）；也不算 skip / fail /
-        // retry。计 _startDeferred 让用户能在 start alert 里看到 "N 单 deferred"，
-        // 别再是 phantom running（0 alerts + 0 orders）无从追查。
+        // Round 275ar：之前只计数不 push，若 fetchOpenOrders 长期 rate_limited →
+        // reconcile 拉不到 → active 永远空 → 用户 UI 「重新挂出 0 单 / 0 openOrders」，
+        // 且 Round 275aq 的 fill 兜底也无法工作（tracked=0 就没「消失」可检测）。改：
+        // 用 synthetic id `pending:${levelIndex}:${side}` push 到 active，reconcile
+        // 拉到 chain 单时按 levelIndex/price 匹配替换成真 orderId（reconcile 已有 dedup
+        // 逻辑：occupied.has(idx) 时跳过，adoptOrder 时 level 未占才加）。UI 立刻能看
+        // 到 deferred 单，Round 275aq fill 检测也能兜底工作。
         if (typeof this._startDeferred === 'number') this._startDeferred++;
+        const synthId = `pending:${lvl}:${o.side}:${Date.now()}`;
+        this.active.set(synthId, {
+          levelIndex: lvl, side: o.side, price: o.price, sizeBase,
+          opening, recovery: !!o.recovery, placedAt: Date.now(),
+          pending: true,   // 标记为 pending，reconcile 里可优先替换
+        });
       }
     } finally {
       this._pendingLevels.delete(lvl);
