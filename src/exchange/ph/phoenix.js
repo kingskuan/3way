@@ -1229,6 +1229,20 @@ export class PhoenixExchange extends EventEmitter {
         if (this._pollCount % 30 === 0) {
           await this._refreshBalance();
         }
+        // Round 275at: proactive token refresh。Round 269+ 让 endpoints 优先走 no-Bearer
+        // 路径，_ensureAuth 只在 401/403 fallback（needAuth=true）才被触发。若 no-Bearer
+        // 都 200 或返 429（不是 401），auth 永远不刷 → token 过期后 17h+ 都不 renew，
+        // QnV 显示 hasToken=true 但 tokenExpiresInSec=-62362 → 需要 Bearer 的调用（如
+        // /v1/trader/state 私有查询）全挂 → reconcile 走 real-readonly guard 早退 →
+        // openOrders 卡 stale snapshot，volume 不动。5min 一次主动检查 token，过期就在后
+        // 台 refresh，backoff 中 catch 掉不 crash poll。
+        if (this._pollCount % 30 === 0) {
+          const expired = !this._authToken
+            || (this._authTokenExpiresAt > 0 && Date.now() > this._authTokenExpiresAt - 60_000);
+          if (expired && !this._authBackoff?.isActive?.()) {
+            this._ensureAuth().catch(() => { /* backoff/rate-limit swallowed */ });
+          }
+        }
         // Round 233: fills poll 30s → 90s 缓解 Phoenix API rate_limited 429
         // Round 275ac: 90s → 5min (30 * 10s)。QC 实证 Phoenix API IP rate limit
         // 极敏感，_pollFills + getStats + _refreshBalance 加起来 90s 一次 poll fills 就
