@@ -9,7 +9,7 @@ import { aiChat, extractJson, notify, getAiConfig } from './provider.js';
 import { analyzeTrend } from '../trend.js';
 import { loadSnapshot, saveSnapshot } from '../persist.js';
 
-const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix', nd: 'Nado' };
+const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix', nd: 'Nado', lt: 'Lighter' };
 const KEYS = Object.keys(EXNAMES);
 // Round 222：日报状态图标（严格 4 档 —— running/warn/critical/其他）
 const STATE_ICON = { running: '🟢', warn: '🟡', warning: '🟡', critical: '🔴', stopped: '⚪', paused: '⏸', 'not-configured': '⚪' };
@@ -138,7 +138,7 @@ class AiService {
 
   async _snapshotCompact() {
     const out = {};
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd']) {
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd', 'lt']) {
       const s = this.bots[key].getState();
       const pos = s.position?.sizeBase
         ? `${s.position.sizeBase > 0 ? 'long' : 'short'} ${Math.abs(s.position.sizeBase)} @${s.position.entryPrice}`
@@ -162,7 +162,7 @@ class AiService {
   // ---------- 状态快照（喂给 AI 的紧凑上下文） ----------
   async _snapshot() {
     const out = {};
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd']) {
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd', 'lt']) {
       const bot = this.bots[key];
       const ex = this.exchanges[key];
       const s = bot.getState();
@@ -795,7 +795,7 @@ class AiService {
     // 白名单过滤：任何未知 action 一律置为 none
     const ALLOWED = ['adjust_range', 'stop_grid', 'cancel_orders', 'close_position', 'reconnect', 'start_recovery', 'start_grid', 'none'];
     if (!j.action || !ALLOWED.includes(j.action.type)) j.action = { type: 'none' };
-    if (j.action.type !== 'none' && !['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd'].includes(j.action.exchange)) j.action = { type: 'none' };
+    if (j.action.type !== 'none' && !['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd', 'lt'].includes(j.action.exchange)) j.action = { type: 'none' };
     // Round 72：空 reply 兜底 —— 不返空，返 AI 原文或提示
     const finalReply = (j.reply && j.reply.trim()) || text?.trim() || '（AI 无有效回复，请换一句话或稍后重试）';
     return { reply: finalReply.slice(0, 1000), action: j.action };
@@ -804,7 +804,7 @@ class AiService {
   // ---------- 5) 出区间建议（跳变触发） ----------
   async _checkOutOfRange() {
     const cfg = getAiConfig();
-    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd']) {
+    for (const key of ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd', 'lt']) {
       const bot = this.bots[key];
       const cur = !!(bot.running && bot.outOfRange);
       const prev = !!this._prevOor[key];

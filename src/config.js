@@ -166,6 +166,22 @@ export function getConfig() {
     proxy: process.env.ND_PROXY || globalProxy,
   };
 
+  // ── Lighter Perps (zkLighter L2 · USDC 结算 · zk Poseidon L2 API key 签名) ─
+  // Round 首发：LIVE 需要 LT_API_KEY_PRIVATE_KEY（Lighter API key 私钥 hex）+
+  // LT_ACCOUNT_INDEX（在 zklighter.elliot.ai 上的账户 index，正整数）+ 可选
+  // LT_API_KEY_INDEX（默认 0）。写端签名需 Go 编译的 .so（Poseidon+BN254），
+  // Round N+1 通过 ffi-napi 或 Python subprocess 桥接补齐；本轮 LIVE 读端已可用
+  // （真价 / 真持仓 / 真余额显示），写端会抛清晰错误让 Autopilot skip。
+  const lt = {
+    mode: (process.env.LT_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
+    privateKey: process.env.LT_API_KEY_PRIVATE_KEY || '',
+    accountIndex: process.env.LT_ACCOUNT_INDEX || '',
+    apiKeyIndex: process.env.LT_API_KEY_INDEX || '0',
+    apiUrl: (process.env.LT_API_URL || 'https://mainnet.zklighter.elliot.ai').replace(/\/$/, ''),
+    startBalance: Number(process.env.PAPER_BALANCE || 10000),
+    proxy: process.env.LT_PROXY || globalProxy,
+  };
+
   // ── Ondo Perps ────────────────────────────────────────────────────────────
   const onNet = (process.env.ON_NETWORK || 'mainnet').toLowerCase();
   const onDefaults = onNet === 'testnet'
@@ -212,6 +228,7 @@ export function getConfig() {
     bu,
     ph,
     nd,
+    lt,
   };
 }
 

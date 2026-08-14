@@ -8,7 +8,7 @@
 //   4. 状态持久化在 .state.json 的 'pets' key 下，重启不掉
 import { loadSnapshot, saveSnapshot } from './persist.js';
 
-const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd'];
+const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd', 'lt'];
 
 // Round 84 阈值调整：7 阶进化，按用户要求以真实 USDT 交易量刻度：
 //   L1→L2 500K   L2→L3 1亿   L3→L4 2亿   L4→L5 5亿   L5→L6 10亿   L6→L7 50亿
@@ -87,6 +87,13 @@ export const PET_SPECIES = {
     stageNames: ['火卵', '雏毕方', '独脚鸟', '青毕方', '焚天毕方', '毕方神', '涅槃毕方'],
     fallback: ['🥚', '🐣', '🦩', '🦚', '🔥', '🦅', '💫'],
     color: '#22d3ee',
+  },
+  lt: {
+    // Lighter：zk L2，通用 emoji 兜底（未定制立绘），色调走 --lt-color 青蓝
+    name: 'Lighter 灵鸟', theme: 'zk L2 极速轻雀',
+    stageNames: ['光卵', '雏光', '光雀', '流光', '极光', '光之神', '通天灵鸟'],
+    fallback: ['🥚', '🐣', '🐦', '⚡', '✨', '👑', '💫'],
+    color: '#38bdf8',
   },
 };
 
