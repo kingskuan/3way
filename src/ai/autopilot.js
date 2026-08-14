@@ -348,6 +348,16 @@ class Autopilot {
                                      // 跟着冲 volume。SX 高 fee 但 conservative
                                      // 3x lev + 小 sizeBase，30 格总 notional 仍
                                      // <30% capital。fill 密度 +50% 拉 volume。
+        // Round 275au：SX 策略无效熔断（gridProfit $190 vs realized -$18 = $209 差）
+        // 根因 —— sizeFraction 0.02 太小 → 0.0001 BTC/单 × $63500 = $6.35 notional/rung
+        // × StandX taker 0.05% × 2 = $0.0064 fee，per-rung 理论利润 spacing $211 × 0.0001
+        // = $0.021 · 净 $0.015 · 太脆 · 单边行情就翻脸。放大 sizeFraction 到 0.04
+        // (2x)，每 rung notional $12.7 · fee 相对比例减半 · 抗单边能力翻倍。同时
+        // rangePct 0.05 → 0.03 收窄区间 · spacing $211 → $127 · fill 密度 +67% ·
+        // 让 grid 更贴近现价吃震荡。总 notional 30 × 0.04 × 3x = 360% capital · 大约
+        // 12 单同时 fill 才占 40% margin · 可控。
+        sizeFractionOfBalance: 0.04,
+        rangePct: 0.03,
         dailyLossPctLimit: 8,       // Round 169：5% → 8%（SX 仍熔断中，5% 也
                                      // 打不过高 fee + 慢烧）。8% 是 conservative 2%
                                      // 与 aggressive 12% 中间挡，让 SX 少熔断多跑
