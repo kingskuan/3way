@@ -1,28 +1,24 @@
 // LighterExchange (LIVE) — zkLighter L2 上的 zk perp DEX（Elliot Labs）
 // · USDC 结算 · 主流币 BTC/ETH/SOL/HYPE/... · 零售零手续费 · L2 API key 签名
 //
-// ⚠️ 关键实现限制（Round 首发注记，供 Round N+1 补齐）：
-//   Lighter 官方 Python SDK 的 SignerClient 通过 ctypes 加载 Go 编译的
-//   闭源共享库 (lighter-signer-linux-amd64.so 等) 来做交易签名。签名算法用
-//   了 Poseidon-hash + BN254 曲线的 zk-friendly 方案，无法用纯 JavaScript
-//   等价实现（不是标准 ed25519 也不是 EIP-712）。
+// 写端签名策略（Round 277 起）：
+//   Lighter 的签名器是 Go 编译的 lighter-signer-*.so，用 Poseidon+BN254
+//   zk-friendly 方案。纯 JS 无等价实现。本轮通过 tools/lighter-signer.py
+//   常驻子进程 + JSON RPC over stdin/stdout 桥接官方 Python SDK：
+//     · 有 LT_API_KEY_PRIVATE_KEY  → init() 里 spawn Python worker，写端可用
+//     · 无 privateKey / 子进程挂    → 静默回落到 read-only（同 Round 276 行为）
+//   Docker 镜像 (Round 277 更新的 Dockerfile) 已内置 python3 + lighter-sdk。
 //
-//   本适配器采用「读端 LIVE + 写端 stub」的分层策略：
-//   · 读端：完全走 mainnet REST（markets / candles / prices / positions /
-//     balance via account_index GET）— 全部无鉴权公开端点，直接可用。
-//   · 写端：placeLimitOrder / cancelOrder / cancelAll / closePosition /
-//     setLeverage 全部抛清晰错误，提示需 Round N+1 引入 ffi-napi 加载
-//     .so，或 child_process 桥接 Python SDK。
-//
-//   这样的好处：11 家整合的整体接线一次到位（overview / autopilot / 宠物
-//   / SSE / UI 都能看到 Lighter）；LIVE 模式下能显示真实价格 / 真持仓 /
-//   真余额供监控；只是 Autopilot 尝试起单会立即报错并 skip 该家，
-//   不会造成事故。
+// 读端（无签名器也可用）：markets / candles / prices / positions / balance
+// 全走公开 REST，不需要 auth token。
 //
 // 文档：https://mainnet.zklighter.elliot.ai （API 基址）
-//       https://github.com/elliottech/zklighter-perps-python-sdk
-//       https://github.com/elliottech/lighter-go （签名 Go 源，二进制在 SDK repo）
+//       https://github.com/elliottech/lighter-python
+//       https://github.com/elliottech/lighter-go （签名器 Go 源，二进制内嵌 python SDK）
 import { EventEmitter } from 'node:events';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve as pathResolve } from 'node:path';
+import { LighterSignerBridge } from './signer-bridge.js';
 
 const POLL_MS = 3000;
 const BASE_URL = 'https://mainnet.zklighter.elliot.ai';
@@ -37,14 +33,17 @@ const PREFERRED_SYMBOLS = new Set([
   'WLD', 'ORDI', 'PEPE', 'WIF', 'BONK',
 ]);
 
-// 写端 stub 用的固定异常，autopilot / bot 层会捕获后 skip 本轮
-const SIGNER_MISSING_ERR = () =>
+// 签名器不可用时抛的错（缺 privateKey / Python worker 挂 / 熔断给放弃了）
+const SIGNER_MISSING_ERR = (reason = 'not_ready') =>
   new Error(
-    'Lighter LIVE 交易签名尚未接入：Lighter 用 Go 编译的 Poseidon+BN254 签名器 '
-    + '（lighter-signer-*.so），纯 JS 无法等价实现。下一轮 (N+1) 计划通过 '
-    + 'ffi-napi 加载官方 .so，或用 child_process 桥接 Python SDK。现在写端会抛此错，'
-    + '读端（价格/持仓/余额）已可用。'
+    `Lighter 签名器不可用 (${reason})：需 LT_API_KEY_PRIVATE_KEY + LT_ACCOUNT_INDEX，`
+    + '且 Python worker (tools/lighter-signer.py) 起来后 check_client 无错。'
+    + '本次操作已 skip，读端（价格/持仓/余额）仍可用。'
   );
+
+// tools/lighter-signer.py 的绝对路径（跟 lighter.js 一样在同一个 repo，向上 3 级到 project root）
+const _hereDir = dirname(fileURLToPath(import.meta.url));
+const WORKER_PATH = pathResolve(_hereDir, '..', '..', '..', 'tools', 'lighter-signer.py');
 
 export class LighterExchange extends EventEmitter {
   constructor(opts = {}) {
@@ -74,8 +73,26 @@ export class LighterExchange extends EventEmitter {
     this._pollTimer = null;
     this._activeMarketId = null;
     this._balanceCounter = 0;
-    this._signerAvailable = false;    // Round N+1 之前恒为 false
+    this._signerAvailable = false;    // true 表示 Python bridge init OK
+    this._signerBridge = null;        // LighterSignerBridge | null
     this._writeStubWarned = false;    // 每种写操作首次抛错时 log 一次即可
+    // client_order_index 是 int64，用来匹配 cancel 时的 order_index。
+    // 用 (毫秒时间戳 << 20) + counter 保证进程内单调、进程间大概率不冲突。
+    this._cloiCounter = 0;
+    this._cloiBase = Number(BigInt(Date.now()) << 20n);
+  }
+
+  _nextClientOrderIndex() {
+    // 保证不超过 Number.MAX_SAFE_INTEGER (2^53-1)：ms << 20 ≈ 2^60，太大 → 只取低 52 位
+    this._cloiCounter = (this._cloiCounter + 1) & 0xffff;
+    const raw = (this._cloiBase + this._cloiCounter) % Number.MAX_SAFE_INTEGER;
+    return raw;
+  }
+
+  // 本地 marketId → Lighter 的 remote market_id
+  _remoteMarketIndex(localMid) {
+    for (const [rm, lm] of this.mktIdxToLocal) if (lm === Number(localMid)) return rm;
+    return null;
   }
 
   // ── 请求辅助 ────────────────────────────────────────────────────────────
@@ -117,6 +134,33 @@ export class LighterExchange extends EventEmitter {
         + `  检查 LT_ACCOUNT_INDEX=${this.accountIndex} 是不是有效账户；\n`
         + `  且 API 基址 ${this.apiUrl} 可达。`
       );
+    }
+
+    // 有 privateKey 就尝试把 Python 签名器 bridge 起来。失败降级到 read-only，
+    // 不 hard-fail — user 可以先看到日志再调 env。
+    if (this.privateKey) {
+      try {
+        this._signerBridge = new LighterSignerBridge({
+          pythonPath: process.env.LT_PYTHON || 'python3',
+          workerPath: WORKER_PATH,
+          initParams: {
+            api_url: this.apiUrl,
+            api_key_private_key: this.privateKey,
+            account_index: this.accountIndex,
+            api_key_index: this.apiKeyIndex,
+          },
+        });
+        this._signerBridge.on('crash', (err) => {
+          console.warn('[Lighter] signer bridge crash:', err.message);
+          this.emit('error', err);
+        });
+        await this._signerBridge.start();
+        this._signerAvailable = true;
+        console.log('[Lighter] Python signer bridge OK · 写端可用');
+      } catch (e) {
+        this._signerAvailable = false;
+        console.warn('[Lighter] Python signer bridge 起不来，退回 read-only:', e.message);
+      }
     }
 
     this.dataSource = 'real';
@@ -179,6 +223,11 @@ export class LighterExchange extends EventEmitter {
         stepPrice,
         minOrderSize: minSize,
         maxLeverage: 20,             // Lighter 默认最高杠杆，实际按账户 tier 有差异
+        // 写端签名要把 price/size 缩成整数（乘 10^decimals）。存原始 decimals 避
+        // 免用 -log10(stepPrice) 反算时踩浮点误差。
+        _priceDec: priceDec,
+        _sizeDec: sizeDec,
+        _remoteMarketIndex: remoteMid,
       });
       this.symbolToId.set(symbol, marketId);
       this.symbolToId.set(`${symbol}-USDC`, marketId);
@@ -273,25 +322,101 @@ export class LighterExchange extends EventEmitter {
     return this.stats;
   }
 
-  // ── GridBot 接口（写端 — stub）─────────────────────────────────────────
-  async setLeverage(_marketId, _lev) {
+  // ── GridBot 接口（写端 — Round 277 起走 Python signer bridge）────────
+  async setLeverage(marketId, leverage) {
+    // Lighter 有 SignUpdateLeverage 接口（cross/isolated + fraction），但对 grid
+    // 策略而言"每单不带 leverage 也能起单"，很多其它 DEX（Perpl/Extended/StandX/
+    // Bitget）也是账户级不改。为了不给 bot 起单前加一步可能失败的 tx，这里先返
+    // true，实际杠杆按账户 tier 默认走。future round 若真需要按 market 改，再补
+    // sign_update_leverage 到 worker。
     if (!this._writeStubWarned) {
       this._writeStubWarned = true;
-      console.warn('[Lighter] setLeverage 需 Go 签名器（stub）— 静默返 true 让上层继续');
+      console.log(`[Lighter] setLeverage(${marketId}, ${leverage}) — 走账户级默认杠杆，不发 tx`);
     }
-    // 返 true 免得 bot 起单前的 setLeverage 一步就熔断
     return true;
   }
 
-  async placeLimitOrder(_o) {
-    this.emit('error', SIGNER_MISSING_ERR());
-    throw SIGNER_MISSING_ERR();
+  async placeLimitOrder(o) {
+    if (!this._signerAvailable || !this._signerBridge) {
+      const err = SIGNER_MISSING_ERR('signer_not_ready');
+      this.emit('error', err);
+      throw err;
+    }
+    const mkt = this.markets.get(Number(o.marketId));
+    if (!mkt) throw new Error(`Lighter: 未知 market ${o.marketId}`);
+    const remoteMid = mkt._remoteMarketIndex ?? this._remoteMarketIndex(mkt.marketId);
+    if (remoteMid == null) throw new Error(`Lighter: ${mkt.symbol} 未映射到 remote market_index`);
+
+    const priceDec = Number(mkt._priceDec);
+    const sizeDec = Number(mkt._sizeDec);
+    if (!Number.isFinite(priceDec) || !Number.isFinite(sizeDec)) {
+      throw new Error(`Lighter: market ${mkt.symbol} 缺 price/size decimals（应在 init 时填）`);
+    }
+
+    const price = Math.round(Number(o.price) * Math.pow(10, priceDec));
+    const baseAmount = Math.round(Number(o.sizeBase) * Math.pow(10, sizeDec));
+    if (!(price > 0) || !(baseAmount > 0)) {
+      throw new Error(`Lighter: 非法 price/size (raw price=${o.price} size=${o.sizeBase} → int ${price}/${baseAmount})`);
+    }
+
+    const clientOrderIndex = this._nextClientOrderIndex();
+    const isAsk = String(o.side).toLowerCase() === 'sell';
+
+    // SDK 常量：ORDER_TYPE_LIMIT=0 · ORDER_TIME_IN_FORCE_GOOD_TILL_TIME=1 (POST_ONLY=2)
+    // 默认 GTT 而非 POST_ONLY 是为了跟 Decibel 一致（避免 replenish 时 POST_ONLY 违规 reject）
+    const timeInForce = (o.postOnly ?? false) ? 2 : 1;
+
+    const resp = await this._signerBridge.signCreateOrder({
+      market_index: remoteMid,
+      client_order_index: clientOrderIndex,
+      base_amount: baseAmount,
+      price,
+      is_ask: isAsk,
+      order_type: 0,
+      time_in_force: timeInForce,
+      reduce_only: !!o.reduceOnly,
+      trigger_price: 0,
+      order_expiry: -1,   // DEFAULT_28_DAY
+    });
+    if (!resp || resp.err) throw new Error(`Lighter 下单失败：${resp?.err || 'unknown'}`);
+    if (resp.code != null && Number(resp.code) !== 200) {
+      throw new Error(`Lighter 下单被拒 code=${resp.code} msg=${resp.message || ''}`);
+    }
+
+    // 本地跟踪：用 client_order_index 作 orderId（cancel 时需要传的就是这个）
+    const orderId = String(clientOrderIndex);
+    this.orders.set(orderId, {
+      orderId,
+      marketId: mkt.marketId,
+      levelIndex: o.levelIndex,
+      side: o.side,
+      price: Number(o.price),
+      sizeBase: Number(o.sizeBase),
+      reduceOnly: !!o.reduceOnly,
+      clientOrderIndex,
+      txHash: resp.tx_hash || null,
+    });
+    return { orderId };
   }
 
-  async cancelOrder(_marketId, orderId) {
-    // 本地清理已跟踪的单子，方便 bot 状态收敛（不真的 chain-side 撤单）
+  async cancelOrder(marketId, orderId) {
+    // 先本地清理，让 bot 状态马上收敛（真链上撤单失败也不重复跟踪）
     this.orders.delete(String(orderId));
-    throw SIGNER_MISSING_ERR();
+    if (!this._signerAvailable || !this._signerBridge) throw SIGNER_MISSING_ERR('signer_not_ready');
+    const mkt = this.markets.get(Number(marketId));
+    if (!mkt) return;
+    const remoteMid = mkt._remoteMarketIndex ?? this._remoteMarketIndex(mkt.marketId);
+    if (remoteMid == null) return;
+    const orderIndex = Number(orderId);
+    if (!Number.isFinite(orderIndex)) throw new Error(`Lighter cancel: orderId 不是数字 (${orderId})`);
+    const resp = await this._signerBridge.signCancelOrder({
+      market_index: remoteMid,
+      order_index: orderIndex,
+    });
+    if (resp?.err) throw new Error(`Lighter 撤单失败：${resp.err}`);
+    if (resp?.code != null && Number(resp.code) !== 200) {
+      throw new Error(`Lighter 撤单被拒 code=${resp.code} msg=${resp.message || ''}`);
+    }
   }
 
   async cancelAll(marketId) {
@@ -299,11 +424,62 @@ export class LighterExchange extends EventEmitter {
     for (const [id, o] of this.orders) {
       if (o.marketId === marketIdN) this.orders.delete(id);
     }
-    throw SIGNER_MISSING_ERR();
+    if (!this._signerAvailable || !this._signerBridge) throw SIGNER_MISSING_ERR('signer_not_ready');
+    const mkt = this.markets.get(marketIdN);
+    if (!mkt) return;
+    const remoteMid = mkt._remoteMarketIndex ?? this._remoteMarketIndex(marketIdN);
+    if (remoteMid == null) return;
+    const resp = await this._signerBridge.signCancelAll({
+      time_in_force: 0,       // CANCEL_ALL_TIF_IMMEDIATE
+      timestamp_ms: 0,
+      cancel_all_market_index: remoteMid,
+    });
+    if (resp?.err) throw new Error(`Lighter cancelAll 失败：${resp.err}`);
   }
 
-  async closePosition(_marketId) {
-    return { closed: false, error: SIGNER_MISSING_ERR().message };
+  async closePosition(marketId) {
+    const pos = this.positions.get(Number(marketId));
+    if (!pos || pos.sizeBase === 0) return { closed: true };
+    if (!this._signerAvailable || !this._signerBridge) {
+      return { closed: false, error: SIGNER_MISSING_ERR('signer_not_ready').message };
+    }
+    const mkt = this.markets.get(Number(marketId));
+    if (!mkt) return { closed: false, error: `未知 market ${marketId}` };
+    const remoteMid = mkt._remoteMarketIndex ?? this._remoteMarketIndex(mkt.marketId);
+    if (remoteMid == null) return { closed: false, error: '未映射 remote market_index' };
+
+    const priceDec = Number(mkt._priceDec);
+    const sizeDec = Number(mkt._sizeDec);
+    const size = Math.abs(Number(pos.sizeBase));
+    const baseAmount = Math.round(size * Math.pow(10, sizeDec));
+    if (!(baseAmount > 0)) return { closed: true };
+    const isAsk = pos.sizeBase > 0;           // long 平仓 → sell
+    // Market IOC + 5% slippage 保护（限价市价单：给个宽泛的最坏可接受价）
+    const refPx = Number(this.prices.get(Number(marketId)) || mkt.lastPrice);
+    const slippedPx = isAsk ? refPx * 0.95 : refPx * 1.05;
+    const price = Math.round(slippedPx * Math.pow(10, priceDec));
+    const clientOrderIndex = this._nextClientOrderIndex();
+    try {
+      const resp = await this._signerBridge.signCreateOrder({
+        market_index: remoteMid,
+        client_order_index: clientOrderIndex,
+        base_amount: baseAmount,
+        price,
+        is_ask: isAsk,
+        order_type: 1,         // ORDER_TYPE_MARKET
+        time_in_force: 0,      // IOC
+        reduce_only: true,
+        trigger_price: 0,
+        order_expiry: 0,       // DEFAULT_IOC_EXPIRY
+      });
+      if (resp?.err) return { closed: false, error: resp.err };
+      if (resp?.code != null && Number(resp.code) !== 200) {
+        return { closed: false, error: `code=${resp.code} msg=${resp.message || ''}` };
+      }
+      return { closed: true, txHash: resp?.tx_hash };
+    } catch (e) {
+      return { closed: false, error: e.message };
+    }
   }
 
   async fetchOpenOrders(_marketId) {
@@ -350,6 +526,11 @@ export class LighterExchange extends EventEmitter {
 
   stop() {
     if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
+    if (this._signerBridge) {
+      try { this._signerBridge.stop(); } catch {}
+      this._signerBridge = null;
+      this._signerAvailable = false;
+    }
   }
 
   start() {
