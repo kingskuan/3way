@@ -194,12 +194,16 @@ export class LighterExchange extends EventEmitter {
     if (!arr.length) return [];
 
     // 拉 exchangeStats 或 orderBookDetails 拿实时价格（后者更详细）
+    // Round 278c: exchangeStats 每条只有 { symbol, last_trade_price, ... } · 无 market_id ·
+    // 之前用 Number(s.market_id) 全塞 NaN key · 后续按 remoteMid 查全 miss · price=0 →
+    // 235 市场全被 filter 掉 · adapter 报「拉不到市场列表」。改按 symbol 建 priceBySymbol map。
     const stats = await this._pubGet('/api/v1/exchangeStats');
     const statsList = stats?.order_book_stats || stats?.orderBookStats || [];
-    const priceByMktId = new Map();
+    const priceBySymbol = new Map();
     for (const s of statsList) {
+      const sym = String(s.symbol || '').toUpperCase();
       const p = Number(s.last_trade_price || s.mark_price || s.index_price || 0);
-      if (p > 0) priceByMktId.set(Number(s.market_id), p);
+      if (sym && p > 0) priceBySymbol.set(sym, p);
     }
 
     const out = [];
@@ -223,7 +227,7 @@ export class LighterExchange extends EventEmitter {
         ? Number(b.min_base_amount) / Math.pow(10, Number(b.size_decimals ?? sizeDec))
         : stepSize;
 
-      const price = priceByMktId.get(remoteMid) || 0;
+      const price = priceBySymbol.get(symbol) || 0;
       if (!(price > 0)) continue;   // 没有活跃价的市场先跳过
 
       const marketId = nextId++;
