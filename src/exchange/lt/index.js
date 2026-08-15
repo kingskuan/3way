@@ -19,6 +19,8 @@ export function createExchange(cfg) {
       accountIndex: Number(cfg.accountIndex),
       apiKeyIndex: Number(cfg.apiKeyIndex ?? 0),
       apiUrl: cfg.apiUrl,
+      chainId: cfg.chainId,       // Round 279: 传网络 chain_id 给 SignerClient
+      network: cfg.network,
     });
   }
   return new LighterPaper({ startBalance: cfg.startBalance });

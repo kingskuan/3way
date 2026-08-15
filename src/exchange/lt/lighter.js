@@ -53,8 +53,10 @@ export class LighterExchange extends EventEmitter {
     this.accountIndex = Number(opts.accountIndex);
     this.apiKeyIndex = Number(opts.apiKeyIndex ?? 0);
     this.apiUrl = opts.apiUrl || BASE_URL;
+    // Round 279: chainId + network 从 config 传入 · 支持 mainnet / rh-mainnet / testnet / rh-testnet
+    this.chainId = Number.isFinite(Number(opts.chainId)) ? Number(opts.chainId) : null;
     this.dataSource = 'connecting';
-    this.network = 'mainnet';
+    this.network = opts.network || 'mainnet';
 
     this.markets = new Map();       // marketId(number) -> Market
     this.symbolToId = new Map();    // "BTC" -> marketId
@@ -161,6 +163,9 @@ export class LighterExchange extends EventEmitter {
             api_key_private_key: this.privateKey,
             account_index: this.accountIndex,
             api_key_index: this.apiKeyIndex,
+            // Round 279: 传 chain_id 让 SignerClient 用对应网络的 L2 signing domain。
+            // 原生 L2 = 304 · Robinhood Chain = 466324 · 缺就让 SDK 自动推。
+            chain_id: this.chainId ?? undefined,
           },
         });
         this._signerBridge.on('crash', (err) => {
