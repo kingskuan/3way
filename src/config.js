@@ -166,19 +166,34 @@ export function getConfig() {
     proxy: process.env.ND_PROXY || globalProxy,
   };
 
-  // ── Lighter Perps (zkLighter L2 · USDC 结算 · zk Poseidon L2 API key 签名) ─
-  // LIVE 需要 LT_API_KEY_PRIVATE_KEY（Lighter API key 私钥 hex）+
-  // LT_ACCOUNT_INDEX（在 zklighter.elliot.ai 上的账户 index，正整数）+ 可选
-  // LT_API_KEY_INDEX（默认 0）。写端 (Round 277) 走 Python subprocess bridge
-  // 调用官方 SDK（Poseidon+BN254 签名器 .so），Docker 镜像已内置 python3 +
-  // lighter-sdk。缺 privateKey 时 LIVE 仍能跑 read-only（真价 / 真持仓 / 真余额），
-  // 写操作抛 "signer_not_ready"。可选 LT_PYTHON 指定 python3 路径（默认 'python3'）。
+  // ── Lighter Perps (zkLighter L2 · zk Poseidon L2 API key 签名) ─
+  // LIVE 需要 LT_API_KEY_PRIVATE_KEY + LT_ACCOUNT_INDEX + 可选 LT_API_KEY_INDEX。
+  // 写端走 Python subprocess bridge 调 lighter-sdk（Round 277）· 缺 privateKey 时
+  // LIVE 仍能跑 read-only · 写操作抛 signer_not_ready。可选 LT_PYTHON 指定 python3。
+  //
+  // Round 279: 支持 4 个网络 · 用 LT_NETWORK env 切换（默认 mainnet 保持向后兼容）：
+  //   mainnet     · https://mainnet.zklighter.elliot.ai   · chain 304   · USDC
+  //   testnet     · https://testnet.zklighter.elliot.ai   · chain 300   · USDC
+  //   rh-mainnet  · https://api.rh.lighter.xyz            · chain 466324 · USDG
+  //                (Robinhood Chain · 2x points · 交易需 Robinhood Wallet 内存 USDG)
+  //   rh-testnet  · https://api.rh-testnet.lighter.xyz    · chain 300   · USDG
+  // LT_API_URL / LT_CHAIN_ID 手动覆盖优先（比如未来出新网络）。
+  const LT_NETWORKS = {
+    'mainnet':    { url: 'https://mainnet.zklighter.elliot.ai',  chainId: 304 },
+    'testnet':    { url: 'https://testnet.zklighter.elliot.ai',  chainId: 300 },
+    'rh-mainnet': { url: 'https://api.rh.lighter.xyz',           chainId: 466324 },
+    'rh-testnet': { url: 'https://api.rh-testnet.lighter.xyz',   chainId: 300 },
+  };
+  const ltNet = (process.env.LT_NETWORK || 'mainnet').toLowerCase();
+  const ltNetCfg = LT_NETWORKS[ltNet] || LT_NETWORKS['mainnet'];
   const lt = {
     mode: (process.env.LT_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
+    network: ltNet,
     privateKey: process.env.LT_API_KEY_PRIVATE_KEY || '',
     accountIndex: process.env.LT_ACCOUNT_INDEX || '',
     apiKeyIndex: process.env.LT_API_KEY_INDEX || '0',
-    apiUrl: (process.env.LT_API_URL || 'https://mainnet.zklighter.elliot.ai').replace(/\/$/, ''),
+    apiUrl: (process.env.LT_API_URL || ltNetCfg.url).replace(/\/$/, ''),
+    chainId: Number(process.env.LT_CHAIN_ID || ltNetCfg.chainId),
     startBalance: Number(process.env.PAPER_BALANCE || 10000),
     proxy: process.env.LT_PROXY || globalProxy,
   };
