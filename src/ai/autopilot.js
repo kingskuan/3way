@@ -384,6 +384,15 @@ class Autopilot {
         maxLeverage: Math.min(s.maxLeverage, 10),
       };
     }
+    // Round 280：Lighter (RH Chain) 有较严 rate limit —— aggressive 默认 80 格
+    // 密集下单会 429 (Too Many Requests)，实测 79 单只挂上 1/79。降到 20 格 +
+    // 每单间隔 200ms（adapter 层实现）够 grid 用 · 后续观察再调。
+    if (key === 'lt') {
+      s = {
+        ...s,
+        gridCount: Math.min(s.gridCount, 20),
+      };
+    }
     const now = Date.now();
     // Round 50: 每次 tick 都刷新 lastDecisionAt，让 UI"决策时间"反映最近一次评估
     // 而不是最近一次 start（之前只在 start 分支更新，skip / stop / err 都不更→

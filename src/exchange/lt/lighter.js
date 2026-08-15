@@ -364,6 +364,15 @@ export class LighterExchange extends EventEmitter {
       this.emit('error', err);
       throw err;
     }
+    // Round 280：Lighter RH Chain 有较严 sendTx rate limit（429 Too Many Requests）
+    // 实测 79 单密集下 79 单只挂上 1/79。加 200ms 单调递增 throttle 让每单串行 ≥5/s。
+    // Grid mode 起 20-80 单会依序 4-16s 完成 · 可接受（bot 内 seed 循环也已 await）。
+    const now = Date.now();
+    const nextAt = this._nextSendAt || 0;
+    if (now < nextAt) {
+      await new Promise((r) => setTimeout(r, nextAt - now));
+    }
+    this._nextSendAt = Math.max(now, nextAt) + 200;
     const mkt = this.markets.get(Number(o.marketId));
     if (!mkt) throw new Error(`Lighter: 未知 market ${o.marketId}`);
     const remoteMid = mkt._remoteMarketIndex ?? this._remoteMarketIndex(mkt.marketId);
