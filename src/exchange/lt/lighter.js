@@ -99,12 +99,21 @@ export class LighterExchange extends EventEmitter {
   async _pubGet(path, timeoutMs = 8000) {
     try {
       const res = await fetch(`${this.apiUrl}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        this.lastError = `Lighter GET ${path} → HTTP ${res.status}`;
+        return null;
+      }
       const j = await res.json();
       // Lighter 统一响应 { code, message, ... }：code === 200 为成功，其余错
-      if (j?.code != null && Number(j.code) !== 200) return null;
+      if (j?.code != null && Number(j.code) !== 200) {
+        this.lastError = `Lighter GET ${path} → code=${j.code} msg=${(j.message || '').slice(0,120)}`;
+        return null;
+      }
       return j;
-    } catch { return null; }
+    } catch (e) {
+      this.lastError = `Lighter GET ${path} → ${e.name || 'err'}: ${(e.message || '').slice(0,120)}`;
+      return null;
+    }
   }
 
   // ── 初始化 ──────────────────────────────────────────────────────────────
