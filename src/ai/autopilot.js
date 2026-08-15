@@ -24,8 +24,8 @@ import { notify } from './provider.js';
 import { analyzeTrend } from '../trend.js';
 import { loadSnapshot, saveSnapshot } from '../persist.js';
 
-const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix', nd: 'Nado' };
-const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd'];
+const EXNAMES = { de: 'Decibel', ex: 'Extended', rs: 'RISEx', on: 'Ondo', pl: 'Perpl', sx: 'StandX', bg: 'Bitget', bu: 'Bitunix', ph: 'Phoenix', nd: 'Nado', lt: 'Lighter' };
+const KEYS = ['de', 'ex', 'rs', 'on', 'pl', 'sx', 'bg', 'bu', 'ph', 'nd', 'lt'];
 
 // 风格参数：越保守区间越宽（成交少但安全）、格距/单量越小、日亏熔断越紧。
 const STYLES = {
