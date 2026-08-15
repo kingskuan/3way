@@ -120,7 +120,11 @@ export class LighterExchange extends EventEmitter {
   async init() {
     // Lighter 的市场需从 /api/v1/orderBooks 拉（返回所有 order-book 元数据）
     const list = await this._fetchMarkets();
-    if (!list.length) throw new Error('Lighter: 拉不到市场列表，检查网络/代理');
+    if (!list.length) {
+      // Round 278b: 保留 _pubGet 的具体错（HTTP 码 / 异常名）· 之前 throw generic
+      // 「拉不到市场列表」覆盖了 lastError · 用户看不到根因
+      throw new Error(`Lighter: 拉不到市场列表 · ${this.lastError || '无 _pubGet lastError（未调用？）'}`);
+    }
     this._setMarkets(list);
     for (const [id, m] of this.markets) this.prices.set(id, m.lastPrice);
 
