@@ -167,11 +167,12 @@ export function getConfig() {
   };
 
   // ── Lighter Perps (zkLighter L2 · USDC 结算 · zk Poseidon L2 API key 签名) ─
-  // Round 首发：LIVE 需要 LT_API_KEY_PRIVATE_KEY（Lighter API key 私钥 hex）+
+  // LIVE 需要 LT_API_KEY_PRIVATE_KEY（Lighter API key 私钥 hex）+
   // LT_ACCOUNT_INDEX（在 zklighter.elliot.ai 上的账户 index，正整数）+ 可选
-  // LT_API_KEY_INDEX（默认 0）。写端签名需 Go 编译的 .so（Poseidon+BN254），
-  // Round N+1 通过 ffi-napi 或 Python subprocess 桥接补齐；本轮 LIVE 读端已可用
-  // （真价 / 真持仓 / 真余额显示），写端会抛清晰错误让 Autopilot skip。
+  // LT_API_KEY_INDEX（默认 0）。写端 (Round 277) 走 Python subprocess bridge
+  // 调用官方 SDK（Poseidon+BN254 签名器 .so），Docker 镜像已内置 python3 +
+  // lighter-sdk。缺 privateKey 时 LIVE 仍能跑 read-only（真价 / 真持仓 / 真余额），
+  // 写操作抛 "signer_not_ready"。可选 LT_PYTHON 指定 python3 路径（默认 'python3'）。
   const lt = {
     mode: (process.env.LT_MODE || 'paper').toLowerCase() === 'live' ? 'live' : 'paper',
     privateKey: process.env.LT_API_KEY_PRIVATE_KEY || '',
