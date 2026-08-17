@@ -50,23 +50,15 @@ const STYLES = {
   aggressive: {
     // Round 201: 全 copy @zaijin338191 (16 天 +50% return) 策略。
     // 核心：BTC 挂着不换币 + 80 格密网格 + 30x + 主动 re-center 保仓。
-    // - rangePct 5% (对齐他 ±3000U on BTC $63k ≈ 4.7%)
-    // - gridCount 80 (对齐他 Decibel/Extended 80 格)
-    // - fraction 0.20 (对齐他 per-grid notional/balance ≈ 0.188)
-    // - leverage 30x (对齐他)
-    // - dailyLossPct 8% (更严，30x 需更多 buffer)
-    // outOfRangeAction 保 'recover' 但配合 _maybeRecenter 提前触发（drift 3.3%）
-    // 保仓不平，让位置在震荡中自然吃掉。
+    // Round 281: 更彻底靠拢 @zaijin338191 "绝不手动平仓" 原则 · dailyLossPct 15→25 ·
+    //   consecutiveLoss 4→10 · 让 grid 有真的 drawdown 空间等回调 · 配合下面
+    //   _emergencyStop 改 closePosition:false 死扛不平仓。
     rangePct: 0.05,
     gridCount: 80,
     sizeFractionOfBalance: 0.20,
     maxLeverage: 30,
-    // Round 208: 8% → 15%。BTC 跌 2% × 30x lev = 60% notional swing → 8% 阈值
-    // 一波下跌就熔断（PL/RS 双爆），close position 实现 loss，24h 锁定。
-    // @zaijin338191 明确说"绝不手动平仓" —— 自动熔断是代理版手动平仓。
-    // 15% 允许 3% 反向 BTC 走势才触发（对应 45% notional loss），网格能吃住小波动。
-    dailyLossPctLimit: 15,
-    consecutiveLossLimit: 4,
+    dailyLossPctLimit: 25,
+    consecutiveLossLimit: 10,
     outOfRangeAction: 'recover',
   },
 };
@@ -643,13 +635,18 @@ class Autopilot {
     // 一直没重置），每次 tick 都触发策略无效熔断 → pausedUntil 又推 24h →
     // 用户"解除熔断"没用（resumeExchange 只清 pausedUntil，没清 bot.stats）→
     // 死循环。修法：bot 停了就不评估这个信号。
+    // Round 281: 阈值放宽 5%→15% loss · 0.5→3.0 ratio · 从"敏感"改"严重才熔断"。
+    //   原阈值触发 SX 熔断（+$190 理论 / -$18 实际 · 5% × $364 = $18 卡线上）·
+    //   但 grid 天生就是先付 fee 再赚 spacing · 短期账户会小亏很正常。
+    //   3x 意味着 gridProfit 得比 loss 大 300% 才算"策略无效" · loss 得达 15%
+    //   startBalance 才触发 · 给 grid 完整周期空间等 mean revert。
     const gp = Number(cur.stats?.gridProfit) || 0;
     const ed = cur.equityDelta;
     const sb = Number(cur.startBalance) || 0;
     if (cur.running && st.startedByAutopilot
         && sb > 0 && Number.isFinite(ed) && ed < 0
-        && Math.abs(ed) >= sb * 0.05
-        && gp >= Math.abs(ed) * 0.5) {
+        && Math.abs(ed) >= sb * 0.15
+        && gp >= Math.abs(ed) * 3.0) {
       await this._emergencyStop(key, `策略无效：网格理论利润 +${gp.toFixed(2)} 但账户实际亏 ${ed.toFixed(2)}（差 ${(gp - ed).toFixed(2)} = fees+adverse 吃掉），换币`);
       return;
     }
@@ -1628,7 +1625,13 @@ class Autopilot {
       this._save();
       return;
     }
-    try { await bot.stop({ closePosition: true }); } catch { /* best effort */ }
+    // Round 281: closePosition true → false · 学 @zaijin338191「绝不手动平仓」·
+    //   撤挂单但**保留仓位** · 让市场自己 mean revert 回来吃回损失。24h 后
+    //   autopilot 会试重启 grid 环绕当前价 · 让老仓位跟新 grid 一起吃震荡。
+    //   风险：BTC 单边下跌不回来 · 仓位 unrealized loss 无限扩大。收益：BTC
+    //   通常震荡 · grid 一停一开一次能收回 30-70% 损失。zaijin 16 天 +50%
+    //   就是靠这个 hold-through-drawdown 逻辑。
+    try { await bot.stop({ closePosition: false }); } catch { /* best effort */ }
     st.startedByAutopilot = false;
     st.pausedUntil = Date.now() + 24 * 3600_000;
     st.pausedReason = reason;
@@ -1647,7 +1650,7 @@ class Autopilot {
       this._log(key, 'auto_disable', msg);
       notify(`【网格 Autopilot·🚫 自动取消托管】${EXNAMES[key]}\n${msg}\n最后一次原因：${reason}\n请人工评估市场情况，确认继续跑再到 UI 里重新勾选托管。`).catch(() => {});
     } else {
-      notify(`【网格 Autopilot·⚠ 熔断】${EXNAMES[key]}\n${reason}\n已停网格并平仓（24h 内第 ${st.emergencyHistory.length} 次熔断），未来 24 小时不会自动重启。请人工复核后到 UI 里点"解除熔断"恢复。`).catch(() => {});
+      notify(`【网格 Autopilot·⚠ 熔断】${EXNAMES[key]}\n${reason}\n已停网格但**保留仓位**（Round 281 zaijin-style hold）· 24h 内第 ${st.emergencyHistory.length} 次熔断 · 未来 24 小时不自动重启 · 请人工评估是否手动平仓或等回调 · 解除熔断到 UI 点。`).catch(() => {});
     }
     this._save();
   }
