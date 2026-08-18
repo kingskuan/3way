@@ -69,6 +69,12 @@ const DEFAULT_CFG = () => ({
   riskStyle: 'conservative',
   decisionIntervalMin: 30,  // Round 202: 8→30。挂 BTC 不换币策略下不需要密集决策；
                             // 主动动作只剩 re-center/narrow/emergency，30 min 已足够。
+  // Round 282: hold mode（学 @zaijin338191「网格自转」）· true 时 autopilot 只负
+  // 责启动网格 · 一旦 running 就完全放手（跳过所有 emergency_stop / rotate /
+  // re-center / narrow adjust）· 由 bot.js 的 reconcile + replacement 自然补单。
+  // 用户手动决定何时平仓/换币。AI service 仍然发告警但不动手。
+  // 默认 true = 新哲学（zaijin 式）· false = 老 autopilot（主动干预）。
+  holdMode: true,
   perExchange: Object.fromEntries(KEYS.map((k) => [k, {
     enabled: false,
     maxCapitalUsdc: 1000,
@@ -593,6 +599,17 @@ class Autopilot {
     //    额外要求 cur.balance > 0：LIVE 适配器 init 窗口偶尔 balance=0，
     //    dayStartEquity>0 会误判成 100% 亏损，直接给假熔断。用 balance 兜底。
     const cur = bot.getState();
+    // Round 282: hold mode — bot 已 running + 是 autopilot 自己启动的 → 完全放手 ·
+    //   skip 所有护栏 / rotate / re-center · grid 自转（bot.js 补单 + reconcile）·
+    //   用户手动决定平仓/换币。学 zaijin 「挂着不动」策略。
+    if (this.cfg.holdMode && cur.running && st.startedByAutopilot) {
+      const lastLogAt = st._lastHoldLogAt || 0;
+      if (now - lastLogAt > 60 * 60_000) {
+        st._lastHoldLogAt = now;
+        this._log(key, 'hold', `${cur.config?.displayName || key} 网格自转中 · hold mode 不干预（zaijin 式）`);
+      }
+      return;
+    }
     if (st.dayStartEquity > 0 && cur.equity != null && cur.balance > 0) {
       const dailyLossPct = (st.dayStartEquity - cur.equity) / st.dayStartEquity * 100;
       if (dailyLossPct >= s.dailyLossPctLimit) {
