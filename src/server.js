@@ -57,61 +57,76 @@ if ((cfg.host === '0.0.0.0' || cfg.isCloud) && !cfg.dashboardPassword) {
   process.exit(1);
 }
 
-// ── 实盘凭据预检查：缺什么直接列出来，不甩堆栈吓人 ─────────────────────────────
+// ── 实盘凭据预检查：缺什么把该家降到 paper，不整个 app 崩 ─────────────────────
+// Round 283b：老逻辑缺一个 env 直接 process.exit(1) → Railway 无限重启 → 502。
+// 一个交易所缺 creds 不该杀掉其他 10 家。改成 per-exchange 降级到 paper，警告
+// 打红字，其他交易所照常跑。用户去 Railway Variables 补上 → auto redeploy → live 复活。
 {
-  const missing = [];
-  if (cfg.de.mode === 'live') {
-    if (!cfg.de.apiKey) missing.push(['Decibel ', 'DECIBEL_API_KEY', '在 geomi.dev 免费创建']);
-    if (!cfg.de.privateKey) missing.push(['Decibel ', 'DECIBEL_PRIVATE_KEY', '在 app.decibel.trade/api 创建 API 钱包']);
+  const checks = [
+    { key: 'de',  name: 'Decibel ', modeVar: 'DE_MODE',  missing: [
+      [!cfg.de.apiKey,           'DECIBEL_API_KEY',           '在 geomi.dev 免费创建'],
+      [!cfg.de.privateKey,       'DECIBEL_PRIVATE_KEY',       '在 app.decibel.trade/api 创建 API 钱包'],
+    ]},
+    { key: 'ex',  name: 'Extended', modeVar: 'EX_MODE',  missing: [
+      [!cfg.ex.apiKey,           'EXTENDED_API_KEY',          'app.extended.exchange → API Management'],
+      [!cfg.ex.vault,            'EXTENDED_VAULT',            '同上，创建 API Key 时一并显示'],
+      [!cfg.ex.starkPrivateKey,  'EXTENDED_STARK_PRIVATE_KEY', '同上，只显示一次务必保存'],
+    ]},
+    { key: 'rs',  name: 'RISEx   ', modeVar: 'RS_MODE',  missing: [
+      [!cfg.rs.account,          'ACCOUNT_ADDRESS',           'RISEx 应用的账户 / API 设置'],
+      [!cfg.rs.signerKey,        'SIGNER_PRIVATE_KEY',        'RISEx 应用的账户 / API 设置'],
+    ]},
+    { key: 'on',  name: 'Ondo    ', modeVar: 'ON_MODE',  missing: [
+      [!cfg.on.apiKeyId,         'ONDO_API_KEY_ID',           'app.ondoperps.xyz → Profile → API Keys → Add New'],
+      [!cfg.on.apiSecret,        'ONDO_API_SECRET',           '同上（只显示一次，务必当场保存）'],
+    ]},
+    { key: 'pl',  name: 'perpl   ', modeVar: 'PL_MODE',  missing: [
+      [!cfg.pl.apiKey,           'PERPL_API_KEY',             'app.perpl.xyz/apikeys → 创建 API Key'],
+      [!cfg.pl.privateKey,       'PERPL_PRIVATE_KEY',         '同上（Ed25519 私钥，只显示一次）'],
+    ]},
+    { key: 'bg',  name: 'Bitget  ', modeVar: 'BG_MODE',  missing: [
+      [!cfg.bg.apiKey,           'BG_API_KEY',                'bitget.com → API Management → Create API'],
+      [!cfg.bg.secretKey,        'BG_SECRET_KEY',             '同上（创建时一并显示）'],
+      [!cfg.bg.passphrase,       'BG_PASSPHRASE',             '同上（自己设的口令，创建时和 secret 一起给）'],
+    ]},
+    { key: 'bu',  name: 'Bitunix ', modeVar: 'BU_MODE',  missing: [
+      [!cfg.bu.apiKey,           'BU_API_KEY',                'bitunix.com → API Management → Create API'],
+      [!cfg.bu.apiSecret,        'BU_API_SECRET',             '同上（创建时一并显示，只显示一次务必保存）'],
+    ]},
+    { key: 'ph',  name: 'Phoenix ', modeVar: 'PH_MODE',  missing: [
+      [!cfg.ph.walletPrivateKey, 'PH_WALLET_PRIVATE_KEY',     'Solana wallet 私钥 (base58 编码)。Round 210 完整实现 wallet 签名'],
+    ]},
+    { key: 'nd',  name: 'Nado    ', modeVar: 'ND_MODE',  missing: [
+      [!cfg.nd.walletPrivateKey, 'NADO_WALLET_PRIVATE_KEY',   'EVM 钱包私钥 (0x hex)，Ink Chain 上的 Vertex-fork 永续 DEX'],
+    ]},
+    { key: 'lt',  name: 'Lighter ', modeVar: 'LT_MODE',  missing: [
+      // Lighter：accountIndex 必需，privateKey 缺也能读端 LIVE。
+      [!cfg.lt.accountIndex,     'LT_ACCOUNT_INDEX',          '你在 zklighter.elliot.ai 上的账户 index（正整数，账户信息页里的 Index 值）'],
+    ]},
+  ];
+
+  const downgraded = [];
+  for (const c of checks) {
+    if (cfg[c.key].mode !== 'live') continue;
+    const bad = c.missing.filter(([m]) => m);
+    if (!bad.length) continue;
+    cfg[c.key].mode = 'paper';   // 关键：不 exit，降级到 paper 保命
+    downgraded.push({ name: c.name.trim(), modeVar: c.modeVar, bad });
   }
-  if (cfg.ex.mode === 'live') {
-    if (!cfg.ex.apiKey) missing.push(['Extended', 'EXTENDED_API_KEY', 'app.extended.exchange → API Management']);
-    if (!cfg.ex.vault) missing.push(['Extended', 'EXTENDED_VAULT', '同上，创建 API Key 时一并显示']);
-    if (!cfg.ex.starkPrivateKey) missing.push(['Extended', 'EXTENDED_STARK_PRIVATE_KEY', '同上，只显示一次务必保存']);
-  }
-  if (cfg.rs.mode === 'live') {
-    if (!cfg.rs.account) missing.push(['RISEx   ', 'ACCOUNT_ADDRESS', 'RISEx 应用的账户 / API 设置']);
-    if (!cfg.rs.signerKey) missing.push(['RISEx   ', 'SIGNER_PRIVATE_KEY', 'RISEx 应用的账户 / API 设置']);
-  }
-  if (cfg.on.mode === 'live') {
-    if (!cfg.on.apiKeyId) missing.push(['Ondo    ', 'ONDO_API_KEY_ID', 'app.ondoperps.xyz → Profile → API Keys → Add New']);
-    if (!cfg.on.apiSecret) missing.push(['Ondo    ', 'ONDO_API_SECRET', '同上（只显示一次，务必当场保存）']);
-  }
-  if (cfg.pl.mode === 'live') {
-    if (!cfg.pl.apiKey) missing.push(['perpl   ', 'PERPL_API_KEY', 'app.perpl.xyz/apikeys → 创建 API Key']);
-    if (!cfg.pl.privateKey) missing.push(['perpl   ', 'PERPL_PRIVATE_KEY', '同上（Ed25519 私钥，只显示一次）']);
-  }
-  if (cfg.bg.mode === 'live') {
-    if (!cfg.bg.apiKey) missing.push(['Bitget  ', 'BG_API_KEY', 'bitget.com → API Management → Create API']);
-    if (!cfg.bg.secretKey) missing.push(['Bitget  ', 'BG_SECRET_KEY', '同上（创建时一并显示）']);
-    if (!cfg.bg.passphrase) missing.push(['Bitget  ', 'BG_PASSPHRASE', '同上（自己设的口令，创建时和 secret 一起给）']);
-  }
-  if (cfg.bu.mode === 'live') {
-    if (!cfg.bu.apiKey) missing.push(['Bitunix ', 'BU_API_KEY', 'bitunix.com → API Management → Create API']);
-    if (!cfg.bu.apiSecret) missing.push(['Bitunix ', 'BU_API_SECRET', '同上（创建时一并显示，只显示一次务必保存）']);
-  }
-  if (cfg.ph.mode === 'live') {
-    if (!cfg.ph.walletPrivateKey) missing.push(['Phoenix ', 'PH_WALLET_PRIVATE_KEY', 'Solana wallet 私钥 (base58 编码)。Round 210 完整实现 wallet 签名']);
-  }
-  if (cfg.nd.mode === 'live') {
-    if (!cfg.nd.walletPrivateKey) missing.push(['Nado    ', 'NADO_WALLET_PRIVATE_KEY', 'EVM 钱包私钥 (0x hex)，Ink Chain 上的 Vertex-fork 永续 DEX']);
-  }
-  if (cfg.lt.mode === 'live') {
-    // Lighter：accountIndex 是必需的；privateKey 缺失也能进 read-only LIVE（
-    // 首发 Round 写端待 Go 签名器 FFI，本轮只做读；正式接入后 privateKey 也升为必需）
-    if (!cfg.lt.accountIndex) missing.push(['Lighter ', 'LT_ACCOUNT_INDEX', '你在 zklighter.elliot.ai 上的账户 index（正整数，账户信息页里的 Index 值）']);
-  }
-  if (missing.length) {
-    console.error('\n[启动失败] 有交易所被设为 live 实盘模式，但 .env 里还缺以下凭据：\n');
-    for (const [ex, key, where] of missing) {
-      console.error(`  ${ex}  缺 ${key}`);
-      console.error(`            获取方式：${where}`);
+
+  if (downgraded.length) {
+    console.error('\n' + '⚠'.repeat(30));
+    console.error('[启动警告] 以下交易所 mode=live 但 env 里缺凭据，已自动降级到 paper：');
+    console.error('⚠'.repeat(30));
+    for (const d of downgraded) {
+      console.error(`\n  ${d.name} → paper（原本 ${d.modeVar}=live）`);
+      for (const [, key, where] of d.bad) {
+        console.error(`    缺 ${key}`);
+        console.error(`       获取方式：${where}`);
+      }
     }
-    console.error('\n解决办法（二选一）：');
-    console.error('  1. 用记事本打开项目里的 .env，补齐上面列出的字段');
-    console.error('     （详细获取教程见 README.md 第七节）');
-    console.error('  2. 暂时不实盘：把 .env 里对应的 DE_MODE / EX_MODE / RS_MODE 改回 paper\n');
-    process.exit(1);
+    console.error('\n补齐方法：Railway Project → Variables → 找到对应 key 填值 → 自动 redeploy。');
+    console.error('补齐后该家自动切回 live，其他家不受影响，本次先跑 paper 保 UI 能开。\n');
   }
 }
 
