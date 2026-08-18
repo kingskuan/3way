@@ -1320,6 +1320,19 @@ server.on('error', (e) => {
   process.exit(1);
 });
 
+// ── HTTP listen 提到 init 之前 ────────────────────────────────────────────────
+// Round 283 fix：Railway healthcheck 只给 30s。老结构 (LIVE 11 家 + Lighter
+// Python signer bridge) init 会跨过 30s，server.listen 才被调用 → /healthz
+// 500 那 30s 全 service unavailable → Railway 判 unhealthy → 502。
+// 修：先 listen 让 /healthz 立刻能响应，exchange init 在后台异步跑。
+// /healthz handler 是纯 200 ok，不依赖任何 exchange 就绪。
+await new Promise((resolve) => {
+  server.listen(cfg.port, cfg.host, () => {
+    console.log(`\n[HTTP] 监听 ${cfg.host}:${cfg.port} · /healthz 已就绪`);
+    resolve();
+  });
+});
+
 // ── 初始化各交易所 ────────────────────────────────────────────────────────────
 async function initExchange(exchange, name, exCfg) {
   try {
@@ -1477,24 +1490,24 @@ await Promise.all([
   detectOrphanPosition(plBot, plExchange),
 ]);
 
-server.listen(cfg.port, cfg.host, () => {
-  console.log(`\n${'═'.repeat(52)}`);
-  console.log(`  QnV · 五所整合网格机器人 已启动`);
-  console.log(`  仪表盘: http://${cfg.host === '0.0.0.0' ? 'localhost' : cfg.host}:${cfg.port}`);
-  if (cfg.host === '0.0.0.0') {
-    console.log('  ⚠ 监听所有网卡(0.0.0.0)，局域网/公网可访问。');
-    if (cfg.dashboardPassword) console.log(`  🔒 已启用口令保护（用户名 ${cfg.dashboardUser}）`);
-  }
-  console.log(`${'═'.repeat(52)}`);
-  console.log(`  Decibel  [${cfg.de.mode.toUpperCase()}]  ${cfg.de.network}`);
-  console.log(`  Extended [${cfg.ex.mode.toUpperCase()}]  ${cfg.ex.network}`);
-  console.log(`  RISEx    [${cfg.rs.mode.toUpperCase()}]  ${cfg.rs.network}`);
-  console.log(`  Ondo     [${cfg.on.mode.toUpperCase()}]  ${cfg.on.network}`);
-  console.log(`  Perpl    [${cfg.pl.mode.toUpperCase()}]  ${cfg.pl.network}`);
-  console.log(`${'─'.repeat(52)}`);
-  if ([cfg.de, cfg.ex, cfg.rs, cfg.on, cfg.pl].some((c) => c.mode === 'paper')) {
-    console.log('  ⚠ 部分交易所为模拟模式，不涉及真实资金。');
-    console.log('    在 .env 中设置 DE_MODE/EX_MODE/RS_MODE/ON_MODE/PL_MODE=live 切换实盘。');
-  }
-  console.log('');
-});
+// Round 283：server.listen 已在 exchange init 之前调用（Railway 30s healthcheck
+// 兼容）· 这里只打 banner 表示 init + resume + orphan-detect 全部完成。
+console.log(`\n${'═'.repeat(52)}`);
+console.log(`  QnV · 五所整合网格机器人 已启动`);
+console.log(`  仪表盘: http://${cfg.host === '0.0.0.0' ? 'localhost' : cfg.host}:${cfg.port}`);
+if (cfg.host === '0.0.0.0') {
+  console.log('  ⚠ 监听所有网卡(0.0.0.0)，局域网/公网可访问。');
+  if (cfg.dashboardPassword) console.log(`  🔒 已启用口令保护（用户名 ${cfg.dashboardUser}）`);
+}
+console.log(`${'═'.repeat(52)}`);
+console.log(`  Decibel  [${cfg.de.mode.toUpperCase()}]  ${cfg.de.network}`);
+console.log(`  Extended [${cfg.ex.mode.toUpperCase()}]  ${cfg.ex.network}`);
+console.log(`  RISEx    [${cfg.rs.mode.toUpperCase()}]  ${cfg.rs.network}`);
+console.log(`  Ondo     [${cfg.on.mode.toUpperCase()}]  ${cfg.on.network}`);
+console.log(`  Perpl    [${cfg.pl.mode.toUpperCase()}]  ${cfg.pl.network}`);
+console.log(`${'─'.repeat(52)}`);
+if ([cfg.de, cfg.ex, cfg.rs, cfg.on, cfg.pl].some((c) => c.mode === 'paper')) {
+  console.log('  ⚠ 部分交易所为模拟模式，不涉及真实资金。');
+  console.log('    在 .env 中设置 DE_MODE/EX_MODE/RS_MODE/ON_MODE/PL_MODE=live 切换实盘。');
+}
+console.log('');
